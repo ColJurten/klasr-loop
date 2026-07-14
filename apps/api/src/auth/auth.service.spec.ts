@@ -15,12 +15,14 @@ describe('AuthService.onboard', () => {
       createWithOwner: jest.fn(),
     };
     // Real OrganizationsService on top of the mocked repository, so
-    // "reuse createWithOwner as-is" is exercised for real, not re-implemented
-    // in the test double.
+    // "reuse createWithOwner as-is" is exercised for real, not
+    // re-implemented in the test double. AuthService itself only ever sees
+    // OrganizationsService (layering rule — it must not depend on
+    // OrganizationsRepository directly).
     organizationsService = new OrganizationsService(
       repository as unknown as OrganizationsRepository,
     );
-    service = new AuthService(repository as unknown as OrganizationsRepository, organizationsService);
+    service = new AuthService(organizationsService);
   });
 
   it('creates a brand new organization for an unknown email', async () => {
@@ -86,5 +88,77 @@ describe('AuthService.onboard', () => {
 
     expect(repository.createWithOwner).not.toHaveBeenCalled();
     expect(result).toEqual({ organizationId: 'org_3', membershipId: 'membership_3', role: 'MEMBER' });
+  });
+
+  it('truncates an overly long generated organization name to 120 characters', async () => {
+    const longDisplayName = 'A'.repeat(200);
+    repository.findMembershipByUserEmail
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'membership_4',
+        role: 'ADMIN',
+        userId: 'user_4',
+        organizationId: 'org_4',
+        organization: { id: 'org_4', name: 'Espace de A...', createdAt: new Date() },
+      } as never);
+    repository.createWithOwner.mockResolvedValue({
+      id: 'org_4',
+      name: 'Espace de A...',
+      createdAt: new Date(),
+    } as never);
+
+    await service.onboard({
+      email: 'long@example.com',
+      displayName: longDisplayName,
+      provider: 'google',
+    });
+
+    const [nameArg] = repository.createWithOwner.mock.calls[0];
+    expect(nameArg.length).toBeLessThanOrEqual(120);
+    expect(nameArg.startsWith('Espace de AAA')).toBe(true);
+  });
+
+  it('throws when the post-creation membership lookup finds nothing (defensive)', async () => {
+    repository.findMembershipByUserEmail.mockResolvedValue(null); // both calls return null
+    repository.createWithOwner.mockResolvedValue({
+      id: 'org_ghost',
+      name: 'Espace de ghost@example.com',
+      createdAt: new Date(),
+    } as never);
+
+    await expect(
+      service.onboard({ email: 'ghost@example.com', provider: 'google' }),
+    ).rejects.toThrow('Membership lookup failed immediately after onboarding');
+  });
+
+  it('recovers from a concurrent create race (unique constraint) by re-reading the membership', async () => {
+    repository.findMembershipByUserEmail
+      .mockResolvedValueOnce(null) // pre-create: no membership yet
+      .mockResolvedValueOnce({
+        // post-create: the concurrent winner's membership is now visible
+        id: 'membership_5',
+        role: 'ADMIN',
+        userId: 'user_5',
+        organizationId: 'org_5',
+        organization: { id: 'org_5', name: 'Espace de race@example.com', createdAt: new Date() },
+      } as never);
+    repository.createWithOwner.mockRejectedValue(
+      Object.assign(new Error('Unique constraint failed on the fields: (`email`)'), {
+        code: 'P2002',
+      }),
+    );
+
+    const result = await service.onboard({ email: 'race@example.com', provider: 'google' });
+
+    expect(result).toEqual({ organizationId: 'org_5', membershipId: 'membership_5', role: 'ADMIN' });
+  });
+
+  it('rethrows non-unique-constraint errors from organization creation', async () => {
+    repository.findMembershipByUserEmail.mockResolvedValueOnce(null);
+    repository.createWithOwner.mockRejectedValue(new Error('database is down'));
+
+    await expect(
+      service.onboard({ email: 'broken@example.com', provider: 'google' }),
+    ).rejects.toThrow('database is down');
   });
 });
