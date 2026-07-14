@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Organization } from '@prisma/client';
+import { Membership, Organization } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** All Prisma access for organizations lives here (layering rule). */
@@ -28,5 +28,21 @@ export class OrganizationsRepository {
 
   findById(organizationId: string): Promise<Organization | null> {
     return this.prisma.organization.findUnique({ where: { id: organizationId } });
+  }
+
+  /**
+   * First membership found for a user's email, with its organization.
+   * A user can only be auto-onboarded into one org today — the first
+   * membership found (ascending id) is authoritative; multi-org switching
+   * is out of scope (see auth module).
+   */
+  findMembershipByUserEmail(
+    email: string,
+  ): Promise<(Membership & { organization: Organization }) | null> {
+    return this.prisma.membership.findFirst({
+      where: { user: { email } },
+      include: { organization: true },
+      orderBy: { id: 'asc' },
+    });
   }
 }
