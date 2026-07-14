@@ -8,7 +8,7 @@
 
 | Item | Branch / worktree | Owner (agent/human) | Next step |
 |---|---|---|---|
-| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | implementer agent (orchestrated) | PR #3 opened to `develop` (https://github.com/ColJurten/klasr-loop/pull/3, `Closes #1`) with both verifier and security-reviewer APPROVE verdicts pasted in. Awaiting CI + human review/merge — not merged by the loop. Note: API request authentication itself remains out of scope for #1 — tracked as #2. |
+| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | orchestrated directly (no subagent) | PR #3 open. After the reviewed core landed, manual end-to-end testing (real Google OAuth) surfaced two gaps: no logout affordance anywhere and NextAuth's default unstyled `/api/auth/signin` page. Added a charte-styled `/login` page, dashboard sign-out button, and a "Se connecter" landing-page link (2 new commits). Also committed the repo's first Prisma migration (`prisma/migrations/20260714180825_init`) — it never existed, so every fresh DB hit "table does not exist". Lint/tests/build re-verified green. Not yet re-reviewed by the `verifier` agent — do that before considering this merge-ready. |
 
 ## Backlog (ordered)
 
