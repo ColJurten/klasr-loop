@@ -8,7 +8,7 @@
 
 | Item | Branch / worktree | Owner (agent/human) | Next step |
 |---|---|---|---|
-| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | implementer agent (orchestrated) | Round 2 fixes re-reviewed from scratch by both `verifier` and `security-reviewer` — **both APPROVE**. Lint/tests green on both apps (API 31/31, web 9/9). Ready to open PR to `develop` (`Closes #1`, references #2 as tracked follow-up). Note: API request authentication itself remains out of scope for #1 — tracked as #2. |
+| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | implementer agent (orchestrated) | PR #3 opened to `develop` (https://github.com/ColJurten/klasr-loop/pull/3, `Closes #1`) with both verifier and security-reviewer APPROVE verdicts pasted in. Awaiting CI + human review/merge — not merged by the loop. Note: API request authentication itself remains out of scope for #1 — tracked as #2. |
 
 ## Backlog (ordered)
 
