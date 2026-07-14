@@ -10,8 +10,13 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+// Mirrors Next's real behavior: redirect() throws (aborting the render)
+// rather than returning — a no-op mock would let execution fall through to
+// code that assumes a session exists, masking the branch entirely.
 vi.mock('next/navigation', () => ({
-  redirect: vi.fn(),
+  redirect: vi.fn((url: string) => {
+    throw new Error(`NEXT_REDIRECT:${url}`);
+  }),
 }));
 
 vi.mock('next-auth', () => ({
@@ -23,11 +28,13 @@ vi.mock('@/lib/api', () => ({
   fetchPendingProposals: (...args: unknown[]) => fetchPendingProposals(...args),
 }));
 
+import { redirect } from 'next/navigation';
 import { getServerSession } from 'next-auth';
 import AppLayout from '@/app/dashboard/layout';
 import DashboardPage from '@/app/dashboard/page';
 
 const mockedGetServerSession = vi.mocked(getServerSession);
+const mockedRedirect = vi.mocked(redirect);
 
 const session = {
   user: {
@@ -76,6 +83,19 @@ describe('Dashboard layout — session-derived identity, not hardcoded demo data
     expect(screen.getByText('Membre')).toBeDefined();
     expect(screen.getByText('LD')).toBeDefined();
   });
+
+  it('redirects to / and never renders dashboard chrome when there is no session', async () => {
+    mockedGetServerSession.mockResolvedValue(null as never);
+
+    // The component must throw (aborting before the JSX return) rather than
+    // reach code that assumes session.user exists — proving dashboard
+    // chrome (nav, identity block) is never produced for this render.
+    await expect(AppLayout({ children: <div>contenu</div> })).rejects.toThrow(
+      'NEXT_REDIRECT:/',
+    );
+
+    expect(mockedRedirect).toHaveBeenCalledWith('/');
+  });
 });
 
 describe('Dashboard page — organizationId comes from the session', () => {
@@ -87,5 +107,14 @@ describe('Dashboard page — organizationId comes from the session', () => {
 
     expect(fetchPendingProposals).toHaveBeenCalledWith('org_9f3c1a');
     expect(fetchPendingProposals).not.toHaveBeenCalledWith('org_demo');
+  });
+
+  it('redirects to / and never fetches proposals when there is no session', async () => {
+    mockedGetServerSession.mockResolvedValue(null as never);
+
+    await expect(DashboardPage()).rejects.toThrow('NEXT_REDIRECT:/');
+
+    expect(mockedRedirect).toHaveBeenCalledWith('/');
+    expect(fetchPendingProposals).not.toHaveBeenCalled();
   });
 });
