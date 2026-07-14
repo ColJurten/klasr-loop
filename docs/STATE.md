@@ -8,17 +8,18 @@
 
 | Item | Branch / worktree | Owner (agent/human) | Next step |
 |---|---|---|---|
-| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | implementer agent | Implementation complete, lint+tests green on both apps (API 24/24, web 7/7) — hand off to `verifier` and `security-reviewer` (auth/tenant diff), then open PR to `develop` |
+| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | implementer agent | First verifier/security-reviewer pass returned REQUEST CHANGES (2 must-fix + minors); addressed in a second round of commits (landing sign-in regression, layering, timing-safe secret compare, email normalization, race-condition handling, org-name truncation, added test coverage). Lint+tests green on both apps — hand off for another verifier/security pass, then open PR to `develop`. Note: API request authentication itself is still out of scope for #1 — tracked as #2, see below. |
 
 ## Backlog (ordered)
 
-1. [ ] #TBD — Drive connector: Google Drive OAuth + folder arborescence sync (cache structure only)
-2. [ ] #TBD — Prisma schema: 12-entity model, tenant scoping middleware
-3. [ ] #TBD — Worker pg-boss : jobs sync Drive / OCR (node-tesseract-ocr) / classification, idempotents et scopés organisation
-4. [ ] #TBD — Classification proposal flow: job pg-boss → pipeline → proposal → single-click confirm → execute move/rename
-5. [ ] #TBD — Dashboard: history, à-valider queue, precision stats
-6. [ ] #TBD — Rules engine: user-defined classification rules, sequential priority
-7. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
+1. [ ] #2 — API request authentication: bearer-JWT guard + tenant scoping across `documents`/`rules`/`classification`/`organizations` controllers (currently these controllers trust organizationId from the URL/body with no request-level auth at all — bumped to the top of the backlog since it should land before more tenant-scoped features increase exposure)
+2. [ ] #TBD — Drive connector: Google Drive OAuth + folder arborescence sync (cache structure only)
+3. [ ] #TBD — Prisma schema: 12-entity model, tenant scoping middleware
+4. [ ] #TBD — Worker pg-boss : jobs sync Drive / OCR (node-tesseract-ocr) / classification, idempotents et scopés organisation
+5. [ ] #TBD — Classification proposal flow: job pg-boss → pipeline → proposal → single-click confirm → execute move/rename
+6. [ ] #TBD — Dashboard: history, à-valider queue, precision stats
+7. [ ] #TBD — Rules engine: user-defined classification rules, sequential priority
+8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
 
@@ -33,10 +34,11 @@
 - 2026-07-14 — GitHub is the code host; GitHub Actions is the CI (jury dossier note: GitLab CI equivalent documented in docs/BRANCHING.md §CI portability).
 - 2026-07-14 — GitFlow-lite: main (tags only) / develop / feature / fix / hotfix / release.
 - 2026-07-14 — ADR-001 TypeScript unique ; ADR-002 PostgreSQL + Mongo minimal (C8) ; ADR-003 suppression MinIO (streaming Drive) ; ADR-004 pg-boss au lieu de Redis/BullMQ ; ADR-005 monolithe modulaire + worker ; ADR-006 Compose pour la démo, K8s en bonus.
-- 2026-07-14 — #1 Auth: `AuthService` depends directly on `OrganizationsRepository` (for `findMembershipByUserEmail`, called before and after creation) **and** `OrganizationsService` (for `create()`, reusing `createWithOwner` as-is). `OrganizationsModule` now also exports `OrganizationsRepository` — a deliberate, small exception to "other modules talk to a module's Service, not its Repository," made so the onboarding lookup doesn't need a passthrough method invented on `OrganizationsService`. Revisit if a second module needs the same access (then add the passthrough instead).
+- 2026-07-14 — #1 Auth: `AuthService` depends only on `OrganizationsService` — added a `findMembershipByEmail(email)` passthrough there instead of exporting `OrganizationsRepository` from `OrganizationsModule` (an earlier draft did export the repository; verifier flagged it as a layering violation and it was reverted). Repositories stay private to their own module; cross-module calls always go through the owning module's Service.
 - 2026-07-14 — #1 Auth: the dashboard's org-switcher button now shows `session.user.organizationId` (mono) instead of the old fabricated "Cabinet JPD Conseil". No organization display name is in the session/JWT (out of scope for #1 — only organizationId/membershipId/role were added); wiring a real org name will need either a new session field or a dedicated fetch via the existing `GET /organizations/:id`.
 - 2026-07-14 — #1 Auth: left `apps/web/app/dashboard/page.tsx`'s "Bonjour, Marie" header text untouched — issue #1's brief scoped page.tsx changes to only the organizationId source and stale comments, not the greeting. Flagged as a known remaining hardcoded string for a follow-up.
 - 2026-07-14 — #1 Auth: `apps/api/.env.example` already existed (undetected by the brief) with `DATABASE_URL`/`MONGO_URL`/`ANTHROPIC_API_KEY`/`PORT` — appended `INTERNAL_API_SECRET` rather than recreating the file. Real env var name is `MONGO_URL`, not `MONGODB_URL`.
+- 2026-07-14 — #1 Auth, review round 2: landing page CTAs (`apps/web/app/page.tsx`) pointed straight at `/dashboard`, which the new middleware now blocks for unauthenticated visitors with no `signIn()` call anywhere — a redirect loop for every logged-out visitor. Fixed by pointing the three CTAs at NextAuth's default `/api/auth/signin?callbackUrl=/dashboard` (provider-choice UI is NextAuth's built-in page; building a custom one is a possible future polish item, not required). `InternalServiceGuard` now compares SHA-256 digests via `crypto.timingSafeEqual` instead of `!==` (constant-time, and sidesteps `timingSafeEqual`'s equal-length requirement). `OrganizationsRepository.createWithOwner`/`findMembershipByUserEmail` normalize email (trim + lowercase) so differing OAuth casing can't mint a duplicate org for the same person. `AuthService.onboard()` truncates the generated org name to 120 chars (matches `CreateOrganizationDto`'s `@MaxLength`, which this call bypasses since it never goes through the HTTP `ValidationPipe`) and catches a Prisma P2002 (unique constraint) from a concurrent first-sign-in race, re-reading the membership the winner created instead of 500ing.
 
 ## Failures & lessons (so the loop stops repeating them)
 
@@ -46,4 +48,4 @@
 
 - Loop setup demonstrates: CI/CD design, quality gates, Git workflow industrialization.
 - Starter code demonstrates: layered architecture (controller/service/repository), hexagonal port for Drive execution, multi-tenant data access design, TDD on the confirm flow, eco-design instrumentation (llmCallsUsed, UsageMetric).
-- #1 Auth demonstrates: OAuth-based auth (NextAuth Google/Microsoft) with server-side session augmentation, automatic multi-tenant onboarding (organization minted or reused from a verified OAuth email, never client input), a fail-closed internal-service guard (defense in depth for a service-to-service endpoint with no other verification), and route-level access control via middleware — with unit tests covering both the happy/reuse onboarding paths and every guard failure mode.
+- #1 Auth demonstrates: OAuth-based auth (NextAuth Google/Microsoft) with server-side session augmentation, automatic multi-tenant onboarding (organization minted or reused from a verified OAuth email, never client input), a fail-closed + constant-time internal-service guard (defense in depth for a service-to-service endpoint with no other verification), and NextAuth middleware protecting the **Next.js dashboard pages** (`/dashboard/**`) — with unit tests covering the onboarding happy/reuse/race/defensive paths and every guard failure mode. **Precise about what's NOT covered**: the API itself (`apps/api`) has no request-level authentication yet — every controller still trusts `organizationId` from the URL/body with nothing checking who's asking. That gap is tracked as issue #2, not closed by #1.
