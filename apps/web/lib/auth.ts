@@ -50,6 +50,12 @@ export const authOptions: NextAuthOptions = {
   ],
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
+  pages: {
+    // Custom charte-styled sign-in page (app/login) instead of NextAuth's
+    // default unstyled one. NextAuth also routes sign-in errors here via the
+    // `error` search param when no separate `pages.error` is set.
+    signIn: '/login',
+  },
   callbacks: {
     /**
      * `account` is only present on the initial sign-in call — that's when we

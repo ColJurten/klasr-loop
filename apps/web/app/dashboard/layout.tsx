@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { KlasrLogo } from '@/components/logo';
 import { authOptions, type MembershipRole } from '@/lib/auth';
+import { SignOutButton } from './sign-out-button';
 
 const NAV = [
   { label: 'Tableau de bord', href: '/dashboard', icon: LayoutDashboard, active: true },
@@ -80,17 +81,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           ))}
         </nav>
 
-        <div className="flex items-center gap-3 border-t border-line pt-4">
-          <span
-            aria-hidden="true"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-lavender font-mono text-sm"
-          >
-            {initials}
-          </span>
-          <div className="min-w-0 text-sm">
-            <p className="truncate font-medium">{displayName}</p>
-            <p className="truncate text-xs text-ink/50">{roleLabel}</p>
+        <div className="border-t border-line pt-4">
+          <div className="flex items-center gap-3">
+            <span
+              aria-hidden="true"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-lavender font-mono text-sm"
+            >
+              {initials}
+            </span>
+            <div className="min-w-0 text-sm">
+              <p className="truncate font-medium">{displayName}</p>
+              <p className="truncate text-xs text-ink/50">{roleLabel}</p>
+            </div>
           </div>
+          <SignOutButton />
         </div>
       </aside>
       <div className="flex-1">{children}</div>
