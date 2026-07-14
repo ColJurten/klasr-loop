@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Charte : poids 400/500 uniquement, focus visible (RGAA). */
+@layer base {
+  body {
+    font-weight: 400;
+  }
+  strong,
+  b {
+    font-weight: 500;
+  }
+  :focus-visible {
+    outline: 2px solid #7f77dd;
+    outline-offset: 2px;
+  }
+}

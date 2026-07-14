@@ -1,0 +1,256 @@
+// Klasr data model — 12 entities. Metadata ONLY: document content never
+// enters PostgreSQL (invariant #1). Every tenant-owned table carries
+// organizationId and is queried exclusively through tenant-scoped repositories.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── 1. Organization ─ tenant root ────────────────────────────────────────────
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  memberships     Membership[]
+  driveConnection DriveConnection?
+  folders         Folder[]
+  documents       Document[]
+  rules           ClassificationRule[]
+  proposals       ClassificationProposal[]
+  history         ActionHistory[]
+  notifications   Notification[]
+  usageMetrics    UsageMetric[]
+  subscription    Subscription?
+}
+
+// ── 2. User ──────────────────────────────────────────────────────────────────
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  memberships Membership[]
+  history     ActionHistory[]
+}
+
+// ── 3. Membership ─ user↔org with role ──────────────────────────────────────
+model Membership {
+  id             String       @id @default(cuid())
+  role           MemberRole   @default(MEMBER)
+  userId         String
+  organizationId String
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+enum MemberRole {
+  ADMIN
+  MEMBER
+}
+
+// ── 4. DriveConnection ─ one Drive per organization ─────────────────────────
+model DriveConnection {
+  id             String        @id @default(cuid())
+  provider       DriveProvider
+  externalId     String // provider-side drive/account id
+  encryptedToken String // OAuth refresh token, encrypted at rest — never logged
+  scopes         String[]
+  connectedAt    DateTime      @default(now())
+  lastSyncAt     DateTime?
+  organizationId String        @unique
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+}
+
+enum DriveProvider {
+  GOOGLE_DRIVE
+  ONEDRIVE
+}
+
+// ── 5. Folder ─ cached arborescence (structure only, hybrid model) ──────────
+model Folder {
+  id             String       @id @default(cuid())
+  externalId     String // id in the provider's Drive
+  name           String
+  path           String // materialized path, e.g. /Comptabilité/Électricité
+  parentId       String?
+  parent         Folder?      @relation("FolderTree", fields: [parentId], references: [id])
+  children       Folder[]     @relation("FolderTree")
+  priority       Boolean      @default(false) // "dossiers prioritaires"
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  documents Document[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, path])
+}
+
+// ── 6. Document ─ metadata only ──────────────────────────────────────────────
+model Document {
+  id             String         @id @default(cuid())
+  externalId     String // id in the provider's Drive
+  name           String
+  mimeType       String
+  sizeBytes      Int
+  status         DocumentStatus @default(PENDING)
+  detectedAt     DateTime       @default(now())
+  folderId       String?
+  folder         Folder?        @relation(fields: [folderId], references: [id])
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+
+  proposals ClassificationProposal[]
+  history   ActionHistory[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, status])
+}
+
+enum DocumentStatus {
+  PENDING // detected, awaiting analysis
+  PROPOSED // proposal ready, awaiting user confirmation
+  CLASSIFIED // move/rename executed
+  MANUAL // no confident proposal, routed to manual queue
+}
+
+// ── 7. ClassificationProposal ─ awaiting the single-click confirmation ──────
+model ClassificationProposal {
+  id              String         @id @default(cuid())
+  proposedName    String
+  destinationPath String
+  confidence      Float
+  source          ProposalSource
+  modelUsed       String?
+  llmCallsUsed    Int            @default(0) // eco-design instrumentation
+  status          ProposalStatus @default(PENDING)
+  createdAt       DateTime       @default(now())
+  decidedAt       DateTime?
+  documentId      String
+  document        Document       @relation(fields: [documentId], references: [id])
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status])
+}
+
+enum ProposalSource {
+  RULE
+  LLM
+}
+
+enum ProposalStatus {
+  PENDING
+  CONFIRMED
+  OVERRIDDEN // user chose another destination
+  REJECTED
+}
+
+// ── 8. ClassificationRule ─ user rules, applied sequentially by priority ────
+model ClassificationRule {
+  id                    String          @id @default(cuid())
+  priority              Int
+  destinationPath       String
+  suggestedNameTemplate String?
+  enabled               Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  organizationId        String
+  organization          Organization    @relation(fields: [organizationId], references: [id])
+  conditions            RuleCondition[]
+
+  @@unique([organizationId, priority])
+  @@index([organizationId, enabled])
+}
+
+// ── 9. RuleCondition ─ ANDed conditions of a rule ────────────────────────────
+model RuleCondition {
+  id       String             @id @default(cuid())
+  field    ConditionField
+  operator ConditionOperator
+  value    String
+  ruleId   String
+  rule     ClassificationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+}
+
+enum ConditionField {
+  CONTENT
+  FILENAME
+  MIME_TYPE
+}
+
+enum ConditionOperator {
+  CONTAINS
+  EQUALS
+}
+
+// ── 10. ActionHistory ─ audit trail of executed actions ─────────────────────
+model ActionHistory {
+  id             String       @id @default(cuid())
+  action         HistoryAction
+  fromPath       String?
+  toPath         String?
+  fromName       String?
+  toName         String?
+  executedAt     DateTime     @default(now())
+  documentId     String
+  document       Document     @relation(fields: [documentId], references: [id])
+  actorId        String? // null = automatic (rule)
+  actor          User?        @relation(fields: [actorId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, executedAt])
+}
+
+enum HistoryAction {
+  MOVE
+  RENAME
+  MOVE_RENAME
+  REJECT
+}
+
+// ── 11. Notification ─────────────────────────────────────────────────────────
+model Notification {
+  id             String       @id @default(cuid())
+  kind           String // e.g. rule_suggestion, sync_error, digest
+  payload        Json
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, readAt])
+}
+
+// ── 12. UsageMetric ─ eco-design + billing instrumentation ──────────────────
+model UsageMetric {
+  id             String       @id @default(cuid())
+  day            DateTime     @db.Date
+  documentsIn    Int          @default(0)
+  ruleMatches    Int          @default(0) // classifications with 0 LLM calls
+  llmCalls       Int          @default(0)
+  ocrRuns        Int          @default(0)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, day])
+}
+
+// ── Subscription (billing plan; supporting entity) ───────────────────────────
+model Subscription {
+  id             String       @id @default(cuid())
+  plan           String       @default("free")
+  status         String       @default("active")
+  renewsAt       DateTime?
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}

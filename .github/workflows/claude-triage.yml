@@ -1,0 +1,38 @@
+# Loop component 1: Automations. Nightly discovery + triage run by Claude Code.
+# Requires repo secret ANTHROPIC_API_KEY (or OIDC per the action docs).
+# Verify inputs against https://github.com/anthropics/claude-code-action before first run.
+name: claude-nightly-triage
+
+on:
+  schedule:
+    - cron: '30 4 * * 1-5'   # 04:30 UTC, weekdays (~06:30 Antibes)
+  workflow_dispatch: {}       # manual trigger for testing
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Run the loop-triage skill for the Klasr repository.
+            Follow docs/LOOP.md and the constraints in the skill exactly:
+            read docs/STATE.md first, inspect CI runs and issues with `gh`,
+            update docs/STATE.md, open/label issues for actionable findings,
+            and finish with a <=10-line digest. Do not modify any code.
+            If STATE.md changed, commit it to a branch `chore/triage-${{ github.run_id }}`
+            and open a PR to develop titled "chore(loop): nightly triage".
+          claude_args: '--allowed-tools "Bash(gh:*),Bash(git:*),Read,Grep,Glob,Edit,Write"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
