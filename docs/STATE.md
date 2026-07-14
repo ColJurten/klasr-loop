@@ -8,7 +8,7 @@
 
 | Item | Branch / worktree | Owner (agent/human) | Next step |
 |---|---|---|---|
-| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | orchestrated directly (no subagent) | PR #3 open. After the reviewed core landed, manual end-to-end testing (real Google OAuth) surfaced two gaps: no logout affordance anywhere and NextAuth's default unstyled `/api/auth/signin` page. Added a charte-styled `/login` page, dashboard sign-out button, and a "Se connecter" landing-page link (2 new commits). Also committed the repo's first Prisma migration (`prisma/migrations/20260714180825_init`) — it never existed, so every fresh DB hit "table does not exist". Lint/tests/build re-verified green. Not yet re-reviewed by the `verifier` agent — do that before considering this merge-ready. |
+| #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | orchestrated directly (no subagent) | PR #3 open. Custom `/login` page, dashboard sign-out button, "Se connecter" landing link, and the repo's first Prisma migration all landed and manually verified end-to-end with real Google OAuth. `verifier` re-review of that round returned REQUEST CHANGES on one point: the new `login-form.tsx`/`sign-out-button.tsx` shipped with no tests — fixed (6 + 1 new tests covering error-code mapping, signIn/signOut call args, callbackUrl default) plus the Suspense-fallback nit. Lint/test/build green (16/16 web tests). Re-verifying now before calling this merge-ready. |
 
 ## Backlog (ordered)
 
