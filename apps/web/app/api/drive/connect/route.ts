@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto';
 import { getServerSession } from 'next-auth';
 import { NextResponse } from 'next/server';
 import { authOptions } from '@/lib/auth';
-import { DRIVE_SCOPE, STATE_COOKIE } from '../constants';
+import { DRIVE_SCOPE, STATE_COOKIE, driveCallbackRedirectUri } from '../constants';
 
 /**
  * Starts the org-level Drive OAuth grant (org admin only). Deliberately not
@@ -17,11 +17,7 @@ export async function GET(request: Request) {
   }
 
   const state = randomBytes(32).toString('hex');
-  // Derived from NEXTAUTH_URL, not request.url — the Host header on an
-  // incoming request isn't a trustworthy origin, and this value must match
-  // byte-for-byte what /api/drive/callback sends back to Google's token
-  // endpoint.
-  const redirectUri = `${process.env.NEXTAUTH_URL}/api/drive/callback`;
+  const redirectUri = driveCallbackRedirectUri();
 
   const authorizeUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authorizeUrl.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID ?? '');

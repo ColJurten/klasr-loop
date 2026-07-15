@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { NextRequest, NextResponse } from 'next/server';
 import { authOptions } from '@/lib/auth';
-import { PENDING_COOKIE, STATE_COOKIE } from '../constants';
+import { PENDING_COOKIE, STATE_COOKIE, driveCallbackRedirectUri } from '../constants';
 
 const DRIVE_PAGE = '/dashboard/drive';
 
@@ -42,8 +42,7 @@ export async function GET(request: NextRequest) {
     return errorRedirect(request, 'state_mismatch');
   }
 
-  // Must match connect/route.ts's redirectUri byte-for-byte (Google checks it).
-  const redirectUri = `${process.env.NEXTAUTH_URL}/api/drive/callback`;
+  const redirectUri = driveCallbackRedirectUri();
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

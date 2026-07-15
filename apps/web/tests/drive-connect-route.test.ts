@@ -57,6 +57,18 @@ describe('GET /api/drive/connect', () => {
     expect(stateCookie?.httpOnly).toBe(true);
   });
 
+  it('strips a trailing slash from NEXTAUTH_URL so redirect_uri never gets a double slash', async () => {
+    process.env.NEXTAUTH_URL = 'http://localhost:3000/';
+    mockedGetServerSession.mockResolvedValue({
+      user: { organizationId: 'org-1', role: 'ADMIN' },
+    } as never);
+
+    const response = await GET(new Request('http://localhost/api/drive/connect'));
+
+    const location = new URL(response.headers.get('location')!);
+    expect(location.searchParams.get('redirect_uri')).toBe('http://localhost:3000/api/drive/callback');
+  });
+
   it('mints a different state on every call (not reusable across requests)', async () => {
     mockedGetServerSession.mockResolvedValue({
       user: { organizationId: 'org-1', role: 'ADMIN' },
