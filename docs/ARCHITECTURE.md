@@ -112,6 +112,28 @@ cluster. Compose suffit pour la soutenance ; les manifests Kubernetes (force Dev
 de Louis) sont un différenciateur présenté en ouverture, pas une dépendance de démo.
 CI GitHub Actions (équivalence GitLab CI documentée dans BRANCHING.md).
 
+### ADR-007 — Scope Drive OAuth : `drive.file` + Picker, pas le scope `drive` complet
+**Contexte.** Klasr doit déplacer/renommer des fichiers déjà existants dans
+l'arborescence Drive de l'utilisateur (facture déposée manuellement dans un dossier
+existant) — pas seulement des fichiers créés par l'application.
+**Décision.** La connexion Drive (admin d'organisation, séparée de la connexion
+individuelle) demande le scope `https://www.googleapis.com/auth/drive.file` et fait
+choisir à l'admin son dossier racine via Google Picker au lieu de demander le scope
+`https://www.googleapis.com/auth/drive` complet.
+**Justification.**
+- Google classe `drive` (accès à tout le Drive) comme scope **restreint** : au-delà
+  de 100 utilisateurs de test, l'app doit passer une évaluation de sécurité tierce
+  (CASA), payante et reconductible chaque année — indéfendable pour un projet
+  solo/CDA.
+- `drive.file` est classé scope **sensible** : vérification Google standard et
+  gratuite (quelques jours), sans audit de sécurité payant.
+- Combiné à Google Picker (l'admin sélectionne explicitement son dossier racine),
+  `drive.file` donne un accès lecture/écriture réel sur ce dossier et son contenu —
+  suffisant pour le flux produit (« synchroniser la structure de dossiers »).
+**Conséquence.** La connexion Drive est un geste explicite et périmétré (un dossier
+racine choisi), pas un accès implicite à tout le compte — argument RGPD et
+minimisation des données supplémentaire pour le jury.
+
 ## 3. Cartographie REAC → artefacts du dépôt
 
 | # | Compétence (REAC CDA) | Preuve dans Klasr |

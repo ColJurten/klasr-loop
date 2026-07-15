@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth';
 import {
   ChevronsUpDown,
   FolderTree,
+  HardDrive,
   History,
   LayoutDashboard,
   LayoutTemplate,
@@ -17,6 +18,7 @@ import { SignOutButton } from './sign-out-button';
 const NAV = [
   { label: 'Tableau de bord', href: '/dashboard', icon: LayoutDashboard, active: true },
   { label: 'Arborescence', href: '#', icon: FolderTree },
+  { label: 'Connexion Drive', href: '/dashboard/drive', icon: HardDrive },
   { label: 'Historique', href: '#', icon: History },
   { label: 'Règles', href: '#', icon: ListChecks },
   { label: 'Membres', href: '#', icon: Users },
