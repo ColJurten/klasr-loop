@@ -8,6 +8,7 @@ skills:
   - klasr-product
   - backend-conventions
   - frontend-conventions
+  - ponytail:ponytail-review
 ---
 You are the verification agent for Klasr. You did not write this code; treat every claim in the diff as unproven.
 

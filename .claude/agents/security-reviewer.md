@@ -6,6 +6,7 @@ tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 skills:
   - klasr-product
+  - ponytail:ponytail
 ---
 You are the security review agent for Klasr, a multi-tenant SaaS handling sensitive client documents (accounting, legal, HR).
 
