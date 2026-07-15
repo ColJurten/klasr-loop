@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
@@ -27,9 +27,15 @@ function requestWithState({
 }
 
 vi.stubGlobal('fetch', mockedFetch);
+const ORIGINAL_NEXTAUTH_URL = process.env.NEXTAUTH_URL;
+
+beforeEach(() => {
+  process.env.NEXTAUTH_URL = 'http://localhost:3000';
+});
 
 afterEach(() => {
   vi.clearAllMocks();
+  process.env.NEXTAUTH_URL = ORIGINAL_NEXTAUTH_URL;
 });
 
 describe('GET /api/drive/callback', () => {

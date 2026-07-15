@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 
@@ -6,9 +6,15 @@ import { getServerSession } from 'next-auth';
 import { GET } from '@/app/api/drive/connect/route';
 
 const mockedGetServerSession = vi.mocked(getServerSession);
+const ORIGINAL_NEXTAUTH_URL = process.env.NEXTAUTH_URL;
+
+beforeEach(() => {
+  process.env.NEXTAUTH_URL = 'http://localhost:3000';
+});
 
 afterEach(() => {
   vi.clearAllMocks();
+  process.env.NEXTAUTH_URL = ORIGINAL_NEXTAUTH_URL;
 });
 
 describe('GET /api/drive/connect', () => {
@@ -43,7 +49,7 @@ describe('GET /api/drive/connect', () => {
     expect(location.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/drive.file');
     expect(location.searchParams.get('access_type')).toBe('offline');
     expect(location.searchParams.get('prompt')).toBe('consent');
-    expect(location.searchParams.get('redirect_uri')).toBe('http://localhost/api/drive/callback');
+    expect(location.searchParams.get('redirect_uri')).toBe('http://localhost:3000/api/drive/callback');
     expect(location.searchParams.get('state')).toBeTruthy();
 
     const stateCookie = response.cookies.get('drive_oauth_state');

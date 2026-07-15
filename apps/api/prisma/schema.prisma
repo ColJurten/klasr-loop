@@ -69,6 +69,12 @@ model DriveConnection {
   lastSyncAt     DateTime?
   organizationId String        @unique
   organization   Organization  @relation(fields: [organizationId], references: [id])
+  // The Drive folder the admin picked as the sync root (Picker step). Points
+  // at the current root explicitly instead of overloading Folder.priority
+  // (which means something unrelated — see its own comment below) so a
+  // reconnect that picks a different folder has an unambiguous "this one".
+  rootFolderId   String?       @unique
+  rootFolder     Folder?       @relation("DriveConnectionRoot", fields: [rootFolderId], references: [id])
 }
 
 enum DriveProvider {
@@ -90,6 +96,7 @@ model Folder {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   documents Document[]
+  rootOfDriveConnection DriveConnection? @relation("DriveConnectionRoot")
 
   @@unique([organizationId, externalId])
   @@index([organizationId, path])

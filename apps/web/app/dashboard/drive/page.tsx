@@ -48,7 +48,7 @@ export default async function DriveConnectPage({
       )}
 
       {searchParams.connected === '1' && (
-        <p className="mt-4 max-w-md rounded-lg border border-line bg-sauge/20 px-3 py-2 text-sm">
+        <p className="mt-4 max-w-md rounded-lg border border-line bg-sage/20 px-3 py-2 text-sm">
           Google Drive est connecté.
         </p>
       )}

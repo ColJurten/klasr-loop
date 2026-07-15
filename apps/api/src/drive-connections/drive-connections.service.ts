@@ -13,13 +13,16 @@ export class DriveConnectionsService {
    * encrypted form (RGPD / secrets invariant).
    */
   async connect(dto: ConnectDriveDto): Promise<{ connected: true }> {
-    await this.repository.upsertForOrganization(dto.organizationId, {
-      provider: dto.provider,
-      externalId: dto.externalId,
-      encryptedToken: encryptToken(dto.refreshToken),
-      scopes: dto.scopes,
-    });
-    await this.repository.upsertRootFolder(dto.organizationId, dto.rootFolder);
+    await this.repository.connect(
+      dto.organizationId,
+      {
+        provider: dto.provider,
+        externalId: dto.externalId,
+        encryptedToken: encryptToken(dto.refreshToken),
+        scopes: dto.scopes,
+      },
+      dto.rootFolder,
+    );
     return { connected: true };
   }
 }

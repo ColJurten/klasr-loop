@@ -19,6 +19,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'No pending Drive grant' }, { status: 404 });
   }
 
-  const { accessToken } = JSON.parse(raw) as { accessToken: string };
-  return NextResponse.json({ accessToken });
+  try {
+    const { accessToken } = JSON.parse(raw) as { accessToken: string };
+    return NextResponse.json({ accessToken });
+  } catch {
+    return NextResponse.json({ error: 'No pending Drive grant' }, { status: 404 });
+  }
 }

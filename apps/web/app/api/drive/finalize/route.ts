@@ -26,7 +26,12 @@ export async function POST(request: NextRequest) {
   if (!raw) {
     return NextResponse.json({ error: 'No pending Drive grant' }, { status: 400 });
   }
-  const pending = JSON.parse(raw) as PendingGrant;
+  let pending: PendingGrant;
+  try {
+    pending = JSON.parse(raw) as PendingGrant;
+  } catch {
+    return NextResponse.json({ error: 'No pending Drive grant' }, { status: 400 });
+  }
   const { rootFolder } = (await request.json()) as {
     rootFolder: { externalId: string; name: string };
   };

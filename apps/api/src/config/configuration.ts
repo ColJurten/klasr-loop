@@ -10,5 +10,10 @@ export const configValidationSchema = Joi.object({
   // Base64-encoded 32-byte AES-256-GCM key encrypting Drive refresh tokens at
   // rest (see drive-connections/token-cipher.ts). Generate with:
   // openssl rand -base64 32
-  TOKEN_ENCRYPTION_KEY: Joi.string().required(),
+  TOKEN_ENCRYPTION_KEY: Joi.string()
+    .required()
+    .custom((value: string, helpers) =>
+      Buffer.from(value, 'base64').length === 32 ? value : helpers.error('any.invalid'),
+    )
+    .message('TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key'),
 });

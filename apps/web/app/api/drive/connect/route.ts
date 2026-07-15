@@ -17,7 +17,11 @@ export async function GET(request: Request) {
   }
 
   const state = randomBytes(32).toString('hex');
-  const redirectUri = new URL('/api/drive/callback', request.url).toString();
+  // Derived from NEXTAUTH_URL, not request.url — the Host header on an
+  // incoming request isn't a trustworthy origin, and this value must match
+  // byte-for-byte what /api/drive/callback sends back to Google's token
+  // endpoint.
+  const redirectUri = `${process.env.NEXTAUTH_URL}/api/drive/callback`;
 
   const authorizeUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authorizeUrl.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID ?? '');
@@ -32,7 +36,10 @@ export async function GET(request: Request) {
   const response = NextResponse.redirect(authorizeUrl);
   response.cookies.set(STATE_COOKIE, state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    // Always secure, not NODE_ENV-gated: browsers exempt localhost from the
+    // Secure requirement, so this doesn't break local dev, and it avoids a
+    // deployment ever emitting this cookie over plain HTTP by misconfiguration.
+    secure: true,
     sameSite: 'lax',
     maxAge: 600,
     path: '/',

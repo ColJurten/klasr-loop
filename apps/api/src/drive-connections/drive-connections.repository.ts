@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DriveConnection, DriveProvider, Folder } from '@prisma/client';
+import { DriveConnection, DriveProvider } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 interface ConnectionData {
@@ -20,22 +20,31 @@ interface RootFolderData {
 export class DriveConnectionsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  upsertForOrganization(organizationId: string, data: ConnectionData): Promise<DriveConnection> {
-    return this.prisma.driveConnection.upsert({
-      where: { organizationId },
-      create: { organizationId, ...data },
-      update: data,
-    });
-  }
+  /**
+   * Upserts the org's root folder and points DriveConnection.rootFolderId at
+   * it, in one transaction. Deliberately not `Folder.priority` — that field
+   * means something unrelated ("dossiers prioritaires", a rules concept) —
+   * `rootFolderId` is the unambiguous "current connected root", so picking a
+   * different root on reconnect just repoints it instead of leaving two
+   * folders both claiming to be the root.
+   */
+  connect(
+    organizationId: string,
+    connection: ConnectionData,
+    rootFolder: RootFolderData,
+  ): Promise<DriveConnection> {
+    return this.prisma.$transaction(async (tx) => {
+      const folder = await tx.folder.upsert({
+        where: { organizationId_externalId: { organizationId, externalId: rootFolder.externalId } },
+        create: { organizationId, path: `/${rootFolder.name}`, ...rootFolder },
+        update: { name: rootFolder.name, path: `/${rootFolder.name}` },
+      });
 
-  /** The picked root is stored as a top-level Folder row (parentId null,
-   * priority true, path = /name) — arborescence sync underneath it is
-   * backlog item #2. */
-  upsertRootFolder(organizationId: string, data: RootFolderData): Promise<Folder> {
-    return this.prisma.folder.upsert({
-      where: { organizationId_externalId: { organizationId, externalId: data.externalId } },
-      create: { organizationId, priority: true, path: `/${data.name}`, ...data },
-      update: { name: data.name, path: `/${data.name}` },
+      return tx.driveConnection.upsert({
+        where: { organizationId },
+        create: { organizationId, rootFolderId: folder.id, ...connection },
+        update: { rootFolderId: folder.id, ...connection },
+      });
     });
   }
 }

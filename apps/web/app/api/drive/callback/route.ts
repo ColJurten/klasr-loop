@@ -42,7 +42,8 @@ export async function GET(request: NextRequest) {
     return errorRedirect(request, 'state_mismatch');
   }
 
-  const redirectUri = new URL('/api/drive/callback', request.url).toString();
+  // Must match connect/route.ts's redirectUri byte-for-byte (Google checks it).
+  const redirectUri = `${process.env.NEXTAUTH_URL}/api/drive/callback`;
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -81,7 +82,9 @@ export async function GET(request: NextRequest) {
   response.cookies.delete(STATE_COOKIE);
   response.cookies.set(PENDING_COOKIE, pendingGrant, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    // This cookie carries a live Drive refresh token — always secure, never
+    // NODE_ENV-gated (see the same note on the state cookie in connect/route.ts).
+    secure: true,
     sameSite: 'lax',
     maxAge: 300,
     path: '/',

@@ -6,7 +6,7 @@ import { ConnectDriveDto } from './dto/connect-drive.dto';
 
 describe('DriveConnectionsService', () => {
   const ORIGINAL_KEY = process.env.TOKEN_ENCRYPTION_KEY;
-  let repository: { upsertForOrganization: jest.Mock; upsertRootFolder: jest.Mock };
+  let repository: { connect: jest.Mock };
   let service: DriveConnectionsService;
 
   const dto: ConnectDriveDto = Object.assign(new ConnectDriveDto(), {
@@ -20,7 +20,7 @@ describe('DriveConnectionsService', () => {
 
   beforeEach(() => {
     process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64');
-    repository = { upsertForOrganization: jest.fn(), upsertRootFolder: jest.fn() };
+    repository = { connect: jest.fn() };
     service = new DriveConnectionsService(repository as unknown as DriveConnectionsRepository);
   });
 
@@ -35,17 +35,17 @@ describe('DriveConnectionsService', () => {
   it('never persists the refresh token in plaintext', async () => {
     await service.connect(dto);
 
-    const [, persisted] = repository.upsertForOrganization.mock.calls[0];
-    expect(persisted.encryptedToken).not.toBe('raw-refresh-token');
-    expect(decryptToken(persisted.encryptedToken)).toBe('raw-refresh-token');
+    const [, connectionData] = repository.connect.mock.calls[0];
+    expect(connectionData.encryptedToken).not.toBe('raw-refresh-token');
+    expect(decryptToken(connectionData.encryptedToken)).toBe('raw-refresh-token');
   });
 
-  it('scopes both writes to the given organizationId', async () => {
+  it('scopes the write to the given organizationId and forwards the root folder', async () => {
     await service.connect(dto);
 
-    expect(repository.upsertForOrganization.mock.calls[0][0]).toBe('org-1');
-    expect(repository.upsertRootFolder.mock.calls[0][0]).toBe('org-1');
-    expect(repository.upsertRootFolder.mock.calls[0][1]).toEqual(dto.rootFolder);
+    const [organizationId, , rootFolder] = repository.connect.mock.calls[0];
+    expect(organizationId).toBe('org-1');
+    expect(rootFolder).toEqual(dto.rootFolder);
   });
 
   it('resolves with a plain connected acknowledgement', async () => {
