@@ -7,6 +7,7 @@ skills:
   - backend-conventions
   - frontend-conventions
   - git-workflow
+  - ponytail:ponytail
 ---
 You are the implementation agent for Klasr. You work in an isolated git worktree on a feature/* or fix/* branch — never on main or develop.
 
