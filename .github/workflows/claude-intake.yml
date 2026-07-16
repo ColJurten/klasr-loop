@@ -1,0 +1,46 @@
+# Event adapter — cheap deterministic filtering, then repository_dispatch.
+# repository_dispatch fired with GITHUB_TOKEN DOES start the worker (documented
+# GitHub exception), so no PAT is needed here.
+name: claude-intake
+
+on:
+  issues:
+    types: [opened, edited, reopened, labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write # required to create repository_dispatch events
+
+concurrency:
+  group: klasr-intake-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  filter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted default branch only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts/agent
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix scripts/agent
+      - name: Normalize event and decide
+        id: decide
+        env:
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: node scripts/agent/normalize-event.mjs "${{ github.event_name }}" "$GITHUB_EVENT_PATH"
+      - name: Dispatch worker
+        if: steps.decide.outputs.action == 'dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH: ${{ steps.decide.outputs.dispatch }}
+        run: |
+          gh api "repos/${{ github.repository }}/dispatches" --input - <<< "$DISPATCH"
+      - name: Log ignore reason
+        if: steps.decide.outputs.action != 'dispatch'
+        run: echo "::notice::ignored (${{ steps.decide.outputs.key }}) — ${{ steps.decide.outputs.reason }}"

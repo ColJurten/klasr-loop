@@ -1,0 +1,31 @@
+# OPTIONAL weekly fallback — NOT part of the critical path. Read-only report;
+# never creates PRs, never edits STATE.md, never dispatches implementation.
+name: claude-health-scan
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Run the health-scan skill: read docs/STATE.md, list stale agent tasks
+            (label agent:* without activity for 7+ days), summarize open agent PRs
+            and recent CI health with `gh`. Produce a <=15-line digest in the job
+            summary ONLY. Do not create issues, comments, branches, or PRs.
+          claude_args: '--allowed-tools "Read,Grep,Glob,Bash(gh issue list:*),Bash(gh pr list:*),Bash(gh run list:*)"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
