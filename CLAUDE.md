@@ -50,3 +50,7 @@ architecture and documented trade-offs over clever shortcuts.
 ## Definition of Done
 
 Lint clean, tests pass (new code has tests), no cross-tenant leak possible, STATE.md updated, PR description explains the "why", CI green.
+
+
+## Agent loop
+The event-driven agent system (states, roles, security model, configuration) is specified in `docs/AGENT_LOOP_SPEC.md`. Orchestration is deterministic code under `scripts/agent/` — run `npm test` there before changing it.

@@ -1,0 +1,19 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 42,
+    "labels": [
+      {
+        "name": "agent-task"
+      }
+    ],
+    "body": "## Contexte\n\nLibre discussion ici (non fiable).\n\n<!-- klasr-agent-spec:v1\nversion: 1\ntask_id: 42\ntitle: Example task\nproblem: The dashboard shows stale proposal counts\ndesired_outcome: Counts refresh after each confirmation\nacceptance_criteria:\n  - Confirming a proposal decrements the pending counter without reload\n  - A failed confirmation leaves the counter unchanged\nconstraints:\n  - Organization scoping preserved on every query\nnon_goals:\n  - No redesign of the dashboard layout\naffected_areas:\n  - apps/web\nrisk_level: low\nsecurity_review_required: false\ntest_plan:\n  - Vitest component test on the counter behavior\ndependencies: []\n-->"
+  },
+  "comment": {
+    "id": 9200,
+    "body": "Status update\n<!-- klasr-agent-state\n{}\n-->"
+  },
+  "sender": {
+    "login": "github-actions[bot]"
+  }
+}

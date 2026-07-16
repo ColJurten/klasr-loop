@@ -1,0 +1,35 @@
+{
+  "action": "submitted",
+  "review": {
+    "id": 77003,
+    "state": "approved",
+    "body": "malicious"
+  },
+  "pull_request": {
+    "number": 45,
+    "labels": [
+      {
+        "name": "agent-task"
+      },
+      {
+        "name": "agent:awaiting-supervisor"
+      }
+    ],
+    "head": {
+      "ref": "feature/42-counter-refresh",
+      "sha": "abc1234def",
+      "repo": {
+        "full_name": "attacker/klasr-loop"
+      }
+    },
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "ColJurten/klasr-loop"
+      }
+    }
+  },
+  "sender": {
+    "login": "ColJurten"
+  }
+}
