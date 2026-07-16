@@ -1,0 +1,15 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 42,
+    "labels": [
+      {
+        "name": "agent-task"
+      }
+    ],
+    "body": "Please fix stale counters"
+  },
+  "sender": {
+    "login": "ColJurten"
+  }
+}

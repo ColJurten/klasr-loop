@@ -1,0 +1,11 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 557,
+    "run_attempt": 2,
+    "conclusion": "failure",
+    "head_branch": "main",
+    "head_sha": "74fd9fc00",
+    "pull_requests": []
+  }
+}

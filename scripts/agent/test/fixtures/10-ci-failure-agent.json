@@ -1,0 +1,18 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 556,
+    "run_attempt": 1,
+    "conclusion": "failure",
+    "head_branch": "feature/42-counter-refresh",
+    "head_sha": "abc1234def",
+    "pull_requests": [
+      {
+        "number": 45,
+        "head": {
+          "ref": "feature/42-counter-refresh"
+        }
+      }
+    ]
+  }
+}
