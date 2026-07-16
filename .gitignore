@@ -11,3 +11,6 @@ __pycache__/
 .claude/settings.local.json
 *.log
 .DS_Store
+-e 
+# Agent loop transient verdicts
+.agent/
