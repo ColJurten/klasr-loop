@@ -6,7 +6,6 @@ __pycache__/
 *.pyc
 .venv/
 .env
-.env.*
 !.env.example
 .claude/settings.local.json
 *.log
