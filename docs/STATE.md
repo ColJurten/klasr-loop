@@ -2,7 +2,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-07-14 (rev. architecture)
+> Last updated: 2026-07-16 (feedback workflow bootstrap fix)
 
 ## In progress
 
@@ -22,6 +22,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-07-16 — Agent loop v2 (spec-driven, event-driven) : suppression du cron triage ; adapters intake/feedback/ci-recovery → repository_dispatch → worker (dédup, MAX_AGENT_CYCLES, concurrence par tâche) → _claude-run réutilisable ; spec klasr-agent-spec:v1 + validateur ; machine à états agent:* + commentaire de contrôle unique ; rôles orchestrator (code déterministe)/spec-writer/implementer/verifier/security-reviewer/feedback-responder ; issues auto fingerprint-dédupliquées sur échec CI branche protégée ; 48 tests node:test verts ; actionlint clean. Voir docs/AGENT_LOOP_SPEC.md.
 
 - [x] 2026-07-14 — Revue d'architecture REAC (docs/ARCHITECTURE.md, ADR-001…006) : TypeScript unique (suppression FastAPI, pipeline porté en NestJS + 9 tests), suppression MinIO et Redis (pg-boss), MongoDB réduit à la collection `analyses` (compétence C8, module dédié). API : 16 tests verts.
 - [x] 2026-07-14 — UI refaite selon la charte klasr (noir/blanc cassé, lavande/sauge/pêche fonctionnels, Inter + JetBrains Mono, zéro ombre) : landing complète (hero, bénéfices, étapes, témoignage, pricing), shell avec sidebar, dashboard (metric cards, zone de dépôt, file avec « Tout valider » dominant, badges de confiance, bandeau RGPD). Web : 4 tests verts, build OK.

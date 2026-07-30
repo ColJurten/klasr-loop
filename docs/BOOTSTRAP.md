@@ -31,7 +31,7 @@ claude mcp add github -- npx -y @modelcontextprotocol/server-github   # connecto
 scripts/new-worktree.sh feature/1-bootstrap
 # in the worktree:
 claude
-> Use the planner agent to plan the NestJS + Next.js + FastAPI scaffolding, then implement, then verify.
+> Use the planner agent to plan NestJS + Next.js work, then implement, then verify.
 /goal apps/api lints and its tests pass
 ```
 

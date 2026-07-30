@@ -1,0 +1,28 @@
+{
+  "action": "submitted",
+  "review": {
+    "id": 77002,
+    "state": "approved",
+    "body": "lgtm"
+  },
+  "pull_request": {
+    "number": 50,
+    "labels": [],
+    "head": {
+      "ref": "feature/50-manual-work",
+      "sha": "ffff000",
+      "repo": {
+        "full_name": "ColJurten/klasr-loop"
+      }
+    },
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "ColJurten/klasr-loop"
+      }
+    }
+  },
+  "sender": {
+    "login": "ColJurten"
+  }
+}

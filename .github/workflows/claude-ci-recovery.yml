@@ -1,0 +1,80 @@
+# Secure CI-completion handler. Runs in the DEFAULT-BRANCH context with the
+# trusted revision only (workflow_run never executes PR code here).
+# Agent-PR failure  -> bounded repair dispatch (worker enforces the cycle cap).
+# Protected-branch failure -> deterministic fingerprinted issue, NO Claude session.
+name: claude-ci-recovery
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions:
+  contents: write # repository_dispatch
+  issues: write # fingerprinted protected-branch issues
+  actions: read # failed-job logs
+
+concurrency:
+  group: klasr-ci-recovery-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    if: github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted default branch only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts/agent
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix scripts/agent
+      - name: Normalize event and decide
+        id: decide
+        env:
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: node scripts/agent/normalize-event.mjs "workflow_run" "$GITHUB_EVENT_PATH"
+
+      - name: Dispatch repair cycle (agent PR failure)
+        if: steps.decide.outputs.action == 'dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH: ${{ steps.decide.outputs.dispatch }}
+        run: gh api "repos/${{ github.repository }}/dispatches" --input - <<< "$DISPATCH"
+
+      - name: Fingerprint + create/update issue (protected-branch failure)
+        if: steps.decide.outputs.action == 'protected-branch-failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+          failed_job=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+            --jq '[.jobs[] | select(.conclusion=="failure")][0].name' 2>/dev/null || echo "unknown")
+          # First failing step name = stable-enough error signature without log scraping
+          signature=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+            --jq '[.jobs[] | select(.conclusion=="failure") | .steps[] | select(.conclusion=="failure")][0].name' 2>/dev/null || echo "unknown-step")
+          jq -n --arg cat "ci-failure-protected" --arg wf "ci" --arg job "$failed_job" \
+                --arg path "$BRANCH" --arg sig "$signature" \
+                --arg title "ci: échec sur $BRANCH — job $failed_job" \
+                --arg url "$RUN_URL" --arg sha "$SHA" \
+                '{category:$cat, workflow:$wf, job:$job, path:$path, signature:$sig, title:$title, run_url:$url, head_sha:$sha, evidence:$sig}' \
+                > /tmp/finding.json
+          node scripts/agent/fingerprint-issue.mjs /tmp/finding.json > /tmp/issue.json
+          fp=$(jq -r .fingerprint /tmp/issue.json)
+          existing=$(gh issue list --state open --search "klasr-fingerprint:$fp in:body" --json number --jq '.[0].number' || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurrence: run $RUN_URL (commit $SHA)."
+            echo "::notice::updated existing issue #$existing (fingerprint $fp)"
+          else
+            gh issue create \
+              --title "$(jq -r .title /tmp/issue.json)" \
+              --body "$(jq -r .body /tmp/issue.json)" \
+              --label "bug" --label "ci-failure" --label "agent:needs-spec"
+          fi

@@ -1,0 +1,63 @@
+# Supervisor feedback adapter. NOTE: commit_comment is no longer a GitHub
+# Actions trigger (removed from the platform event list); commit-level commands
+# are covered by normalization (scripts/agent) for API-delivered payloads, and
+# supervisors use PR-conversation commands instead.
+# NEVER checks out PR head code — the filter runs
+# trusted default-branch scripts against the event payload only. Fork PRs are
+# rejected inside normalize-event.mjs before any dispatch.
+name: claude-feedback
+
+on:
+  pull_request:
+    types: [synchronize, ready_for_review, opened, reopened]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write # repository_dispatch only
+
+concurrency:
+  group: klasr-feedback-${{ github.event.pull_request.number || github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  filter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted default branch only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts/agent
+      - name: Detect agent runtime on the default branch
+        id: runtime
+        run: |
+          if [ -f scripts/agent/package.json ] && [ -f scripts/agent/package-lock.json ] && [ -f scripts/agent/normalize-event.mjs ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::scripts/agent is not yet present on the default branch; skipping feedback filtering until the bootstrap PR is merged."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.runtime.outputs.available == 'true'
+        with: { node-version: 20 }
+      - if: steps.runtime.outputs.available == 'true'
+        run: npm ci --prefix scripts/agent
+      - name: Normalize event and decide
+        id: decide
+        if: steps.runtime.outputs.available == 'true'
+        env:
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: node scripts/agent/normalize-event.mjs "${{ github.event_name }}" "$GITHUB_EVENT_PATH"
+      - name: Dispatch worker
+        if: steps.runtime.outputs.available == 'true' && steps.decide.outputs.action == 'dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH: ${{ steps.decide.outputs.dispatch }}
+        run: gh api "repos/${{ github.repository }}/dispatches" --input - <<< "$DISPATCH"
+      - name: Log ignore reason
+        if: steps.runtime.outputs.available == 'true' && steps.decide.outputs.action != 'dispatch'
+        run: echo "::notice::ignored (${{ steps.decide.outputs.key }}) — ${{ steps.decide.outputs.reason }}"

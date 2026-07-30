@@ -1,0 +1,120 @@
+# Reusable Claude runner — the ONLY place the Claude Code Action is invoked.
+# Callers pass a role; tools are least-privilege per role. Admin hardening:
+# SHA-pin the two `uses:` below (see docs/AGENT_LOOP_SPEC.md §Configuration).
+name: _claude-run
+
+on:
+  workflow_call:
+    inputs:
+      role:
+        description: 'spec-writer | implementer | verifier | security-reviewer | feedback-responder'
+        required: true
+        type: string
+      prompt:
+        required: true
+        type: string
+      ref:
+        description: 'Git ref to check out (trusted base or agent branch)'
+        required: true
+        type: string
+      use_app_token:
+        description: 'Push/comment with the GitHub App identity so follow-on events propagate'
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      verdict:
+        description: 'Structured verdict JSON written by verifier/security roles'
+        value: ${{ jobs.run.outputs.verdict }}
+      identity:
+        description: 'app | github-token'
+        value: ${{ jobs.run.outputs.identity }}
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      KLASR_APP_ID:
+        required: false
+      KLASR_APP_PRIVATE_KEY:
+        required: false
+
+permissions: {} # callers grant; this reusable workflow holds no ambient rights
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
+      checks: read
+    steps:
+      - name: Mint GitHub App token (distinct identity, event propagation)
+        id: app
+        if: inputs.use_app_token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.KLASR_APP_ID }}
+          private-key: ${{ secrets.KLASR_APP_PRIVATE_KEY }}
+
+      - name: Resolve effective token
+        id: token
+        run: |
+          if [ -n "${{ steps.app.outputs.token }}" ]; then
+            echo "value=${{ steps.app.outputs.token }}" >> "$GITHUB_OUTPUT"
+            echo "identity=app" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.token }}" >> "$GITHUB_OUTPUT"
+            echo "identity=github-token" >> "$GITHUB_OUTPUT"
+            echo "::notice::Running with GITHUB_TOKEN — pushes will NOT trigger CI (degraded mode, see docs/AGENT_LOOP_SPEC.md)"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.value }}
+          persist-credentials: ${{ inputs.role == 'implementer' || inputs.role == 'feedback-responder' }}
+
+      - name: Select least-privilege tools for role
+        id: tools
+        run: |
+          case "${{ inputs.role }}" in
+            spec-writer)
+              echo 'value=--allowed-tools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh label:*)"' >> "$GITHUB_OUTPUT" ;;
+            implementer|feedback-responder)
+              echo 'value=--allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh api:*),Bash(npm:*),Bash(node:*),Bash(npx:*)"' >> "$GITHUB_OUTPUT" ;;
+            verifier)
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh api:*),Bash(npm test:*),Bash(npm run lint:*),Bash(npm ci:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
+            security-reviewer)
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"' >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "unknown role"; exit 1 ;;
+          esac
+
+      - name: Run Claude (${{ inputs.role }})
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ inputs.prompt }}
+          claude_args: ${{ steps.tools.outputs.value }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.value }}
+
+      - name: Collect structured result
+        id: result
+        if: always()
+        run: |
+          if [ -f .agent/verdict.json ]; then
+            {
+              echo "verdict<<KLASR_EOF"
+              cat .agent/verdict.json
+              echo "KLASR_EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=" >> "$GITHUB_OUTPUT"
+          fi
+    outputs:
+      verdict: ${{ steps.result.outputs.verdict }}
+      identity: ${{ steps.token.outputs.identity }}

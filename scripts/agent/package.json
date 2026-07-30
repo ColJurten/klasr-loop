@@ -1,0 +1,13 @@
+{
+  "name": "@klasr/agent-orchestration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic orchestration core for the Klasr agent loop (event normalization, spec validation, state machine, dedupe, fingerprints).",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "yaml": "2.4.5"
+  }
+}

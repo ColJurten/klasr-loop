@@ -1,0 +1,53 @@
+name: Agent task
+description: A task to be handled by the Klasr agent loop (spec-driven).
+title: '[agent] '
+labels: ['agent-task', 'agent:needs-spec']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The agent loop will convert this issue into a formal specification
+        (`klasr-agent-spec:v1`) before any implementation. Implementation only
+        starts when a supervisor applies the `agent:queued` label to a valid spec.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problème
+      description: Ce qui manque ou dysfonctionne, de façon observable.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Résultat attendu
+      description: L'état final observable souhaité.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Contraintes / hors périmètre (optionnel)
+      description: Invariants à préserver, exclusions explicites, zones touchées.
+  - type: markdown
+    attributes:
+      value: |
+        <details><summary>Squelette de spec (rempli par le spec-writer)</summary>
+
+        ```
+        <!-- klasr-agent-spec:v1
+        version: 1
+        task_id: 0
+        title:
+        problem:
+        desired_outcome:
+        acceptance_criteria: []
+        constraints: []
+        non_goals: []
+        affected_areas: []
+        risk_level: low
+        security_review_required: false
+        test_plan: []
+        dependencies: []
+        -->
+        ```
+        </details>
