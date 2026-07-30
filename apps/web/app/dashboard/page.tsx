@@ -1,13 +1,12 @@
+import { redirect } from 'next/navigation';
+import { getServerSession } from 'next-auth';
 import { UploadCloud } from 'lucide-react';
+import { authOptions } from '@/lib/auth';
 import { fetchPendingProposals } from '@/lib/api';
 import type { ProposalView } from '@/lib/types';
 import { ProposalQueue } from './proposal-queue';
 
 export const dynamic = 'force-dynamic';
-
-// Tenant de démonstration tant que l'auth n'est pas branchée (backlog #1) —
-// ensuite dérivé de la session NextAuth, jamais d'une saisie client.
-const DEMO_ORGANIZATION_ID = 'org_demo';
 
 const FALLBACK_PROPOSALS: ProposalView[] = [
   {
@@ -60,10 +59,17 @@ const METRICS = [
 ];
 
 export default async function DashboardPage() {
+  const session = await getServerSession(authOptions);
+  // Defensive: middleware already blocks unauthenticated access to /dashboard.
+  if (!session?.user) {
+    redirect('/');
+  }
+  const organizationId = session.user.organizationId;
+
   let proposals = FALLBACK_PROPOSALS;
   let live = true;
   try {
-    proposals = await fetchPendingProposals(DEMO_ORGANIZATION_ID);
+    proposals = await fetchPendingProposals(organizationId);
   } catch {
     live = false; // API hors ligne : données de démonstration, l'UI reste explorable
   }
@@ -99,7 +105,7 @@ export default async function DashboardPage() {
         </p>
       </section>
 
-      <ProposalQueue organizationId={DEMO_ORGANIZATION_ID} initialProposals={proposals} />
+      <ProposalQueue organizationId={organizationId} initialProposals={proposals} />
     </main>
   );
 }

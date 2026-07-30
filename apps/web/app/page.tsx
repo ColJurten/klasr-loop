@@ -53,8 +53,11 @@ export default function LandingPage() {
           <a href="#tarifs" className="hover:text-ink">
             Tarifs
           </a>
+          <Link href="/login?callbackUrl=/dashboard" className="hover:text-ink">
+            Se connecter
+          </Link>
           <Link
-            href="/dashboard"
+            href="/login?callbackUrl=/dashboard"
             className="rounded-lg bg-ink px-4 py-2 font-medium text-paper hover:bg-ink/85"
           >
             Essayer gratuitement
@@ -73,7 +76,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Link
-              href="/dashboard"
+              href="/login?callbackUrl=/dashboard"
               className="rounded-lg bg-ink px-6 py-3 text-sm font-medium text-paper hover:bg-ink/85"
             >
               Essayer gratuitement
@@ -156,7 +159,7 @@ export default function LandingPage() {
                 <p className="mt-2 font-mono text-xl">{tier.price}</p>
                 <p className="mt-2 text-sm text-ink/60">{tier.detail}</p>
                 <Link
-                  href="/dashboard"
+                  href="/login?callbackUrl=/dashboard"
                   className={`mt-6 block rounded-lg px-4 py-2 text-center text-sm font-medium ${
                     tier.featured
                       ? 'bg-ink text-paper hover:bg-ink/85'
