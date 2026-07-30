@@ -43,7 +43,8 @@ export class LocalHeuristicProvider implements LlmProvider {
       const parts = [...tokenize(path)];
       if (parts.length === 0) continue;
       const score = parts.filter((part) => tokenHits(part, tokens)).length / parts.length;
-      if (score > bestScore) {
+      const deeperThanBest = bestPath ? path.split('/').length > bestPath.split('/').length : true;
+      if (score > bestScore || (score === bestScore && deeperThanBest)) {
         bestPath = path;
         bestScore = score;
       }

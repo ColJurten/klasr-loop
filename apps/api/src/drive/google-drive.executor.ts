@@ -22,15 +22,29 @@ export class GoogleDriveExecutor implements DriveExecutor {
 
   async listMetadata(organizationId: string): Promise<DriveMetadataItem[]> {
     const accessToken = await this.tokens.getAccessToken(organizationId);
-    const response = await fetch(
-      'https://www.googleapis.com/drive/v3/files?pageSize=1000&fields=files(id,name,mimeType,size,parents)',
-      { headers: { Authorization: `Bearer ${accessToken}` } },
-    );
-    if (!response.ok) throw new Error(`Google Drive list failed: ${response.status}`);
-    const payload = (await response.json()) as {
-      files?: Array<{ id: string; name: string; mimeType: string; size?: string; parents?: string[] }>;
-    };
-    return (payload.files ?? []).map((file) => ({
+    const files: Array<{ id: string; name: string; mimeType: string; size?: string; parents?: string[] }> = [];
+    let pageToken: string | undefined;
+    do {
+      const search = new URLSearchParams({
+        pageSize: '1000',
+        fields: 'nextPageToken,files(id,name,mimeType,size,parents)',
+        q: 'trashed=false',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+      });
+      if (pageToken) search.set('pageToken', pageToken);
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files?${search}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) throw new Error(`Google Drive list failed: ${response.status}`);
+      const payload = (await response.json()) as {
+        nextPageToken?: string;
+        files?: Array<{ id: string; name: string; mimeType: string; size?: string; parents?: string[] }>;
+      };
+      files.push(...(payload.files ?? []));
+      pageToken = payload.nextPageToken;
+    } while (pageToken);
+    return files.map((file) => ({
       id: file.id,
       name: file.name,
       mimeType: file.mimeType,
@@ -50,11 +64,15 @@ export class GoogleDriveExecutor implements DriveExecutor {
   }
 
   async moveAndRename(command: MoveRenameCommand): Promise<void> {
-    const destination = await this.folders.findByPath(command.organizationId, command.destinationPath);
+    const destination = command.destinationFolderExternalId
+      ? await this.folders.findByExternalId(command.organizationId, command.destinationFolderExternalId)
+      : command.destinationPath
+        ? await this.folders.findByPath(command.organizationId, command.destinationPath)
+        : null;
     if (!destination) throw new NotFoundException('Destination folder not found');
     const accessToken = await this.tokens.getAccessToken(command.organizationId);
     const metadataResponse = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(command.documentExternalId)}?fields=parents`,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(command.documentExternalId)}?fields=parents&supportsAllDrives=true`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (!metadataResponse.ok) {
@@ -65,6 +83,7 @@ export class GoogleDriveExecutor implements DriveExecutor {
     const params = new URLSearchParams({
       addParents: destination.externalId,
       fields: 'id,name,parents',
+      supportsAllDrives: 'true',
     });
     if (oldParents.length > 0) {
       params.set('removeParents', oldParents.join(','));
@@ -77,10 +96,58 @@ export class GoogleDriveExecutor implements DriveExecutor {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name: command.newName }),
+        body: JSON.stringify(command.rename === false ? {} : { name: command.newName }),
       },
     );
     if (!response.ok) throw new Error(`Google Drive move/rename failed: ${response.status}`);
+  }
+
+  async ensureHoldingFolder(organizationId: string, referenceRootExternalId: string): Promise<DriveMetadataItem> {
+    const accessToken = await this.tokens.getAccessToken(organizationId);
+    const query = [
+      "mimeType='application/vnd.google-apps.folder'",
+      "name='À traiter manuellement'",
+      `'${referenceRootExternalId.replace(/'/g, "\\'")}' in parents`,
+      'trashed=false',
+    ].join(' and ');
+    const search = new URLSearchParams({
+      q: query,
+      pageSize: '1',
+      fields: 'files(id,name,mimeType,parents)',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+    });
+    const existingResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${search}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!existingResponse.ok) throw new Error(`Google Drive holding lookup failed: ${existingResponse.status}`);
+    const existing = (await existingResponse.json()) as {
+      files?: Array<{ id: string; name: string; mimeType: string; parents?: string[] }>;
+    };
+    const found = existing.files?.[0];
+    if (found) {
+      return { id: found.id, name: found.name, mimeType: found.mimeType, sizeBytes: 0, parents: found.parents ?? [] };
+    }
+
+    const createParams = new URLSearchParams({
+      fields: 'id,name,mimeType,parents',
+      supportsAllDrives: 'true',
+    });
+    const createResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${createParams}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'À traiter manuellement',
+        mimeType: FOLDER_MIME,
+        parents: [referenceRootExternalId],
+      }),
+    });
+    if (!createResponse.ok) throw new Error(`Google Drive holding create failed: ${createResponse.status}`);
+    const created = (await createResponse.json()) as { id: string; name: string; mimeType: string; parents?: string[] };
+    return { id: created.id, name: created.name, mimeType: created.mimeType, sizeBytes: 0, parents: created.parents ?? [] };
   }
 }
 

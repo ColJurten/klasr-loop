@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { KlasrLogo } from '@/components/logo';
 import { ProposalQueue } from '@/app/dashboard/proposal-queue';
-import type { ProposalView } from '@/lib/types';
+import type { FolderChoiceView, ProposalView } from '@/lib/types';
 
 const DEMO_ORGANIZATION_ID = 'org_demo_local';
 
@@ -20,6 +20,7 @@ const DEMO_PROPOSALS: ProposalView[] = [
     id: 'prop_demo_1',
     proposedName: 'Facture_AWS_2026-07.pdf',
     destinationPath: '/Comptabilité/2026/Cloud',
+    destinationFolderExternalId: 'demo_folder_cloud',
     confidence: 0.94,
     source: 'LLM',
     document: {
@@ -33,6 +34,7 @@ const DEMO_PROPOSALS: ProposalView[] = [
     id: 'prop_demo_2',
     proposedName: 'Releve_BanquePopulaire_2026-06.pdf',
     destinationPath: '/Banque/Relevés/2026',
+    destinationFolderExternalId: 'demo_folder_banque',
     confidence: 0.97,
     source: 'RULE',
     document: {
@@ -46,6 +48,7 @@ const DEMO_PROPOSALS: ProposalView[] = [
     id: 'prop_demo_3',
     proposedName: 'Avenant_Nexa_Maintenance_2026.docx',
     destinationPath: '/Juridique/Contrats/2026',
+    destinationFolderExternalId: 'demo_folder_juridique',
     confidence: 0.68,
     source: 'LLM',
     isNewFolder: true,
@@ -60,6 +63,7 @@ const DEMO_PROPOSALS: ProposalView[] = [
     id: 'prop_demo_retry',
     proposedName: 'Facture_Orange_2026-07.pdf',
     destinationPath: '/Comptabilité/2026/Télécom',
+    destinationFolderExternalId: 'demo_folder_telecom',
     confidence: 0.82,
     source: 'LLM',
     document: {
@@ -69,6 +73,13 @@ const DEMO_PROPOSALS: ProposalView[] = [
       sizeBytes: 720_000,
     },
   },
+];
+
+const DEMO_FOLDERS: FolderChoiceView[] = [
+  { externalId: 'demo_folder_cloud', name: 'Cloud', parentExternalId: null, path: '/Comptabilité/2026/Cloud' },
+  { externalId: 'demo_folder_telecom', name: 'Télécom', parentExternalId: null, path: '/Comptabilité/2026/Télécom' },
+  { externalId: 'demo_folder_banque', name: '2026', parentExternalId: null, path: '/Banque/Relevés/2026' },
+  { externalId: 'demo_folder_juridique', name: '2026', parentExternalId: null, path: '/Juridique/Contrats/2026' },
 ];
 
 const ACTIVITY = [
@@ -103,7 +114,7 @@ export function DemoWorkspace() {
 
   async function confirmDemoProposal(
     proposalId: string,
-    _overrideDestinationPath?: string,
+    _options?: string | { finalName?: string; destinationFolderExternalId?: string },
   ) {
     await new Promise((resolve) => setTimeout(resolve, 180));
     if (proposalId === 'prop_demo_retry' && !failedOnce.current.has(proposalId)) {
@@ -173,7 +184,9 @@ export function DemoWorkspace() {
 
           <ProposalQueue
             initialProposals={DEMO_PROPOSALS}
+            folders={DEMO_FOLDERS}
             onConfirmProposal={confirmDemoProposal}
+            onRejectProposal={async () => undefined}
           />
         </div>
 

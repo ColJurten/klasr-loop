@@ -4,6 +4,8 @@ import { UsageMetricsRepository } from '../metrics/usage-metrics.repository';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { ClassificationService } from '../classification/classification.service';
 import { JobsService } from '../jobs/jobs.service';
+import { FoldersRepository } from '../drive/folders.repository';
+import { SyncService } from '../classification/sync.service';
 
 @Controller('organizations/:organizationId/dashboard')
 @UseGuards(InternalServiceGuard)
@@ -13,16 +15,21 @@ export class DashboardController {
     private readonly connections: DriveConnectionsService,
     private readonly metrics: UsageMetricsRepository,
     private readonly jobs: JobsService,
+    private readonly folders: FoldersRepository,
+    private readonly sync: SyncService,
   ) {}
 
   @Get()
   async get(@Param('organizationId') organizationId: string) {
-    const [proposals, connection, totals, history, queue] = await Promise.all([
+    const [proposals, connection, totals, history, queue, referenceRoot, folders, inputItems] = await Promise.all([
       this.classification.listPending(organizationId),
       this.connections.findByOrganization(organizationId),
       this.metrics.totals(organizationId),
       this.classification.listHistory(organizationId),
       this.jobs.queueState(),
+      this.folders.getReferenceRoot(organizationId),
+      this.folders.listInherited(organizationId),
+      this.sync.listInputItems(organizationId).catch(() => []),
     ]);
     return {
       mode: process.env.KLASR_LOCAL_MVP === 'true' ? 'local' : 'production',
@@ -35,6 +42,9 @@ export class DashboardController {
         : null,
       metrics: totals,
       queue,
+      referenceRoot,
+      folders,
+      inputItems,
       proposals,
       history,
     };

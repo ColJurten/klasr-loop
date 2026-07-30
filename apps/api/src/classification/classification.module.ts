@@ -6,7 +6,7 @@ import { DocumentsModule } from '../documents/documents.module';
 import { JobsModule } from '../jobs/jobs.module';
 import { UsageMetricsRepository } from '../metrics/usage-metrics.repository';
 import { RulesModule } from '../rules/rules.module';
-import { ClassificationController, SyncController } from './classification.controller';
+import { ClassificationController, DriveWorkflowController, SyncController } from './classification.controller';
 import { ClassificationService } from './classification.service';
 import { AnalysisService, LLM_PROVIDERS } from './analysis.service';
 import { LocalOcrAdapter } from './local-ocr.adapter';
@@ -20,7 +20,7 @@ import { TesseractOcrAdapter } from './tesseract-ocr.adapter';
 
 @Module({
   imports: [DocumentsModule, DriveModule, JobsModule, RulesModule, AnalysesModule],
-  controllers: [ClassificationController, SyncController],
+  controllers: [ClassificationController, SyncController, DriveWorkflowController],
   providers: [
     ClassificationService,
     AnalysisService,

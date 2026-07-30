@@ -9,7 +9,9 @@ export interface MoveRenameCommand {
   organizationId: string;
   documentExternalId: string;
   newName: string;
-  destinationPath: string;
+  destinationPath?: string;
+  destinationFolderExternalId?: string;
+  rename?: boolean;
 }
 
 export interface DriveExecutor {

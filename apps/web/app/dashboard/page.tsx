@@ -4,8 +4,8 @@ import { AlertTriangle, PlugZap, RefreshCcw } from 'lucide-react';
 import { authOptions } from '@/lib/auth';
 import { getDashboardData } from '@/lib/api';
 import type { DashboardView } from '@/lib/types';
+import { DriveWorkflow } from './drive-workflow';
 import { ProposalQueue } from './proposal-queue';
-import { SyncButton } from './sync-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,7 +70,6 @@ export default async function DashboardPage() {
                 : 'Connectez Google pour synchroniser les métadonnées Drive.'}
             </p>
           </div>
-          <SyncButton disabled={!data} />
         </div>
       </section>
 
@@ -98,7 +97,12 @@ export default async function DashboardPage() {
         </p>
       </section>
 
-      <ProposalQueue initialProposals={data?.proposals ?? []} />
+      <DriveWorkflow data={data} />
+
+      <section aria-labelledby="review-title">
+        <h2 id="review-title" className="mb-3 text-sm font-medium">4. Suggestions à revoir</h2>
+        <ProposalQueue initialProposals={data?.proposals ?? []} folders={data?.folders ?? []} />
+      </section>
 
       {data && data.history.length > 0 && (
         <section aria-label="Historique" className="mt-10">

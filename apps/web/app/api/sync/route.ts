@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getDashboardData, startSync } from '@/lib/api';
+import { bffErrorResponse } from '@/lib/bff-errors';
 
 export async function POST() {
   try {
     const result = await startSync();
     await waitForDashboardRefreshableState(result.enqueued);
     return NextResponse.json(result);
-  } catch {
-    return NextResponse.json({ error: 'sync failed' }, { status: 401 });
+  } catch (error) {
+    return bffErrorResponse(error, 'sync failed');
   }
 }
 

@@ -25,11 +25,39 @@ export class ProposalsRepository {
     });
   }
 
+  async claimPending(
+    organizationId: string,
+    proposalId: string,
+    claimStatus: Extract<ProposalStatus, 'CONFIRMING' | 'REJECTING'>,
+  ): Promise<ProposalWithDocument | null> {
+    const claimed = await this.prisma.classificationProposal.updateMany({
+      where: { id: proposalId, organizationId, status: 'PENDING' },
+      data: { status: claimStatus },
+    });
+    if (claimed.count !== 1) return null;
+    return this.prisma.classificationProposal.findFirst({
+      where: { id: proposalId, organizationId, status: claimStatus },
+      include: { document: true },
+    });
+  }
+
+  async restorePendingClaim(
+    organizationId: string,
+    proposalId: string,
+    claimStatus: Extract<ProposalStatus, 'CONFIRMING' | 'REJECTING'>,
+  ): Promise<void> {
+    await this.prisma.classificationProposal.updateMany({
+      where: { id: proposalId, organizationId, status: claimStatus },
+      data: { status: 'PENDING' },
+    });
+  }
+
   createPending(params: {
     organizationId: string;
     documentId: string;
     proposedName: string;
     destinationPath: string;
+    destinationFolderExternalId?: string;
     confidence: number;
     source: 'RULE' | 'LLM';
     modelUsed?: string;
@@ -41,6 +69,7 @@ export class ProposalsRepository {
         documentId: params.documentId,
         proposedName: params.proposedName,
         destinationPath: params.destinationPath,
+        destinationFolderExternalId: params.destinationFolderExternalId,
         confidence: params.confidence,
         source: params.source,
         modelUsed: params.modelUsed,
@@ -60,6 +89,50 @@ export class ProposalsRepository {
   }
 
   /** Single transaction: decide proposal + mark document + write audit history. */
+  confirmClaimedTransaction(params: {
+    organizationId: string;
+    proposalId: string;
+    documentId: string;
+    status: Extract<ProposalStatus, 'CONFIRMED' | 'OVERRIDDEN'>;
+    newName: string;
+    destinationPath: string;
+    destinationFolderExternalId?: string;
+    previousName: string;
+    actorId?: string;
+  }): Promise<void> {
+    const { organizationId } = params;
+    return this.prisma.$transaction(async (tx) => {
+      const proposal = await tx.classificationProposal.updateMany({
+        where: { id: params.proposalId, organizationId, status: 'CONFIRMING' },
+        data: {
+          status: params.status,
+          decidedAt: new Date(),
+          finalName: params.newName,
+          finalDestinationPath: params.destinationPath,
+          finalDestinationFolderExternalId: params.destinationFolderExternalId,
+        },
+      });
+      if (proposal.count !== 1) {
+        throw new Error('Claimed proposal was not persisted');
+      }
+      await tx.document.updateMany({
+        where: { id: params.documentId, organizationId },
+        data: { status: 'CLASSIFIED', name: params.newName },
+      });
+      await tx.actionHistory.create({
+        data: {
+          action: 'MOVE_RENAME',
+          fromName: params.previousName,
+          toName: params.newName,
+          toPath: params.destinationPath,
+          documentId: params.documentId,
+          organizationId,
+          actorId: params.actorId,
+        },
+      });
+    });
+  }
+
   confirmTransaction(params: {
     organizationId: string;
     proposalId: string;
@@ -67,32 +140,62 @@ export class ProposalsRepository {
     status: Extract<ProposalStatus, 'CONFIRMED' | 'OVERRIDDEN'>;
     newName: string;
     destinationPath: string;
+    destinationFolderExternalId?: string;
+    previousName: string;
+    actorId?: string;
+  }): Promise<void> {
+    return this.confirmClaimedTransaction(params);
+  }
+
+  rejectClaimedTransaction(params: {
+    organizationId: string;
+    proposalId: string;
+    documentId: string;
+    destinationPath: string;
+    destinationFolderExternalId: string;
     previousName: string;
     actorId?: string;
   }): Promise<void> {
     const { organizationId } = params;
-    return this.prisma
-      .$transaction([
-        this.prisma.classificationProposal.updateMany({
-          where: { id: params.proposalId, organizationId },
-          data: { status: params.status, decidedAt: new Date() },
-        }),
-        this.prisma.document.updateMany({
-          where: { id: params.documentId, organizationId },
-          data: { status: 'CLASSIFIED', name: params.newName },
-        }),
-        this.prisma.actionHistory.create({
-          data: {
-            action: 'MOVE_RENAME',
-            fromName: params.previousName,
-            toName: params.newName,
-            toPath: params.destinationPath,
-            documentId: params.documentId,
-            organizationId,
-            actorId: params.actorId,
-          },
-        }),
-      ])
-      .then(() => undefined);
+    return this.prisma.$transaction(async (tx) => {
+      const proposal = await tx.classificationProposal.updateMany({
+        where: { id: params.proposalId, organizationId, status: 'REJECTING' },
+        data: {
+          status: 'REJECTED',
+          decidedAt: new Date(),
+          finalDestinationPath: params.destinationPath,
+          finalDestinationFolderExternalId: params.destinationFolderExternalId,
+        },
+      });
+      if (proposal.count !== 1) {
+        throw new Error('Claimed proposal was not persisted');
+      }
+      await tx.document.updateMany({
+        where: { id: params.documentId, organizationId },
+        data: { status: 'MANUAL' },
+      });
+      await tx.actionHistory.create({
+        data: {
+          action: 'REJECT',
+          fromName: params.previousName,
+          toPath: params.destinationPath,
+          documentId: params.documentId,
+          organizationId,
+          actorId: params.actorId,
+        },
+      });
+    });
+  }
+
+  rejectTransaction(params: {
+    organizationId: string;
+    proposalId: string;
+    documentId: string;
+    destinationPath: string;
+    destinationFolderExternalId: string;
+    previousName: string;
+    actorId?: string;
+  }): Promise<void> {
+    return this.rejectClaimedTransaction(params);
   }
 }

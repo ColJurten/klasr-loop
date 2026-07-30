@@ -31,7 +31,11 @@ describe('AnalysisService', () => {
         },
       ]),
     };
-    const folders = { listPaths: jest.fn().mockResolvedValue(['/Comptabilité/Électricité']) };
+    const folders = {
+      listInherited: jest.fn().mockResolvedValue([
+        { path: '/Comptabilité/Électricité', externalId: 'folder_elec' },
+      ]),
+    };
     const proposals = { createPending: jest.fn().mockResolvedValue(undefined) };
     const analyses = { record: jest.fn().mockResolvedValue(undefined) };
     const metrics = { increment: jest.fn().mockResolvedValue(undefined) };
@@ -61,7 +65,11 @@ describe('AnalysisService', () => {
       }),
     );
     expect(analyses.record).toHaveBeenCalledWith(
-      expect.not.objectContaining({ bytes: expect.anything(), content: expect.anything() }),
+      expect.not.objectContaining({
+        bytes: expect.anything(),
+        content: expect.anything(),
+        ocrExcerpt: expect.anything(),
+      }),
     );
   });
 
@@ -98,7 +106,11 @@ describe('AnalysisService', () => {
     const drive = { download: jest.fn().mockResolvedValue(stream) };
     const ocr = { extractText: jest.fn().mockResolvedValue('releve bancaire compte courant') };
     const rules = { listOrdered: jest.fn().mockResolvedValue([]) };
-    const folders = { listPaths: jest.fn().mockResolvedValue(['/Comptabilité/Banque']) };
+    const folders = {
+      listInherited: jest.fn().mockResolvedValue([
+        { path: '/Comptabilité/Banque', externalId: 'folder_banque' },
+      ]),
+    };
     const proposals = { createPending: jest.fn().mockResolvedValue(undefined) };
     const analyses = { record: jest.fn().mockResolvedValue(undefined) };
     const metrics = { increment: jest.fn().mockResolvedValue(undefined) };

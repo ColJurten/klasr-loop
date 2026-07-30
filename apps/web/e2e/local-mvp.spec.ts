@@ -51,52 +51,51 @@ test.beforeEach(async () => {
   }
 });
 
-test('local sign-in syncs, renders a proposal, confirms it, and shows completed state', async ({ page }) => {
+test('local sign-in selects a reference tree, launches Drive input, reviews corrections and rejection', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByText('Mode local')).toBeVisible();
   await page.getByText('Mode local').click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
   await expect(page.getByText('Mode local')).toBeVisible();
   await expect(page.getByText('API hors ligne')).toHaveCount(0);
-  await seedLocalRule();
-  const syncResponse = page.waitForResponse((response) => response.url().endsWith('/api/sync'));
-  await page.getByRole('button', { name: /Synchroniser/ }).click();
-  await expect((await syncResponse).status()).toBe(200);
-  await page.reload();
-  await expect(page.getByText('Facture_Electricite_2026-07.pdf')).toBeVisible({ timeout: 30_000 });
-  await page.getByRole('button', { name: /Valider le classement/ }).first().click();
+
+  const referenceResponse = page.waitForResponse((response) => response.url().endsWith('/api/drive/reference-root'));
+  await page.getByRole('button', { name: /Choisir Cabinet de démonstration/ }).click();
+  await expect((await referenceResponse).status()).toBe(200);
+  await expect(page.getByText('/Comptabilité/Électricité')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('/Social/Paie')).toBeVisible();
+
+  const launchResponse = page.waitForResponse((response) => response.url().endsWith('/api/drive/launch'));
+  await page.getByLabel('Élément Drive existant').selectOption('local_input_folder');
+  await page.getByRole('button', { name: /Lancer l'organisation/ }).click();
+  await expect((await launchResponse).status()).toBe(200);
+  await page.waitForLoadState('networkidle');
+  const proposalRows = page.locator('[data-testid^="proposal-"]');
+  for (let attempt = 0; attempt < 15 && (await proposalRows.count()) < 3; attempt += 1) {
+    await page.waitForTimeout(1000);
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+  }
+  await expect(proposalRows.filter({ hasText: 'scan-facture-electricite.pdf' })).toBeVisible({ timeout: 30_000 });
+  await expect(proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' })).toBeVisible();
+  await expect(proposalRows.filter({ hasText: 'note-paie-juillet.png' })).toBeVisible();
+
+  await page.getByRole('button', { name: /Valider le classement de scan-facture-electricite.pdf/ }).click();
+
+  await proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' }).getByRole('button', { name: 'Corriger' }).click();
+  await page.getByLabel('Nom final').fill('Releve_Banque_2026-07.pdf');
+  await page.getByLabel('Dossier de destination').selectOption('local_folder_banque');
+  await page.getByRole('button', { name: /Confirmer la correction/ }).click();
+
+  await proposalRows.filter({ hasText: 'note-paie-juillet.png' }).getByRole('button', { name: 'Retirer' }).click();
+
   await expect(page.getByText('File terminée')).toBeVisible({ timeout: 15_000 });
   await page.reload();
   await expect(page.getByText('Historique récent')).toBeVisible();
   await expect(page.getByText('Rien à valider')).toBeVisible();
-  await expect(page.getByText('Facture_Electricite_2026-07.pdf')).toBeVisible();
+  const history = page.locator('section[aria-label="Historique"]');
+  await expect(history.getByText('Releve_Banque_2026-07.pdf')).toBeVisible();
+  await expect(history.getByText('/À traiter manuellement')).toBeVisible();
   await expect(page.getByText('Classés')).toBeVisible();
   await expect(page.getByText(/0 job\(s\), 0 actif\(s\), 0 échec\(s\)/)).toBeVisible();
 });
-
-async function seedLocalRule() {
-  const prisma = new PrismaClient({
-    datasources: {
-      db: {
-        url: process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/klasr',
-      },
-    },
-  });
-  try {
-    const membership = await prisma.membership.findFirstOrThrow({
-      where: { user: { email } },
-      select: { organizationId: true },
-    });
-    await prisma.classificationRule.create({
-      data: {
-        organizationId: membership.organizationId,
-        priority: 1,
-        destinationPath: '/Comptabilité/Électricité',
-        suggestedNameTemplate: 'Facture_Electricite_2026-07.pdf',
-        conditions: { create: [{ field: 'CONTENT', operator: 'CONTAINS', value: 'électricité' }] },
-      },
-    });
-  } finally {
-    await prisma.$disconnect();
-  }
-}

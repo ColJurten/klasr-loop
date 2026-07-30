@@ -1,7 +1,7 @@
 /**
  * NoSQL data-access component (REAC C8, ADR-002). MongoDB holds ONE collection:
- * raw analysis payloads (OCR excerpt + LLM responses) whose shape varies by
- * provider. A TTL index purges them automatically (RGPD + eco-design).
+ * redacted analysis metadata whose shape varies by provider. A TTL index
+ * purges it automatically (RGPD + eco-design). OCR text is not stored.
  * Tenant scoping applies here exactly as in the SQL repositories.
  */
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
@@ -11,7 +11,6 @@ import { Collection, MongoClient } from 'mongodb';
 export interface AnalysisRecord {
   organizationId: string;
   documentId: string;
-  ocrExcerpt?: string;
   llmRaw?: Record<string, unknown>;
   modelUsed?: string;
   createdAt: Date;

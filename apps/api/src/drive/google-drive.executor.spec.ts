@@ -6,6 +6,7 @@ describe('GoogleDriveExecutor', () => {
   };
   const folders = {
     findByPath: jest.fn().mockResolvedValue({ externalId: 'folder_dest' }),
+    findByExternalId: jest.fn().mockResolvedValue({ externalId: 'folder_dest' }),
   };
 
   beforeEach(() => {
@@ -33,6 +34,41 @@ describe('GoogleDriveExecutor', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
       }),
     );
+  });
+
+  it('lists every Drive metadata page, excludes trashed items, and includes shared drives', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          nextPageToken: 'page_2',
+          files: [
+            { id: 'root', name: 'Compta', mimeType: 'application/vnd.google-apps.folder', parents: [] },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          files: [
+            { id: 'shared', name: 'Shared folder', mimeType: 'application/vnd.google-apps.folder', parents: ['root'] },
+          ],
+        }),
+      });
+    const executor = new GoogleDriveExecutor(tokenService as never, folders as never);
+
+    await expect(executor.listMetadata('org_1')).resolves.toEqual([
+      expect.objectContaining({ id: 'root' }),
+      expect.objectContaining({ id: 'shared' }),
+    ]);
+
+    const firstUrl = new URL((global.fetch as jest.Mock).mock.calls[0][0]);
+    expect(firstUrl.searchParams.get('q')).toBe('trashed=false');
+    expect(firstUrl.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(firstUrl.searchParams.get('includeItemsFromAllDrives')).toBe('true');
+    expect(firstUrl.searchParams.get('fields')).toContain('nextPageToken');
+    const secondUrl = new URL((global.fetch as jest.Mock).mock.calls[1][0]);
+    expect(secondUrl.searchParams.get('pageToken')).toBe('page_2');
   });
 
   it('downloads content as a Response body stream and does not materialize bytes', async () => {
@@ -68,9 +104,21 @@ describe('GoogleDriveExecutor', () => {
       organizationId: 'org_1',
       documentExternalId: 'doc_1',
       newName: 'renamed.pdf',
-      destinationPath: '/Compta',
+      destinationFolderExternalId: 'folder_dest',
     });
 
+    const metadataUrl = new URL((global.fetch as jest.Mock).mock.calls[0][0]);
+    expect(metadataUrl.toString()).toBe(
+      'https://www.googleapis.com/drive/v3/files/doc_1?fields=parents&supportsAllDrives=true',
+    );
+    const moveUrl = new URL((global.fetch as jest.Mock).mock.calls[1][0]);
+    expect(moveUrl.toString()).toBe(
+      'https://www.googleapis.com/drive/v3/files/doc_1?addParents=folder_dest&fields=id%2Cname%2Cparents&supportsAllDrives=true&removeParents=old_a%2Cold_b',
+    );
+    expect(moveUrl.searchParams.get('addParents')).toBe('folder_dest');
+    expect(moveUrl.searchParams.get('removeParents')).toBe('old_a,old_b');
+    expect(moveUrl.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(moveUrl.searchParams.get('fields')).toBe('id,name,parents');
     expect(global.fetch).toHaveBeenLastCalledWith(
       expect.stringMatching(
         /\/drive\/v3\/files\/doc_1\?.*addParents=folder_dest.*removeParents=old_a%2Cold_b/,
@@ -78,6 +126,46 @@ describe('GoogleDriveExecutor', () => {
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({ name: 'renamed.pdf' }),
+      }),
+    );
+  });
+
+  it('creates the deterministic holding folder when Google has none', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ files: [] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'holding',
+          name: 'À traiter manuellement',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['root'],
+        }),
+      });
+    const executor = new GoogleDriveExecutor(tokenService as never, folders as never);
+
+    await expect(executor.ensureHoldingFolder('org_1', 'root')).resolves.toEqual(
+      expect.objectContaining({ id: 'holding', parents: ['root'] }),
+    );
+
+    const searchUrl = new URL((global.fetch as jest.Mock).mock.calls[0][0]);
+    expect(searchUrl.origin + searchUrl.pathname).toBe('https://www.googleapis.com/drive/v3/files');
+    expect(searchUrl.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(searchUrl.searchParams.get('includeItemsFromAllDrives')).toBe('true');
+    expect(searchUrl.searchParams.get('fields')).toBe('files(id,name,mimeType,parents)');
+    const createUrl = new URL((global.fetch as jest.Mock).mock.calls[1][0]);
+    expect(createUrl.toString()).toBe(
+      'https://www.googleapis.com/drive/v3/files?fields=id%2Cname%2CmimeType%2Cparents&supportsAllDrives=true',
+    );
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      'https://www.googleapis.com/drive/v3/files?fields=id%2Cname%2CmimeType%2Cparents&supportsAllDrives=true',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'À traiter manuellement',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['root'],
+        }),
       }),
     );
   });

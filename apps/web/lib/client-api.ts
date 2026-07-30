@@ -4,15 +4,47 @@ export async function startSync(): Promise<unknown> {
   return response.json();
 }
 
+export async function selectReferenceRoot(folderExternalId: string): Promise<unknown> {
+  const response = await fetch('/api/drive/reference-root', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderExternalId }),
+  });
+  if (!response.ok) throw new Error(`API error ${response.status}`);
+  return response.json();
+}
+
+export async function listReferenceFolders(): Promise<Array<{ externalId: string; name: string; parentExternalId: string | null }>> {
+  const response = await fetch('/api/drive/reference-folders');
+  if (!response.ok) throw new Error(`API error ${response.status}`);
+  return response.json();
+}
+
+export async function launchDriveItem(itemExternalId: string): Promise<unknown> {
+  const response = await fetch('/api/drive/launch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemExternalId }),
+  });
+  if (!response.ok) throw new Error(`API error ${response.status}`);
+  return response.json();
+}
+
 export async function confirmProposal(
   proposalId: string,
-  overrideDestinationPath?: string,
+  options?: string | { finalName?: string; destinationFolderExternalId?: string; overrideDestinationPath?: string },
 ): Promise<{ executed: boolean; destinationPath: string }> {
   const response = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(overrideDestinationPath ? { overrideDestinationPath } : {}),
+    body: JSON.stringify(typeof options === 'string' ? { overrideDestinationPath: options } : options ?? {}),
   });
+  if (!response.ok) throw new Error(`API error ${response.status}`);
+  return response.json();
+}
+
+export async function rejectProposal(proposalId: string): Promise<{ executed: boolean; destinationPath: string }> {
+  const response = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, { method: 'POST' });
   if (!response.ok) throw new Error(`API error ${response.status}`);
   return response.json();
 }

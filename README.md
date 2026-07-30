@@ -1,46 +1,193 @@
 # Klasr
 
-Classement intelligent et automatisé de documents pour Google Drive / OneDrive.
-OCR + LLM proposent nom de fichier et dossier de destination dans votre arborescence ;
-un clic suffit pour exécuter le rangement.
+Klasr est un micro-SaaS de classement documentaire pour cabinets et professions
+reglementees. Le flux reel est volontairement explicite :
 
-Monorepo 100 % TypeScript : `apps/api` (NestJS — API, pipeline OCR/LLM, worker) · `apps/web` (Next.js 14, charte klasr).
+1. connecter Google Drive ;
+2. choisir un dossier Drive de reference ;
+3. heriter de ses sous-dossiers comme destinations possibles ;
+4. choisir un fichier Drive ou un dossier Drive existant a organiser ;
+5. streamer les octets Drive vers l'OCR, produire une proposition de nom et de
+   destination, puis jeter les octets ;
+6. executer le renommage/deplacement uniquement apres `Valider`, `Corriger` ou
+   `Retirer`.
 
-- Architecture & ADR (REAC): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- Engineering loop & agent setup: [`docs/LOOP.md`](docs/LOOP.md)
-- Branching & releases: [`docs/BRANCHING.md`](docs/BRANCHING.md)
-- Loop state (living memory): [`docs/STATE.md`](docs/STATE.md)
-- Project conventions for Claude Code: [`CLAUDE.md`](CLAUDE.md)
+`/demo` est une maquette fictive. Elle ne prouve pas l'integration Drive, OCR,
+PostgreSQL, pg-boss ou MongoDB. Pour valider le vrai flux local, utiliser le
+mode local credential-free ci-dessous.
 
-Projet fil rouge — Titre professionnel CDA (RNCP niveau 6), Simplon.
+## Prerequis
 
+- Node.js compatible avec les versions pinnees du monorepo.
+- `pnpm@10.15.1` exactement, comme declare dans `package.json`.
+- Docker avec Compose v2.
+- Chromium installe par Playwright si `pnpm test:e2e` le demande.
 
-# MVP local reproductible
+Toutes les commandes suivantes partent de la racine du depot :
 
 ```bash
 cd /root/projects/klasr-oneshot/klasr-loop
-export PNPM_HOME=/root/.local/share/pnpm
-export PATH="$PNPM_HOME:$PATH"
 pnpm install --frozen-lockfile
+```
 
-# Démo fictive, explicitement hors MVP réel
-cp apps/web/.env.example apps/web/.env.local
-pnpm --filter @klasr/web dev
-# ouvrir http://localhost:3000/demo
+## Environnements locaux
 
-# MVP local complet : Next.js + NestJS + PostgreSQL + MongoDB + pg-boss
+Copier les exemples, puis remplacer uniquement les placeholders locaux. Ne
+mettre aucun secret reel dans Git.
+
+```bash
 cp apps/api/.env.example apps/api/.env
-# Copier aussi apps/web/.env.example vers apps/web/.env.local, remplacer les
-# placeholders locaux, puis activer KLASR_LOCAL_MVP=true,
-# KLASR_INLINE_WORKER=true et NEXT_PUBLIC_KLASR_LOCAL_MVP=true.
-docker compose up -d --wait
-pnpm --filter @klasr/api prisma:migrate
+cp apps/web/.env.example apps/web/.env.local
+```
+
+Valeurs a remplacer pour un developpement local complet :
+
+- `INTERNAL_API_SECRET` : meme valeur jetable dans API et web.
+- `TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
+- `NEXTAUTH_SECRET` : valeur locale jetable.
+- `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : seulement pour tester OAuth Google reel.
+
+Pour le mode local sans identifiants externes, activer :
+
+```dotenv
+KLASR_LOCAL_MVP=true
+KLASR_INLINE_WORKER=true
+NEXT_PUBLIC_KLASR_LOCAL_MVP=true
+```
+
+## Services locaux
+
+PostgreSQL porte les donnees metier et pg-boss. MongoDB contient uniquement la
+collection TTL `analyses`.
+
+```bash
+docker compose up -d --force-recreate --wait
+docker compose ps
+```
+
+Deployer Prisma non-interactivement :
+
+```bash
+pnpm --filter @klasr/api prisma:generate
+pnpm --filter @klasr/api prisma:deploy
+```
+
+Developpement applicatif :
+
+```bash
+pnpm --filter @klasr/api start:dev
+pnpm --filter @klasr/api worker:dev
+pnpm --filter @klasr/web dev
+```
+
+En mode local avec `KLASR_INLINE_WORKER=true`, le worker se lance dans l'API et
+`worker:dev` n'est pas necessaire.
+
+## Validation locale sans credentials
+
+Chemin le plus simple :
+
+```bash
+docker compose up -d --force-recreate --wait
+pnpm --filter @klasr/api prisma:generate
+pnpm --filter @klasr/api prisma:deploy
 pnpm test:integration
 pnpm test:e2e
 ```
 
-En production, `KLASR_LOCAL_MVP=true` et `KLASR_INLINE_WORKER=true` refusent
-de démarrer. Le chemin réel Google chiffre le refresh token avec AES-256-GCM,
-liste uniquement les métadonnées Drive, stream les octets vers l'OCR, puis les
-écarte. Le déplacement/renommage Drive ne passe que par la confirmation
-explicite de l'utilisateur. OneDrive reste authentification-only pour ce MVP.
+`pnpm test:integration` lance NestJS sur loopback avec un Drive local
+deterministe : `Cabinet de demonstration` comme racine, une arborescence
+destination, un dossier separe `A classer`, des fichiers supportes et un fichier
+non supporte. Aucun token OAuth reel ni document reel n'est utilise.
+
+## Configuration Google OAuth / Drive
+
+Pour tester Google Drive reel :
+
+1. Creer un projet Google Cloud.
+2. Activer Google Drive API.
+3. Configurer l'ecran de consentement OAuth.
+4. Creer un client OAuth Web.
+5. Ajouter l'URL de redirection NextAuth :
+   `http://localhost:3000/api/auth/callback/google`.
+6. Renseigner `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` dans les fichiers
+   locaux.
+7. Verifier que le scope Drive est autorise :
+   `https://www.googleapis.com/auth/drive`.
+
+Frontiere connue : sans credentials Google fournis par l'evaluateur, le depot ne
+peut pas executer une operation sur un Drive de production. Le mode local couvre
+le meme contrat applicatif sans OAuth externe.
+
+## Script manuel de validation
+
+1. Demarrer PostgreSQL et MongoDB :
+   `docker compose up -d --force-recreate --wait`.
+2. Deployer les migrations :
+   `pnpm --filter @klasr/api prisma:deploy`.
+3. Demarrer API et web en mode local.
+4. Ouvrir `http://localhost:3000/login`.
+5. Cliquer `Mode local`.
+6. Sur le dashboard, choisir `Cabinet de demonstration`.
+7. Verifier l'affichage de branches imbriquees :
+   `/Comptabilite/Banque`, `/Comptabilite/Electricite`, `/Social/Paie`.
+8. Dans `Fichiers a organiser`, choisir `Dossier - A classer`.
+9. Cliquer `Lancer l'organisation`.
+10. Verifier plusieurs propositions, les badges de confiance et `Tout valider`.
+11. Valider une proposition telle quelle.
+12. Corriger un nom de fichier.
+13. Corriger une destination avec le select de dossiers herites.
+14. Retirer une proposition.
+15. Recharger : l'historique doit conserver les decisions ; les fichiers
+    rejetes partent vers `A traiter manuellement` et ne sont pas reenfiles.
+
+## Checks automatises
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+docker compose up -d --force-recreate --wait
+pnpm --filter @klasr/api prisma:generate
+pnpm --filter @klasr/api prisma:deploy
+pnpm test:integration
+pnpm test:e2e
+```
+
+Si un workflow GitHub est modifie, executer aussi `actionlint`.
+
+## Vie privee et persistance
+
+- Les fichiers restent dans le Drive connecte.
+- Les octets sont telecharges en streaming vers l'OCR, puis jetes.
+- Le contenu documentaire et le texte OCR ne sont pas stockes dans PostgreSQL,
+  MongoDB, les logs, les fixtures ou les preuves.
+- PostgreSQL conserve les metadonnees : organisation, racine de reference,
+  dossiers herites, documents, propositions, decisions et historique.
+- MongoDB conserve uniquement la collection TTL `analyses`, avec metadonnees
+  d'analyse redactees.
+- Aucun renommage ou deplacement n'est execute sans decision explicite.
+- `Retirer` deplace le fichier original dans `A traiter manuellement` sans
+  appliquer le nom propose.
+
+## Arret et nettoyage
+
+Arreter les services :
+
+```bash
+docker compose down
+```
+
+Supprimer les volumes locaux detruit toutes les donnees PostgreSQL et MongoDB :
+
+```bash
+docker compose down -v
+```
+
+## Documentation
+
+- Architecture et ADR REAC : `docs/ARCHITECTURE.md`
+- Workflow agentique : `docs/AGENT_LOOP_SPEC.md`
+- Etat de boucle : `docs/STATE.md`

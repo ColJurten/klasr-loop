@@ -3,6 +3,7 @@ export interface ProposalView {
   id: string;
   proposedName: string;
   destinationPath: string;
+  destinationFolderExternalId: string | null;
   confidence: number;
   source: 'RULE' | 'LLM';
   /** L'IA suggère de créer un dossier absent de l'arborescence (état pêche). */
@@ -13,6 +14,25 @@ export interface ProposalView {
     mimeType: string;
     sizeBytes: number;
   };
+}
+
+export interface FolderChoiceView {
+  externalId: string;
+  name: string;
+  parentExternalId: string | null;
+  path: string;
+  holding?: boolean;
+}
+
+export interface DriveInputItemView {
+  externalId: string;
+  name: string;
+  mimeType: string;
+  type: 'folder' | 'file';
+  parentExternalId: string | null;
+  supported: boolean;
+  eligible: boolean;
+  reason?: string;
 }
 
 export interface DashboardView {
@@ -39,6 +59,12 @@ export interface DashboardView {
     inlineWorker: boolean;
     consuming: boolean;
   };
+  referenceRoot: null | {
+    externalId: string;
+    name: string;
+  };
+  folders: FolderChoiceView[];
+  inputItems: DriveInputItemView[];
   proposals: ProposalView[];
   history: Array<{
     id: string;

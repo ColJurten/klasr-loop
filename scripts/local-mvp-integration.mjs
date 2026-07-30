@@ -54,23 +54,47 @@ try {
   const organizationId = await onboardLocalTenant();
   await seedRule(organizationId);
 
-  const syncResponse = await fetch(`${apiBase}/organizations/${organizationId}/sync`, {
+  const referenceResponse = await fetch(`${apiBase}/organizations/${organizationId}/drive/reference-root`, {
     method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
+    body: JSON.stringify({ folderExternalId: 'local_root_cabinet' }),
+  });
+  if (!referenceResponse.ok) throw new Error(`HTTP reference failed: ${referenceResponse.status}`);
+  const reference = await referenceResponse.json();
+  if (reference.folders.length < 4) throw new Error('Reference descendant tree was not imported');
+
+  const inputResponse = await fetch(`${apiBase}/organizations/${organizationId}/drive/input-items`, {
     headers: { 'x-internal-secret': internalSecret },
   });
-  if (!syncResponse.ok) throw new Error(`HTTP sync failed: ${syncResponse.status}`);
-  const sync = await syncResponse.json();
-  if (sync.enqueued !== 1) throw new Error(`Expected one enqueued analysis job, got ${JSON.stringify(sync)}`);
-
-  const proposal = await waitForProposal(organizationId);
-  if (proposal.proposedName !== 'Facture_Electricite_2026-07.pdf') {
-    throw new Error(`Unexpected proposal name ${proposal.proposedName}`);
+  const inputItems = await inputResponse.json();
+  if (!inputItems.some((item) => item.externalId === 'local_input_folder' && item.eligible)) {
+    throw new Error('Local input folder is not eligible');
+  }
+  if (inputItems.some((item) => item.externalId === 'local_folder_compta' && item.eligible)) {
+    throw new Error('Inherited destination subtree was offered as input');
   }
 
-  await assertDatabases(organizationId, proposal.documentId);
+  const syncResponse = await fetch(`${apiBase}/organizations/${organizationId}/drive/launch`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
+    body: JSON.stringify({ itemExternalId: 'local_input_folder' }),
+  });
+  if (!syncResponse.ok) throw new Error(`HTTP launch failed: ${syncResponse.status}`);
+  const sync = await syncResponse.json();
+  if (sync.enqueued !== 3 || sync.manual !== 1) throw new Error(`Expected three enqueued jobs and one manual file, got ${JSON.stringify(sync)}`);
+
+  const proposals = await waitForProposals(organizationId, 3);
+  const facture = proposals.find((proposal) => proposal.document.externalId === 'local_file_facture_elec');
+  const banque = proposals.find((proposal) => proposal.document.externalId === 'local_file_releve_banque');
+  const paie = proposals.find((proposal) => proposal.document.externalId === 'local_file_note_paie');
+  if (!facture || !banque || !paie) {
+    throw new Error(`Missing expected proposals: ${proposals.map((proposal) => proposal.document.externalId).join(',')}`);
+  }
+
+  await assertDatabases(organizationId, proposals.map((proposal) => proposal.documentId));
 
   const confirmResponse = await fetch(
-    `${apiBase}/organizations/${organizationId}/proposals/${proposal.id}/confirm`,
+    `${apiBase}/organizations/${organizationId}/proposals/${facture.id}/confirm`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
@@ -78,9 +102,40 @@ try {
     },
   );
   if (!confirmResponse.ok) throw new Error(`HTTP confirm failed: ${confirmResponse.status}`);
+  const folderBanque = await prisma.folder.findFirstOrThrow({ where: { organizationId, externalId: 'local_folder_banque' } });
+  const correctResponse = await fetch(
+    `${apiBase}/organizations/${organizationId}/proposals/${banque.id}/confirm`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
+      body: JSON.stringify({ finalName: 'Releve_Banque_2026-07.pdf', destinationFolderExternalId: folderBanque.externalId }),
+    },
+  );
+  if (!correctResponse.ok) throw new Error(`HTTP correction failed: ${correctResponse.status}`);
+  const rejectResponse = await fetch(
+    `${apiBase}/organizations/${organizationId}/proposals/${paie.id}/reject`,
+    { method: 'POST', headers: { 'x-internal-secret': internalSecret } },
+  );
+  if (!rejectResponse.ok) throw new Error(`HTTP reject failed: ${rejectResponse.status}`);
+
   const history = await prisma.actionHistory.findMany({ where: { organizationId } });
-  if (history.length !== 1 || history[0].toName !== 'Facture_Electricite_2026-07.pdf') {
-    throw new Error('Confirmation did not persist action history');
+  if (history.length !== 3 || !history.some((item) => item.action === 'REJECT')) {
+    throw new Error('Decisions did not persist action history');
+  }
+  const rejected = await prisma.document.findUniqueOrThrow({
+    where: { organizationId_externalId: { organizationId, externalId: 'local_file_note_paie' } },
+  });
+  if (rejected.status !== 'MANUAL') {
+    throw new Error('Rejected document was not marked MANUAL');
+  }
+  const relaunch = await fetch(`${apiBase}/organizations/${organizationId}/drive/launch`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
+    body: JSON.stringify({ itemExternalId: 'local_input_folder' }),
+  });
+  const relaunchPayload = await relaunch.json();
+  if (relaunchPayload.enqueued !== 0) {
+    throw new Error(`Rejected/proposed/classified items were resubmitted: ${JSON.stringify(relaunchPayload)}`);
   }
 
   const queueResponse = await fetch(`${apiBase}/organizations/${organizationId}/dashboard`, {
@@ -91,7 +146,7 @@ try {
     throw new Error(`Queue not idle after processing: ${JSON.stringify(dashboard.queue)}`);
   }
 
-  console.log('integration ok: HTTP sync -> pg-boss analysis -> proposal -> Mongo/PostgreSQL assertions -> confirm');
+  console.log('integration ok: reference tree -> selected Drive launch -> pg-boss analysis -> Mongo/PostgreSQL assertions -> confirm/correct/reject');
 } finally {
   stopApi();
   await mongo.close().catch(() => undefined);
@@ -156,42 +211,63 @@ async function onboardLocalTenant() {
 }
 
 async function seedRule(organizationId) {
-  await prisma.classificationRule.create({
-    data: {
-      organizationId,
-      priority: 1,
-      destinationPath: '/Comptabilité/Électricité',
-      suggestedNameTemplate: 'Facture_Electricite_2026-07.pdf',
-      conditions: { create: [{ field: 'CONTENT', operator: 'CONTAINS', value: 'électricité' }] },
-    },
+  await prisma.classificationRule.createMany({
+    data: [
+      {
+        organizationId,
+        priority: 1,
+        destinationPath: '/Comptabilité/Électricité',
+        suggestedNameTemplate: 'Facture_Electricite_2026-07.pdf',
+      },
+      {
+        organizationId,
+        priority: 2,
+        destinationPath: '/Comptabilité/Banque',
+        suggestedNameTemplate: 'Releve_Banque_2026-07.pdf',
+      },
+      {
+        organizationId,
+        priority: 3,
+        destinationPath: '/Social/Paie',
+        suggestedNameTemplate: 'Note_Paie_2026-07.png',
+      },
+    ],
+  });
+  const rules = await prisma.classificationRule.findMany({ where: { organizationId }, orderBy: { priority: 'asc' } });
+  await prisma.ruleCondition.createMany({
+    data: [
+      { ruleId: rules[0].id, field: 'CONTENT', operator: 'CONTAINS', value: 'électricité' },
+      { ruleId: rules[1].id, field: 'CONTENT', operator: 'CONTAINS', value: 'bancaire' },
+      { ruleId: rules[2].id, field: 'CONTENT', operator: 'CONTAINS', value: 'paie' },
+    ],
   });
 }
 
-async function waitForProposal(organizationId) {
+async function waitForProposals(organizationId, count) {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const proposals = await prisma.classificationProposal.findMany({
       where: { organizationId, status: 'PENDING' },
       include: { document: true },
     });
-    if (proposals.length === 1) return proposals[0];
+    if (proposals.length === count) return proposals;
     await delay(250);
   }
-  throw new Error('Analysis job did not create a pending proposal');
+  throw new Error('Analysis jobs did not create the expected pending proposals');
 }
 
-async function assertDatabases(organizationId, documentId) {
+async function assertDatabases(organizationId, documentIds) {
   const [documents, proposals, metrics] = await Promise.all([
     prisma.document.findMany({ where: { organizationId } }),
     prisma.classificationProposal.findMany({ where: { organizationId } }),
     prisma.usageMetric.findMany({ where: { organizationId } }),
   ]);
-  if (documents.length !== 1 || documents[0].status !== 'PROPOSED') {
+  if (documents.filter((document) => document.status === 'PROPOSED').length !== 3) {
     throw new Error('PostgreSQL document metadata was not updated by analysis');
   }
-  if (proposals.length !== 1 || proposals[0].source !== 'RULE') {
+  if (proposals.length !== 3 || proposals.some((proposal) => proposal.source !== 'RULE' || !proposal.destinationFolderExternalId)) {
     throw new Error('PostgreSQL proposal was not created by classification');
   }
-  if (!metrics.some((metric) => metric.documentsIn === 1 && metric.ocrRuns === 1 && metric.ruleMatches === 1)) {
+  if (!metrics.some((metric) => metric.documentsIn === 4 && metric.ocrRuns === 3 && metric.ruleMatches === 3)) {
     throw new Error('Usage metrics were not incremented by the pipeline');
   }
   const collection = mongo.db('klasr').collection('analyses');
@@ -199,8 +275,8 @@ async function assertDatabases(organizationId, documentId) {
   if (!indexes.some((index) => index.expireAfterSeconds === 30 * 24 * 3600)) {
     throw new Error('Mongo analyses TTL index missing');
   }
-  const analyses = await collection.find({ organizationId, documentId }).toArray();
-  if (analyses.length !== 1 || analyses[0].ocrExcerpt !== 'facture électricité juillet cabinet exemple comptabilité') {
+  const analyses = await collection.find({ organizationId, documentId: { $in: documentIds } }).toArray();
+  if (analyses.length !== 3 || analyses.some((analysis) => 'ocrExcerpt' in analysis)) {
     throw new Error('Mongo analysis metadata was not written by the pipeline');
   }
   const persisted = JSON.stringify([documents, proposals, analyses]);

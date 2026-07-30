@@ -26,6 +26,12 @@ export class DocumentsRepository {
     return this.prisma.document.findFirst({ where: { id: documentId, organizationId } });
   }
 
+  findByExternalId(organizationId: string, externalId: string): Promise<Document | null> {
+    return this.prisma.document.findUnique({
+      where: { organizationId_externalId: { organizationId, externalId } },
+    });
+  }
+
   findPending(organizationId: string, documentId: string): Promise<Document | null> {
     return this.prisma.document.findFirst({
       where: { id: documentId, organizationId, status: 'PENDING' },

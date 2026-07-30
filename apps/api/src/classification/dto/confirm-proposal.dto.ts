@@ -1,9 +1,17 @@
 import { IsOptional, IsString, Matches } from 'class-validator';
 
 export class ConfirmProposalDto {
-  /** Present only when the user overrides the proposed destination ("Déplacer"). */
+  /** Backward-compatible path override; new UI sends destinationFolderExternalId. */
   @IsOptional()
   @IsString()
   @Matches(/^\//)
   overrideDestinationPath?: string;
+
+  @IsOptional()
+  @IsString()
+  destinationFolderExternalId?: string;
+
+  @IsOptional()
+  @IsString()
+  finalName?: string;
 }

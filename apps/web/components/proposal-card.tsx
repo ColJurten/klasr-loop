@@ -3,15 +3,17 @@
 import { useState } from 'react';
 import { ArrowRight, Check, CornerDownRight, FolderPlus, RotateCcw, X } from 'lucide-react';
 import { Button } from './ui/button';
-import type { ProposalView } from '@/lib/types';
+import type { FolderChoiceView, ProposalView } from '@/lib/types';
 
 export type ProposalStatus = 'idle' | 'confirming' | 'done' | 'error';
 
 interface ProposalCardProps {
   proposal: ProposalView;
+  folders: FolderChoiceView[];
   status: ProposalStatus;
   /** Called exactly once per confirmation; parent executes the API call. */
-  onConfirm: (proposalId: string, overrideDestinationPath?: string) => Promise<void>;
+  onConfirm: (proposalId: string, options?: string | { finalName?: string; destinationFolderExternalId?: string }) => Promise<void>;
+  onReject?: (proposalId: string) => Promise<void>;
 }
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
@@ -35,21 +37,27 @@ function sourceLabel(source: ProposalView['source']): string {
  * « Valider » EXÉCUTE le déplacement/renommage. « Corriger » est le chemin
  * secondaire. Aucune ombre, bordures fines, chemins en JetBrains Mono.
  */
-export function ProposalCard({ proposal, status, onConfirm }: ProposalCardProps) {
+export function ProposalCard({ proposal, folders = [], status, onConfirm, onReject }: ProposalCardProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [overridePath, setOverridePath] = useState(proposal.destinationPath);
+  const [finalName, setFinalName] = useState(proposal.proposedName);
+  const [destinationFolderExternalId, setDestinationFolderExternalId] = useState(
+    proposal.destinationFolderExternalId ?? folders.find((folder) => folder.path === proposal.destinationPath)?.externalId ?? '',
+  );
   const percent = Math.round(proposal.confidence * 100);
   const isBusy = status === 'confirming';
   const isDone = status === 'done';
 
-  async function handleConfirm(overrideDestinationPath?: string) {
+  const filenameError = validateFilename(finalName);
+  const selectedFolder = folders.find((folder) => folder.externalId === destinationFolderExternalId);
+
+  async function handleConfirm(options?: string | { finalName?: string; destinationFolderExternalId?: string }) {
     if (isBusy || isDone) return;
-    await onConfirm(proposal.id, overrideDestinationPath);
+    await onConfirm(proposal.id, options);
     setDialogOpen(false);
   }
 
-  function handleUserConfirm(overrideDestinationPath?: string) {
-    void handleConfirm(overrideDestinationPath).catch(() => {
+  function handleUserConfirm(options?: string | { finalName?: string; destinationFolderExternalId?: string }) {
+    void handleConfirm(options).catch(() => {
       // The parent owns the visible error state; this click boundary only prevents
       // expected retry failures from escaping as unhandled browser rejections.
     });
@@ -112,6 +120,13 @@ export function ProposalCard({ proposal, status, onConfirm }: ProposalCardProps)
               >
                 Corriger
               </Button>
+              <Button
+                variant="ghost"
+                disabled={isBusy}
+                onClick={() => void onReject?.(proposal.id)}
+              >
+                Retirer
+              </Button>
             </>
           )}
         </div>
@@ -151,25 +166,68 @@ export function ProposalCard({ proposal, status, onConfirm }: ProposalCardProps)
             </button>
           </div>
 
+          <label htmlFor={`filename-${proposal.id}`} className="mt-4 block text-xs font-medium">
+            Nom final
+          </label>
+          <input
+            id={`filename-${proposal.id}`}
+            value={finalName}
+            onChange={(event) => setFinalName(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink"
+            aria-invalid={Boolean(filenameError)}
+            aria-describedby={filenameError ? `filename-error-${proposal.id}` : undefined}
+          />
+          {filenameError && (
+            <p id={`filename-error-${proposal.id}`} role="alert" className="mt-1 text-xs text-peach-deep">
+              {filenameError}
+            </p>
+          )}
+
           <label htmlFor={`destination-${proposal.id}`} className="mt-4 block text-xs font-medium">
             Dossier de destination
           </label>
-          <input
-            id={`destination-${proposal.id}`}
-            value={overridePath}
-            onChange={(event) => setOverridePath(event.target.value)}
-            className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink"
-          />
+          {folders.length > 0 ? (
+            <select
+              id={`destination-${proposal.id}`}
+              value={destinationFolderExternalId}
+              onChange={(event) => setDestinationFolderExternalId(event.target.value)}
+              className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink"
+            >
+              {folders.map((folder) => (
+                <option key={folder.externalId} value={folder.externalId}>
+                  {folder.path}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id={`destination-${proposal.id}`}
+              value={destinationFolderExternalId || proposal.destinationPath}
+              onChange={(event) => setDestinationFolderExternalId(event.target.value)}
+              className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink"
+            />
+          )}
           <div className="mt-3 flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setOverridePath(proposal.destinationPath)}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setFinalName(proposal.proposedName);
+                setDestinationFolderExternalId(proposal.destinationFolderExternalId ?? folders.find((folder) => folder.path === proposal.destinationPath)?.externalId ?? '');
+              }}
+            >
               <RotateCcw className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={1.5} />
               Réinitialiser
             </Button>
             <Button
               type="button"
               variant="validate"
-              disabled={isBusy || overridePath.trim().length === 0}
-              onClick={() => handleUserConfirm(overridePath.trim())}
+              disabled={isBusy || Boolean(filenameError) || (folders.length > 0 && !selectedFolder)}
+              onClick={() => handleUserConfirm(
+                selectedFolder
+                  ? { finalName: finalName.trim(), destinationFolderExternalId }
+                  : destinationFolderExternalId || proposal.destinationPath,
+              )}
             >
               Confirmer la correction
             </Button>
@@ -178,4 +236,20 @@ export function ProposalCard({ proposal, status, onConfirm }: ProposalCardProps)
       )}
     </div>
   );
+}
+
+function validateFilename(value: string): string | null {
+  const name = value.trim();
+  if (name.length === 0) return 'Le nom ne peut pas être vide.';
+  if (name === '.' || name === '..' || name.includes('..')) return 'Les traversées de chemin sont interdites.';
+  if (name.includes('/') || name.includes('\\')) return 'Les séparateurs de chemin sont interdits.';
+  if (hasControlCharacter(name)) return 'Les caractères de contrôle sont interdits.';
+  return null;
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((char) => {
+    const code = char.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
 }

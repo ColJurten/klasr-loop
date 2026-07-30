@@ -4,20 +4,26 @@ import { useState } from 'react';
 import { CheckCircle2, ShieldCheck } from 'lucide-react';
 import { ProposalCard, type ProposalStatus } from '@/components/proposal-card';
 import { Button } from '@/components/ui/button';
-import { confirmProposal } from '@/lib/client-api';
-import type { ProposalView } from '@/lib/types';
+import { confirmProposal, rejectProposal } from '@/lib/client-api';
+import type { FolderChoiceView, ProposalView } from '@/lib/types';
 
 type ConfirmProposalHandler = (
   proposalId: string,
-  overrideDestinationPath?: string,
+  options?: string | { finalName?: string; destinationFolderExternalId?: string },
 ) => Promise<unknown>;
+
+type RejectProposalHandler = (proposalId: string) => Promise<unknown>;
 
 export function ProposalQueue({
   initialProposals,
+  folders = [],
   onConfirmProposal = confirmProposal,
+  onRejectProposal = rejectProposal,
 }: {
   initialProposals: ProposalView[];
+  folders: FolderChoiceView[];
   onConfirmProposal?: ConfirmProposalHandler;
+  onRejectProposal?: RejectProposalHandler;
 }) {
   const [statuses, setStatuses] = useState<Record<string, ProposalStatus>>({});
   const [bulkState, setBulkState] = useState<'idle' | 'running' | 'done' | 'partial'>('idle');
@@ -29,17 +35,29 @@ export function ProposalQueue({
     return statuses[proposalId] ?? 'idle';
   }
 
-  async function handleConfirm(proposalId: string, overrideDestinationPath?: string) {
+  async function handleConfirm(proposalId: string, options?: string | { finalName?: string; destinationFolderExternalId?: string }) {
     const currentStatus = getStatus(proposalId);
     if (currentStatus === 'confirming' || currentStatus === 'done') return;
 
     setStatuses((current) => ({ ...current, [proposalId]: 'confirming' }));
     try {
-      await onConfirmProposal(proposalId, overrideDestinationPath);
+      await onConfirmProposal(proposalId, options);
       setStatuses((current) => ({ ...current, [proposalId]: 'done' }));
     } catch {
       setStatuses((current) => ({ ...current, [proposalId]: 'error' }));
       throw new Error('confirm failed');
+    }
+  }
+
+  async function handleReject(proposalId: string) {
+    const currentStatus = getStatus(proposalId);
+    if (currentStatus === 'confirming' || currentStatus === 'done') return;
+    setStatuses((current) => ({ ...current, [proposalId]: 'confirming' }));
+    try {
+      await onRejectProposal(proposalId);
+      setStatuses((current) => ({ ...current, [proposalId]: 'done' }));
+    } catch {
+      setStatuses((current) => ({ ...current, [proposalId]: 'error' }));
     }
   }
 
@@ -120,8 +138,10 @@ export function ProposalQueue({
           <ProposalCard
             key={proposal.id}
             proposal={proposal}
+            folders={folders}
             status={getStatus(proposal.id)}
             onConfirm={handleConfirm}
+            onReject={handleReject}
           />
         ))}
       </div>

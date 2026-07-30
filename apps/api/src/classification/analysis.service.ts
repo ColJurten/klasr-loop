@@ -49,7 +49,8 @@ export class AnalysisService implements OnModuleInit {
       mimeType: document.mimeType,
     });
     const rules = await this.rules.listOrdered(job.organizationId);
-    const folderPaths = await this.folders.listPaths(job.organizationId);
+    const inheritedFolders = await this.folders.listInherited(job.organizationId);
+    const folderPaths = inheritedFolders.map((folder) => folder.path);
     const pipelineRules: PipelineRule[] = rules.map((rule) => ({
       id: rule.id,
       priority: rule.priority,
@@ -88,6 +89,7 @@ export class AnalysisService implements OnModuleInit {
       documentId: document.id,
       proposedName: llmProposal.proposedName,
       destinationPath: llmProposal.destinationPath,
+      destinationFolderExternalId: inheritedFolders.find((folder) => folder.path === llmProposal.destinationPath)?.externalId,
       confidence: llmProposal.confidence,
       source: llmProposal.source as ProposalSource,
       modelUsed: 'modelUsed' in llmProposal ? llmProposal.modelUsed : undefined,
@@ -97,7 +99,6 @@ export class AnalysisService implements OnModuleInit {
     await this.analyses.record({
       organizationId: job.organizationId,
       documentId: document.id,
-      ocrExcerpt: redactExcerpt(text),
       modelUsed: 'modelUsed' in llmProposal ? llmProposal.modelUsed : 'rule',
       llmRaw: { source: llmProposal.source },
     });
@@ -107,13 +108,6 @@ export class AnalysisService implements OnModuleInit {
       llmCalls: llmProposal.llmCallsUsed,
     });
   }
-}
-
-function redactExcerpt(text: string): string {
-  return text
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
-    .replace(/\b(?:\d[ -]*?){13,19}\b/g, '[number]')
-    .slice(0, 1000);
 }
 
 function asLlmProposal(

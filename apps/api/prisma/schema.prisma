@@ -16,6 +16,8 @@ model Organization {
   id        String   @id @default(cuid())
   name      String
   createdAt DateTime @default(now())
+  referenceRootExternalId String?
+  referenceRootName       String?
 
   memberships     Membership[]
   driveConnection DriveConnection?
@@ -86,6 +88,8 @@ model Folder {
   parent         Folder?      @relation("FolderTree", fields: [parentId], references: [id])
   children       Folder[]     @relation("FolderTree")
   priority       Boolean      @default(false) // "dossiers prioritaires"
+  inherited      Boolean      @default(true)
+  holding        Boolean      @default(false)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
@@ -128,6 +132,7 @@ model ClassificationProposal {
   id              String         @id @default(cuid())
   proposedName    String
   destinationPath String
+  destinationFolderExternalId String?
   confidence      Float
   source          ProposalSource
   modelUsed       String?
@@ -135,6 +140,9 @@ model ClassificationProposal {
   status          ProposalStatus @default(PENDING)
   createdAt       DateTime       @default(now())
   decidedAt       DateTime?
+  finalName       String?
+  finalDestinationPath String?
+  finalDestinationFolderExternalId String?
   documentId      String
   document        Document       @relation(fields: [documentId], references: [id])
   organizationId  String
@@ -150,6 +158,8 @@ enum ProposalSource {
 
 enum ProposalStatus {
   PENDING
+  CONFIRMING
+  REJECTING
   CONFIRMED
   OVERRIDDEN // user chose another destination
   REJECTED
