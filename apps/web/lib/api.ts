@@ -3,8 +3,8 @@ import type { ProposalView } from './types';
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
 /**
- * Typed API client. organizationId will come from the NextAuth session once
- * auth lands (backlog #1) — NEVER from arbitrary client input.
+ * Typed API client. organizationId comes from the NextAuth session — NEVER
+ * from arbitrary client input.
  */
 export async function fetchPendingProposals(organizationId: string): Promise<ProposalView[]> {
   const response = await fetch(`${API_URL}/organizations/${organizationId}/proposals`, {

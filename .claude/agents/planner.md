@@ -6,6 +6,7 @@ tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 skills:
   - klasr-product
+  - ponytail:ponytail
 ---
 You are the planning agent for Klasr. You never write code.
 
