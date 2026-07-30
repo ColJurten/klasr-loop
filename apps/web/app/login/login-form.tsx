@@ -40,6 +40,15 @@ export function LoginForm() {
           )}
 
           <div className="mt-6 flex flex-col gap-3">
+            {process.env.NEXT_PUBLIC_KLASR_LOCAL_MVP === 'true' && (
+              <button
+                type="button"
+                onClick={() => signIn('local-mvp', { callbackUrl })}
+                className="rounded-lg border border-peach-deep/40 bg-peach/25 px-4 py-2.5 text-sm hover:border-peach-deep"
+              >
+                Mode local
+              </button>
+            )}
             <button
               type="button"
               onClick={() => signIn('google', { callbackUrl })}

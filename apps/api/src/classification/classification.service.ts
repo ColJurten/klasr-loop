@@ -14,6 +14,10 @@ export class ClassificationService {
     return this.proposals.listPending(organizationId);
   }
 
+  listHistory(organizationId: string) {
+    return this.proposals.listHistory(organizationId);
+  }
+
   /**
    * The single-click confirmation flow (product invariant): the user confirms
    * once, Klasr EXECUTES the move/rename in the Drive, then records the audit

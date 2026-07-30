@@ -14,3 +14,37 @@ export interface ProposalView {
     sizeBytes: number;
   };
 }
+
+export interface DashboardView {
+  mode: 'local' | 'production';
+  connection: null | {
+    provider: 'GOOGLE_DRIVE' | 'ONEDRIVE';
+    connectedAt: string;
+    lastSyncAt: string | null;
+  };
+  metrics: {
+    pending: number;
+    analyzing: number;
+    classified: number;
+    documentsIn: number;
+    ruleMatches: number;
+    llmCalls: number;
+    ocrRuns: number;
+  };
+  queue: {
+    queued: number;
+    ready: number;
+    active: number;
+    failed: number;
+    inlineWorker: boolean;
+    consuming: boolean;
+  };
+  proposals: ProposalView[];
+  history: Array<{
+    id: string;
+    toName: string | null;
+    toPath: string | null;
+    executedAt: string;
+    document: { name: string };
+  }>;
+}

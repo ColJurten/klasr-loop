@@ -2,13 +2,14 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-07-30 (one-shot MVP local pnpm + démo)
+> Last updated: 2026-07-30 (real MVP vertical slice)
 
 ## In progress
 
 | Item | Branch / worktree | Owner (agent/human) | Next step |
 |---|---|---|---|
 | #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | orchestrated directly (no subagent) | **PR #3 verifier-APPROVED, ready for human merge.** Full arc: core onboarding logic (2 review rounds) → manual end-to-end test with real Google OAuth surfaced a missing DB migration (fixed, committed) and missing logout/login-page polish (fixed) → that round's tests gap (fixed, re-approved). 16/16 web tests, 31/31 API tests, lint/build clean on both. Note: API request authentication itself remains out of scope for #1 — tracked as #2, must land before real tenant data. |
+| real-mvp-one-shot — MVP local réel | `hermes-oneshot` | Codex exec fallback GPT-5.5 | Vertical slice en cours : BFF Next server-only, guard interne API, token Google chiffré, adapter Drive natif fetch, sync/analyse, pg-boss, Mongo `analyses`, dashboard sans fallback fictif. |
 
 ## Backlog (ordered)
 

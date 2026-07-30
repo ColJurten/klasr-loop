@@ -6,6 +6,6 @@ import { RulesRepository } from './rules.repository';
 @Module({
   controllers: [RulesController],
   providers: [RulesService, RulesRepository],
-  exports: [RulesService],
+  exports: [RulesService, RulesRepository],
 })
 export class RulesModule {}

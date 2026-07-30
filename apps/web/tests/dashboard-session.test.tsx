@@ -17,16 +17,23 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
-const fetchPendingProposals = vi.fn().mockResolvedValue([]);
+const getDashboardData = vi.fn().mockResolvedValue({
+  mode: 'production',
+  connection: null,
+  metrics: { pending: 0, analyzing: 0, classified: 0, documentsIn: 0, ruleMatches: 0, llmCalls: 0, ocrRuns: 0 },
+  queue: { queued: 0, ready: 0, active: 0, failed: 0, inlineWorker: false, consuming: false },
+  proposals: [],
+  history: [],
+});
 vi.mock('@/lib/api', () => ({
-  fetchPendingProposals: (...args: unknown[]) => fetchPendingProposals(...args),
-  confirmProposal: vi.fn().mockResolvedValue({ executed: true, destinationPath: '/' }),
+  getDashboardData: (...args: unknown[]) => getDashboardData(...args),
 }));
 
 import { redirect } from 'next/navigation';
@@ -99,15 +106,14 @@ describe('Dashboard layout — session-derived identity, not hardcoded demo data
   });
 });
 
-describe('Dashboard page — organizationId comes from the session', () => {
-  it('fetches proposals for the session organizationId, not the old demo id', async () => {
+describe('Dashboard page — organizationId comes from the server BFF', () => {
+  it('fetches dashboard data without receiving a browser-supplied organizationId', async () => {
     mockedGetServerSession.mockResolvedValue(session as never);
 
     const ui = (await DashboardPage()) as ReactElement;
     render(ui);
 
-    expect(fetchPendingProposals).toHaveBeenCalledWith('org_9f3c1a');
-    expect(fetchPendingProposals).not.toHaveBeenCalledWith('org_demo');
+    expect(getDashboardData).toHaveBeenCalledWith();
   });
 
   it('redirects to / and never fetches proposals when there is no session', async () => {
@@ -116,6 +122,6 @@ describe('Dashboard page — organizationId comes from the session', () => {
     await expect(DashboardPage()).rejects.toThrow('NEXT_REDIRECT:/');
 
     expect(mockedRedirect).toHaveBeenCalledWith('/');
-    expect(fetchPendingProposals).not.toHaveBeenCalled();
+    expect(getDashboardData).not.toHaveBeenCalled();
   });
 });

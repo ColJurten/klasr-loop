@@ -102,7 +102,6 @@ export function DemoWorkspace() {
   const failedOnce = useRef(new Set<string>());
 
   async function confirmDemoProposal(
-    _organizationId: string,
     proposalId: string,
     _overrideDestinationPath?: string,
   ) {
@@ -173,7 +172,6 @@ export function DemoWorkspace() {
           </section>
 
           <ProposalQueue
-            organizationId={DEMO_ORGANIZATION_ID}
             initialProposals={DEMO_PROPOSALS}
             onConfirmProposal={confirmDemoProposal}
           />

@@ -36,13 +36,12 @@ afterEach(cleanup);
 
 describe('ProposalQueue', () => {
   it('handles a partial bulk failure and leaves failed rows retryable', async () => {
-    const onConfirm = vi.fn((_organizationId: string, proposalId: string) =>
+    const onConfirm = vi.fn((proposalId: string) =>
       proposalId === 'prop_retry' ? Promise.reject(new Error('drive down')) : Promise.resolve(),
     );
 
     render(
       <ProposalQueue
-        organizationId="org_1"
         initialProposals={proposals}
         onConfirmProposal={onConfirm}
       />,
@@ -61,7 +60,6 @@ describe('ProposalQueue', () => {
 
     render(
       <ProposalQueue
-        organizationId="org_1"
         initialProposals={[proposals[0]]}
         onConfirmProposal={onConfirm}
       />,
@@ -74,7 +72,7 @@ describe('ProposalQueue', () => {
   });
 
   it('shows a calm empty state when there is nothing to review', () => {
-    render(<ProposalQueue organizationId="org_1" initialProposals={[]} />);
+    render(<ProposalQueue initialProposals={[]} />);
     expect(screen.getByText('Rien à valider')).toBeDefined();
   });
 });

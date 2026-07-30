@@ -4,21 +4,18 @@ import { useState } from 'react';
 import { CheckCircle2, ShieldCheck } from 'lucide-react';
 import { ProposalCard, type ProposalStatus } from '@/components/proposal-card';
 import { Button } from '@/components/ui/button';
-import { confirmProposal } from '@/lib/api';
+import { confirmProposal } from '@/lib/client-api';
 import type { ProposalView } from '@/lib/types';
 
 type ConfirmProposalHandler = (
-  organizationId: string,
   proposalId: string,
   overrideDestinationPath?: string,
 ) => Promise<unknown>;
 
 export function ProposalQueue({
-  organizationId,
   initialProposals,
   onConfirmProposal = confirmProposal,
 }: {
-  organizationId: string;
   initialProposals: ProposalView[];
   onConfirmProposal?: ConfirmProposalHandler;
 }) {
@@ -38,7 +35,7 @@ export function ProposalQueue({
 
     setStatuses((current) => ({ ...current, [proposalId]: 'confirming' }));
     try {
-      await onConfirmProposal(organizationId, proposalId, overrideDestinationPath);
+      await onConfirmProposal(proposalId, overrideDestinationPath);
       setStatuses((current) => ({ ...current, [proposalId]: 'done' }));
     } catch {
       setStatuses((current) => ({ ...current, [proposalId]: 'error' }));

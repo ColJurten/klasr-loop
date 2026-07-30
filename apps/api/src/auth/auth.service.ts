@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { MemberRole } from '@prisma/client';
 import { OrganizationsService } from '../organizations/organizations.service';
+import { DriveConnectionsService } from '../drive/drive-connections.service';
 import { OnboardUserDto } from './dto/onboard-user.dto';
 
 export interface OnboardResult {
@@ -17,7 +18,10 @@ const ORGANIZATION_NAME_MAX_LENGTH = 120;
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly organizationsService: OrganizationsService) {}
+  constructor(
+    private readonly organizationsService: OrganizationsService,
+    @Optional() private readonly driveConnections?: DriveConnectionsService,
+  ) {}
 
   /**
    * Auto-onboarding on first sign-in. If the user already belongs to an
@@ -29,6 +33,7 @@ export class AuthService {
   async onboard(dto: OnboardUserDto): Promise<OnboardResult> {
     const existing = await this.organizationsService.findMembershipByEmail(dto.email);
     if (existing) {
+      await this.upsertGoogleConnectionIfPresent(existing.organizationId, dto);
       return {
         organizationId: existing.organizationId,
         membershipId: existing.id,
@@ -60,11 +65,26 @@ export class AuthService {
       throw new Error('Membership lookup failed immediately after onboarding');
     }
 
+    await this.upsertGoogleConnectionIfPresent(membership.organizationId, dto);
+
     return {
       organizationId: membership.organizationId,
       membershipId: membership.id,
       role: membership.role,
     };
+  }
+
+  private async upsertGoogleConnectionIfPresent(
+    organizationId: string,
+    dto: OnboardUserDto,
+  ): Promise<void> {
+    if (dto.provider !== 'google' || (!dto.providerAccountId && !dto.refreshToken)) return;
+    await this.driveConnections?.upsertGoogleConnection({
+      organizationId,
+      externalId: dto.providerAccountId ?? dto.email,
+      refreshToken: dto.refreshToken,
+      scopes: dto.scopes ?? [],
+    });
   }
 }
 

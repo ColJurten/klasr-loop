@@ -1,6 +1,7 @@
 import type { DefaultSession, NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import AzureADProvider from 'next-auth/providers/azure-ad';
+import CredentialsProvider from 'next-auth/providers/credentials';
 
 export type MembershipRole = 'ADMIN' | 'MEMBER';
 
@@ -30,6 +31,15 @@ declare module 'next-auth/jwt' {
 
 // Matches apps/web/lib/api.ts's API_URL convention exactly.
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
+const DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive';
+
+function localProviderEnabled(): boolean {
+  if (process.env.KLASR_LOCAL_MVP !== 'true') return false;
+  if (process.env.NODE_ENV === 'production' && process.env.KLASR_ACCEPTANCE_LOCAL_MVP !== 'true') {
+    throw new Error('KLASR_LOCAL_MVP cannot run in production');
+  }
+  return true;
+}
 
 /**
  * OAuth Google / Microsoft — the only sign-in paths (product decision).
@@ -41,12 +51,35 @@ export const authOptions: NextAuthOptions = {
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      authorization: {
+        params: {
+          scope: DRIVE_SCOPE,
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
     }),
     AzureADProvider({
       clientId: process.env.AZURE_AD_CLIENT_ID ?? '',
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? '',
       tenantId: process.env.AZURE_AD_TENANT_ID ?? 'common',
     }),
+    ...(localProviderEnabled()
+      ? [
+          CredentialsProvider({
+            id: 'local-mvp',
+            name: 'Mode local',
+            credentials: {},
+            async authorize() {
+              return {
+                id: 'local-user',
+                email: 'camille.local@klasr.test',
+                name: 'Camille Local',
+              };
+            },
+          }),
+        ]
+      : []),
   ],
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
@@ -84,6 +117,9 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           displayName: user.name,
           provider: account.provider,
+          providerAccountId: account.providerAccountId,
+          refreshToken: typeof account.refresh_token === 'string' ? account.refresh_token : undefined,
+          scopes: typeof account.scope === 'string' ? account.scope.split(' ') : [],
         }),
       });
 

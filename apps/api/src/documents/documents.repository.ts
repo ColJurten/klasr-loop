@@ -26,6 +26,73 @@ export class DocumentsRepository {
     return this.prisma.document.findFirst({ where: { id: documentId, organizationId } });
   }
 
+  findPending(organizationId: string, documentId: string): Promise<Document | null> {
+    return this.prisma.document.findFirst({
+      where: { id: documentId, organizationId, status: 'PENDING' },
+    });
+  }
+
+  async upsertDocumentMetadata(
+    organizationId: string,
+    data: {
+      externalId: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      folderExternalId?: string;
+      supported: boolean;
+    },
+  ): Promise<{ id: string; status: DocumentStatus; created: boolean; supported: boolean }> {
+    const existing = await this.prisma.document.findUnique({
+      where: { organizationId_externalId: { organizationId, externalId: data.externalId } },
+    });
+    const folder = data.folderExternalId
+      ? await this.prisma.folder.findUnique({
+          where: {
+            organizationId_externalId: {
+              organizationId,
+              externalId: data.folderExternalId,
+            },
+          },
+        })
+      : null;
+    const status: DocumentStatus = data.supported ? existing?.status ?? 'PENDING' : 'MANUAL';
+    const document = await this.prisma.document.upsert({
+      where: { organizationId_externalId: { organizationId, externalId: data.externalId } },
+      create: {
+        organizationId,
+        externalId: data.externalId,
+        name: data.name,
+        mimeType: data.mimeType,
+        sizeBytes: data.sizeBytes,
+        status,
+        folderId: folder?.id,
+      },
+      update: {
+        name: data.name,
+        mimeType: data.mimeType,
+        sizeBytes: data.sizeBytes,
+        folderId: folder?.id,
+        status,
+      },
+    });
+    return { id: document.id, status: document.status, created: !existing, supported: data.supported };
+  }
+
+  async markManual(organizationId: string, documentId: string): Promise<void> {
+    await this.prisma.document.updateMany({
+      where: { id: documentId, organizationId },
+      data: { status: 'MANUAL' },
+    });
+  }
+
+  async markProposed(organizationId: string, documentId: string): Promise<void> {
+    await this.prisma.document.updateMany({
+      where: { id: documentId, organizationId, status: 'PENDING' },
+      data: { status: 'PROPOSED' },
+    });
+  }
+
   async updateStatus(
     organizationId: string,
     documentId: string,

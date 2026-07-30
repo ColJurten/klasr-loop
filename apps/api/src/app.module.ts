@@ -9,6 +9,9 @@ import { RulesModule } from './rules/rules.module';
 import { ClassificationModule } from './classification/classification.module';
 import { AnalysesModule } from './analyses/analyses.module';
 import { AuthModule } from './auth/auth.module';
+import { DriveModule } from './drive/drive.module';
+import { JobsModule } from './jobs/jobs.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -21,8 +24,9 @@ import { AuthModule } from './auth/auth.module';
     ClassificationModule,
     AnalysesModule,
     AuthModule,
-    // TODO(#backlog): jobs module (pg-boss on PostgreSQL, ADR-004) for async
-    // sync/OCR/classification — payloads MUST carry organizationId, be idempotent.
+    DriveModule,
+    JobsModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

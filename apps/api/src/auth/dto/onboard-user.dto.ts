@@ -16,4 +16,16 @@ export class OnboardUserDto {
   @IsString()
   @IsNotEmpty()
   provider!: string;
+
+  @IsOptional()
+  @IsString()
+  providerAccountId?: string;
+
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
+
+  @IsOptional()
+  @IsString({ each: true })
+  scopes?: string[];
 }

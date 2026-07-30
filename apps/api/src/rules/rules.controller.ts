@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { CreateRuleDto } from './dto/create-rule.dto';
 import { RulesService } from './rules.service';
 import { RuleWithConditions } from './rules.repository';
 
 @Controller('organizations/:organizationId/rules')
+@UseGuards(InternalServiceGuard)
 export class RulesController {
   constructor(private readonly service: RulesService) {}
 

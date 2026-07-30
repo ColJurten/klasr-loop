@@ -48,8 +48,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const initials = initialsFromName(displayName);
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-white px-4 py-5">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <aside className="flex w-full shrink-0 flex-col border-b border-line bg-white px-4 py-5 md:w-60 md:border-b-0 md:border-r">
         <Link href="/" aria-label="Accueil klasr">
           <KlasrLogo />
         </Link>
@@ -65,13 +65,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <ChevronsUpDown className="h-3.5 w-3.5 text-ink/60" strokeWidth={1.5} />
         </button>
 
-        <nav className="mt-6 flex flex-1 flex-col gap-1" aria-label="Navigation principale">
+        <nav className="mt-6 flex gap-1 overflow-x-auto md:flex-1 md:flex-col md:overflow-visible" aria-label="Navigation principale">
           {NAV.map(({ label, href, icon: Icon, active }) => (
             <Link
               key={label}
               href={href}
               aria-current={active ? 'page' : undefined}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+              className={`flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
                 active ? 'bg-lavender/25 font-medium text-ink' : 'text-ink/60 hover:text-ink'
               }`}
             >
@@ -81,7 +81,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           ))}
         </nav>
 
-        <div className="border-t border-line pt-4">
+        <div className="mt-4 border-t border-line pt-4 md:mt-0">
           <div className="flex items-center gap-3">
             <span
               aria-hidden="true"

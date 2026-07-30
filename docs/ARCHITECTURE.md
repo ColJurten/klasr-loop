@@ -41,6 +41,27 @@ Stack final : **TypeScript partout · Next.js 14 · NestJS · PostgreSQL (Prisma
 MongoDB (accès NoSQL ciblé) · pg-boss · Docker · GitHub Actions**.
 Supprimés par rapport à la conception initiale : **Python/FastAPI, Redis, MinIO**.
 
+## 1.1. MVP réel local et chemin Google
+
+Le MVP réel relie désormais `/dashboard` à une couche BFF Next.js server-only :
+le navigateur appelle uniquement des routes same-origin (`/api/sync`,
+`/api/proposals/:id/confirm`) et ne choisit jamais `organizationId`. Les appels
+Next → Nest utilisent `x-internal-secret`; les contrôleurs tenant-scoped du flux
+MVP (`documents`, `proposals`, `sync`, `dashboard`) sont protégés par
+`InternalServiceGuard`.
+
+Google Drive est le premier connecteur de production : le refresh token est
+chiffré en AES-256-GCM (`TOKEN_ENCRYPTION_KEY`), l'access token est rafraîchi
+côté serveur, l'arborescence est listée en métadonnées seulement, et les octets
+du fichier sont consommés en stream par l'OCR puis jetés. La mutation Drive
+(`PATCH files`) n'est appelée que depuis `ClassificationService.confirm()`, après
+validation explicite. Microsoft reste authentification-only dans ce MVP.
+
+Le mode `KLASR_LOCAL_MVP=true` est un simulateur d'arêtes externes
+Google/OCR uniquement : Next.js, NestJS HTTP, PostgreSQL, MongoDB, Prisma,
+repositories, services et pg-boss restent réels. Il refuse de démarrer en
+production, comme `KLASR_INLINE_WORKER=true`.
+
 ## 2. ADR — décisions et justifications (à défendre devant le jury)
 
 ### ADR-001 — Un seul langage : TypeScript (suppression de Python/FastAPI)

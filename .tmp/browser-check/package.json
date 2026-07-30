@@ -1,9 +1,0 @@
-{
-  "name": "klasr-visual-check",
-  "version": "1.0.0",
-  "private": true,
-  "packageManager": "pnpm@10.15.1",
-  "devDependencies": {
-    "playwright": "1.55.0"
-  }
-}

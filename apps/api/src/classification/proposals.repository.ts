@@ -25,6 +25,40 @@ export class ProposalsRepository {
     });
   }
 
+  createPending(params: {
+    organizationId: string;
+    documentId: string;
+    proposedName: string;
+    destinationPath: string;
+    confidence: number;
+    source: 'RULE' | 'LLM';
+    modelUsed?: string;
+    llmCallsUsed: number;
+  }): Promise<ProposalWithDocument> {
+    return this.prisma.classificationProposal.create({
+      data: {
+        organizationId: params.organizationId,
+        documentId: params.documentId,
+        proposedName: params.proposedName,
+        destinationPath: params.destinationPath,
+        confidence: params.confidence,
+        source: params.source,
+        modelUsed: params.modelUsed,
+        llmCallsUsed: params.llmCallsUsed,
+      },
+      include: { document: true },
+    });
+  }
+
+  async listHistory(organizationId: string, take = 20) {
+    return this.prisma.actionHistory.findMany({
+      where: { organizationId },
+      include: { document: true },
+      orderBy: { executedAt: 'desc' },
+      take,
+    });
+  }
+
   /** Single transaction: decide proposal + mark document + write audit history. */
   confirmTransaction(params: {
     organizationId: string;
