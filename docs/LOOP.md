@@ -6,9 +6,12 @@ The goal: I design the system once; the system prompts the agents.
 
 ## 1. Automations — the heartbeat
 
-Discovery and triage run without me:
+Work moves through the loop without me, event by event (full spec: `docs/AGENT_LOOP_SPEC.md`):
 
-- **Nightly triage (unattended):** `.github/workflows/claude-triage.yml` runs Claude Code on a cron schedule. Its prompt invokes the `loop-triage` skill: read yesterday's CI failures, open issues, and recent commits; write findings into `docs/STATE.md`; open GitHub issues for anything actionable.
+- **Event adapters (deterministic, no LLM):** `claude-intake.yml`, `claude-feedback.yml` and `claude-ci-recovery.yml` normalize issues, supervisor feedback and CI completions through `scripts/agent/normalize-event.mjs`, then fire `repository_dispatch` events — the token-exception channel GitHub always delivers.
+- **Worker:** `claude-worker.yml` serializes per task, dedupes against the Agent Control record, enforces `MAX_AGENT_CYCLES`, and routes to one role per stage (spec-writer → implementer → verifier → security-reviewer / feedback-responder) via the single reusable `_claude-run.yml`.
+- **Autonomous issues:** protected-branch CI failures become fingerprint-deduplicated issues deterministically — no Claude session involved.
+- **Optional weekly health scan:** `claude-health-scan.yml`, read-only digest, never writes.
 - **In-session, run-until-done:** use `/goal` in Claude Code with a verifiable stop condition, e.g. `/goal all tests in apps/api pass and lint is clean`. A separate model checks completion, so the maker isn't grading itself. Use `/loop` for cadence-based re-runs inside a session.
 - **Hooks (deterministic, always-on):** `.claude/settings.json` runs lint on every file edit and reminds the agent to update STATE.md at session stop. Rules that must ALWAYS execute live in hooks, not prompts.
 
@@ -25,10 +28,10 @@ Located in `.claude/skills/`, auto-invoked by description match or explicitly wi
 | Skill | Purpose |
 |---|---|
 | `klasr-product` | Domain model, personas, REAC/jury constraints, eco-design rules |
-| `backend-conventions` | NestJS layered architecture, Prisma, BullMQ, multi-tenant rules |
+| `backend-conventions` | NestJS layered architecture, Prisma, pg-boss, MongoDB analyses, multi-tenant rules |
 | `frontend-conventions` | Next.js 14 App Router, shadcn/ui, single-click confirmation UX |
 | `git-workflow` | Branching model, Conventional Commits, PR checklist |
-| `loop-triage` | The recurring triage procedure called by the nightly automation |
+| `issue-spec` / `supervisor-feedback` / `self-review` / `health-scan` | Agent-loop procedures (spec format, feedback handling, verification, weekly digest) |
 | `release` | Cut a release branch, changelog, tag, artifact publication |
 
 Rule of thumb: always-true one-liners go in `CLAUDE.md`; multi-step procedures go in skills. When these mature, bundle them as a plugin to share across repos.

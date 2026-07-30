@@ -1,0 +1,149 @@
+# The agent worker. Started ONLY by repository_dispatch (agent.*) or a manual
+# dry run. Fetches authoritative data from GitHub (payloads carry identifiers
+# only), enforces dedupe + cycle caps, runs the role via _claude-run, updates
+# the single Agent Control comment, and explicitly dispatches the next stage.
+name: claude-worker
+
+on:
+  repository_dispatch:
+    types:
+      - agent.intake
+      - agent.implement
+      - agent.verify
+      - agent.security_review
+      - agent.supervisor_feedback
+      - agent.ci_failure
+  workflow_dispatch:
+    inputs:
+      dry_run_fixture:
+        description: 'Fixture name under scripts/agent/test/fixtures (dry run: no writes)'
+        required: true
+        default: '02-ready-label.json'
+      dry_run_event:
+        description: 'GitHub event name for the fixture'
+        required: true
+        default: 'issues'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+concurrency:
+  group: klasr-agent-${{ github.event.client_payload.task || github.event.inputs.dry_run_fixture || 'manual' }}
+  cancel-in-progress: false
+
+env:
+  MAX_CYCLES: ${{ vars.MAX_AGENT_CYCLES || 5 }}
+
+jobs:
+  # ---------- Dry run: report transitions, write nothing ----------
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix scripts/agent
+      - name: Simulate routing decision from fixture
+        env:
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "## Agent loop dry run" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          node scripts/agent/normalize-event.mjs \
+            "${{ github.event.inputs.dry_run_event }}" \
+            "scripts/agent/test/fixtures/${{ github.event.inputs.dry_run_fixture }}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "No issues, branches, comments or dispatches were created." >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- Context: authoritative data, dedupe, cycle guard ----------
+  context:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.guard.outputs.proceed }}
+      role: ${{ steps.guard.outputs.role }}
+      ref: ${{ steps.guard.outputs.ref }}
+      task: ${{ steps.guard.outputs.task }}
+      branch: ${{ steps.guard.outputs.branch }}
+      cycle: ${{ steps.guard.outputs.cycle }}
+      use_app: ${{ steps.guard.outputs.use_app }}
+      prompt: ${{ steps.guard.outputs.prompt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix scripts/agent
+      - name: Guard (dedupe, cycle cap, role routing) and build untrusted context
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          EVENT_TYPE: ${{ github.event.action }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/agent/worker-context.sh
+      - name: Upload untrusted context for the role
+        if: steps.guard.outputs.proceed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-context-${{ github.run_id }}
+          path: /tmp/agent-context.md
+          retention-days: 1
+
+  # ---------- Role execution ----------
+  run:
+    needs: context
+    if: needs.context.outputs.proceed == 'true'
+    uses: ./.github/workflows/_claude-run.yml
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
+      checks: read
+    with:
+      role: ${{ needs.context.outputs.role }}
+      ref: ${{ needs.context.outputs.ref }}
+      use_app_token: ${{ needs.context.outputs.use_app == 'true' }}
+      prompt: ${{ needs.context.outputs.prompt }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      KLASR_APP_ID: ${{ secrets.KLASR_APP_ID }}
+      KLASR_APP_PRIVATE_KEY: ${{ secrets.KLASR_APP_PRIVATE_KEY }}
+
+  # ---------- Post: control record, labels, explicit next-stage dispatch ----------
+  post:
+    needs: [context, run]
+    if: always() && needs.context.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci --prefix scripts/agent
+      - name: Update control state and dispatch next stage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TASK: ${{ needs.context.outputs.task }}
+          ROLE: ${{ needs.context.outputs.role }}
+          BRANCH: ${{ needs.context.outputs.branch }}
+          CYCLE: ${{ needs.context.outputs.cycle }}
+          EVENT_KEY: ${{ github.event.client_payload.event_key }}
+          RUN_OUTCOME: ${{ needs.run.result }}
+          VERDICT_JSON: ${{ needs.run.outputs.verdict }}
+        run: bash scripts/agent/worker-post.sh

@@ -1,0 +1,25 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 45,
+    "pull_request": {
+      "url": "x"
+    },
+    "labels": [
+      {
+        "name": "agent-task"
+      },
+      {
+        "name": "agent:awaiting-supervisor"
+      }
+    ],
+    "body": ""
+  },
+  "comment": {
+    "id": 9002,
+    "body": "/agent revise\nRename the toast copy."
+  },
+  "sender": {
+    "login": "ColJurten"
+  }
+}
