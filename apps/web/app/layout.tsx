@@ -1,5 +1,24 @@
 import type { Metadata } from 'next';
+import localFont from 'next/font/local';
 import './globals.css';
+
+const inter = localFont({
+  src: [
+    { path: './fonts/Inter-Regular.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/Inter-Medium.woff2', weight: '500', style: 'normal' },
+  ],
+  variable: '--font-inter',
+  display: 'swap',
+});
+
+const jetBrainsMono = localFont({
+  src: [
+    { path: './fonts/JetBrainsMono-Regular.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/JetBrainsMono-Medium.woff2', weight: '500', style: 'normal' },
+  ],
+  variable: '--font-jetbrains-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'klasr — le classement, en un clic',
@@ -10,15 +29,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body className="min-h-screen bg-paper font-sans text-ink antialiased">{children}</body>
+      <body
+        className={`${inter.variable} ${jetBrainsMono.variable} min-h-screen bg-paper font-sans text-ink antialiased`}
+      >
+        {children}
+      </body>
     </html>
   );
 }

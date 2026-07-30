@@ -87,7 +87,7 @@ export default async function DashboardPage() {
 
       <section aria-label="Statistiques" className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
         {METRICS.map((metric) => (
-          <div key={metric.label} className="rounded-xl border border-line bg-white p-4">
+          <div key={metric.label} className="rounded-lg border border-line bg-white p-4">
             <p className="font-mono text-2xl">{metric.value}</p>
             <p className="mt-1 text-sm text-ink/60">{metric.label}</p>
           </div>
@@ -96,11 +96,11 @@ export default async function DashboardPage() {
 
       <section
         aria-label="Déposer des documents"
-        className="mb-10 flex flex-col items-center gap-2 rounded-xl border border-dashed border-lavender-deep/40 bg-lavender/10 px-6 py-10 text-center"
+        className="mb-10 flex flex-col items-center gap-2 rounded-lg border border-dashed border-lavender-deep/40 bg-lavender/10 px-6 py-10 text-center"
       >
         <UploadCloud className="h-6 w-6 text-lavender-deep" strokeWidth={1.5} />
         <p className="text-sm font-medium">Déposez vos documents ici</p>
-        <p className="text-xs text-ink/50">
+        <p className="text-xs text-ink/60">
           Factures, contrats, relevés — en vrac, sans vous soucier du nom.
         </p>
       </section>

@@ -1,0 +1,12 @@
+{
+  "name": "klasr-loop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "lint": "pnpm --recursive --if-present run lint",
+    "typecheck": "pnpm --recursive --if-present run typecheck",
+    "test": "pnpm --recursive --if-present run test",
+    "build": "pnpm --recursive --if-present run build"
+  },
+  "packageManager": "pnpm@10.15.1"
+}

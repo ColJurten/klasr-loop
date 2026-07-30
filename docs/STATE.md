@@ -2,7 +2,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-07-16 (feedback workflow bootstrap fix)
+> Last updated: 2026-07-30 (one-shot MVP local pnpm + démo)
 
 ## In progress
 
@@ -22,6 +22,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-07-30 — One-shot MVP local jury-ready : workspace pnpm racine (`pnpm install/lint/typecheck/test/build`), suppression des anciens lockfiles npm, écran `/demo` sans OAuth ni secrets avec propositions fictives, correction en formulaire/dialogue accessible, validation unitaire ou "Tout valider", échec partiel déterministe + retry, état vide/succès, activité récente et bannière RGPD conforme. Vérification : `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (API 31, web 21, agent 50), `pnpm build`, lancement local `http://127.0.0.1:3000` et routes `/` + `/demo` en HTTP 200. Compromis : pas de capture navigateur réelle, aucun binaire Chromium/Chrome disponible sur l'hôte ; vérification de lancement + inspection HTML/CSS effectuées.
 
 - [x] 2026-07-16 — Agent loop v2 (spec-driven, event-driven) : suppression du cron triage ; adapters intake/feedback/ci-recovery → repository_dispatch → worker (dédup, MAX_AGENT_CYCLES, concurrence par tâche) → _claude-run réutilisable ; spec klasr-agent-spec:v1 + validateur ; machine à états agent:* + commentaire de contrôle unique ; rôles orchestrator (code déterministe)/spec-writer/implementer/verifier/security-reviewer/feedback-responder ; issues auto fingerprint-dédupliquées sur échec CI branche protégée ; 48 tests node:test verts ; actionlint clean. Voir docs/AGENT_LOOP_SPEC.md.
 
@@ -52,3 +54,4 @@
 - Loop setup demonstrates: CI/CD design, quality gates, Git workflow industrialization.
 - Starter code demonstrates: layered architecture (controller/service/repository), hexagonal port for Drive execution, multi-tenant data access design, TDD on the confirm flow, eco-design instrumentation (llmCallsUsed, UsageMetric).
 - #1 Auth demonstrates: OAuth-based auth (NextAuth Google/Microsoft) with server-side session augmentation, automatic multi-tenant onboarding (organization minted or reused from a verified OAuth email, never client input), a fail-closed + constant-time internal-service guard (defense in depth for a service-to-service endpoint with no other verification), and NextAuth middleware protecting the **Next.js dashboard pages** (`/dashboard/**`) — with unit tests covering the onboarding happy/reuse/race/defensive paths and every guard failure mode. **Precise about what's NOT covered**: the API itself (`apps/api`) has no request-level authentication yet — every controller still trusts `organizationId` from the URL/body with nothing checking who's asking. That gap is tracked as issue #2, not closed by #1.
+- One-shot MVP 2026-07-30 demonstrates: C1 (workspace pnpm reproductible), C2 (interface Next.js responsive et accessible de validation/correction), C3 (chemin de confirmation conservé via `DriveExecutor` côté API, sans mutation avant validation), C4/C5 (livraison guidée par SPEC et besoins jury), C6 (contraintes ADR respectées, aucun nouveau datastore/runtime/service), C7/C8 (modèles PostgreSQL et collection Mongo `analyses` inchangés), C9 (tests Jest/Vitest/node:test + build + lancement local), C10/C11 (commandes racine et gates qualité exécutables localement).

@@ -26,6 +26,7 @@ vi.mock('next-auth', () => ({
 const fetchPendingProposals = vi.fn().mockResolvedValue([]);
 vi.mock('@/lib/api', () => ({
   fetchPendingProposals: (...args: unknown[]) => fetchPendingProposals(...args),
+  confirmProposal: vi.fn().mockResolvedValue({ executed: true, destinationPath: '/' }),
 }));
 
 import { redirect } from 'next/navigation';

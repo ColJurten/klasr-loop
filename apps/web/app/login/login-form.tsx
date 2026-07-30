@@ -24,7 +24,7 @@ export function LoginForm() {
           <KlasrLogo />
         </div>
 
-        <div className="rounded-xl border border-line bg-white p-8">
+        <div className="rounded-lg border border-line bg-white p-8">
           <h1 className="text-center text-lg">Se connecter</h1>
           <p className="mt-2 text-center text-sm text-ink/60">
             Accédez à votre espace klasr avec votre compte professionnel.
@@ -57,7 +57,7 @@ export function LoginForm() {
           </div>
         </div>
 
-        <p className="mt-6 text-center text-xs text-ink/50">
+        <p className="mt-6 text-center text-xs text-ink/60">
           Aucun document stocké chez klasr — seules les métadonnées sont analysées.
         </p>
       </div>

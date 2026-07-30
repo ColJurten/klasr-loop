@@ -21,38 +21,79 @@ afterEach(cleanup);
 
 describe('ProposalCard — single-click confirmation flow', () => {
   it('shows the proposal (current name, proposed name, destination)', () => {
-    render(<ProposalCard proposal={proposal} onConfirm={vi.fn().mockResolvedValue(undefined)} />);
+    render(<ProposalCard proposal={proposal} status="idle" onConfirm={vi.fn().mockResolvedValue(undefined)} />);
     expect(screen.getByText('scan_001.pdf')).toBeDefined();
     expect(screen.getByText('→ Facture_EDF_2026-03.pdf')).toBeDefined();
     expect(screen.getByText('/Comptabilité/Électricité')).toBeDefined();
   });
 
+  it('exposes confidence with text and source, not colour alone', () => {
+    render(<ProposalCard proposal={proposal} status="idle" onConfirm={vi.fn().mockResolvedValue(undefined)} />);
+    expect(screen.getByLabelText('Confiance 92 %, source IA')).toBeDefined();
+  });
+
   it('executes on a SINGLE click of Valider, without override', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
-    render(<ProposalCard proposal={proposal} onConfirm={onConfirm} />);
+    render(<ProposalCard proposal={proposal} status="idle" onConfirm={onConfirm} />);
     fireEvent.click(screen.getByRole('button', { name: /Valider/ }));
-    await waitFor(() => expect(screen.getByText('Classé ✓')).toBeDefined());
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onConfirm).toHaveBeenCalledWith('prop_1', undefined);
   });
 
   it('ignores double clicks (no double execution)', async () => {
-    let release: () => void = () => undefined;
-    const onConfirm = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
-    render(<ProposalCard proposal={proposal} onConfirm={onConfirm} />);
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    render(<ProposalCard proposal={proposal} status="confirming" onConfirm={onConfirm} />);
     const button = screen.getByRole('button', { name: /Valider/ });
     fireEvent.click(button);
     fireEvent.click(button);
-    release();
-    await waitFor(() => expect(screen.getByText('Classé ✓')).toBeDefined());
-    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it('surfaces a failure without pretending the document was classified', async () => {
-    const onConfirm = vi.fn().mockRejectedValue(new Error('drive down'));
-    render(<ProposalCard proposal={proposal} onConfirm={onConfirm} />);
-    fireEvent.click(screen.getByRole('button', { name: /Valider/ }));
-    await waitFor(() => expect(screen.getByText(/Le classement a échoué/)).toBeDefined());
-    expect(screen.queryByText('Classé ✓')).toBeNull();
+    render(<ProposalCard proposal={proposal} status="error" onConfirm={vi.fn().mockResolvedValue(undefined)} />);
+    expect(screen.getByText(/Le classement a échoué/)).toBeDefined();
+    expect(screen.getByRole('button', { name: /Réessayer/ })).toBeDefined();
+    expect(screen.queryByText('Classé')).toBeNull();
+  });
+
+  it('keeps recoverable retry failures inside the card click boundary', async () => {
+    const onConfirm = vi.fn().mockRejectedValue(new Error('confirm failed'));
+    const unhandled = vi.fn();
+    window.addEventListener('unhandledrejection', unhandled);
+
+    try {
+      render(<ProposalCard proposal={proposal} status="error" onConfirm={onConfirm} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Réessayer/ }));
+
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('prop_1', undefined));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(screen.getByText(/Le classement a échoué/)).toBeDefined();
+      expect(screen.getByRole('button', { name: /Réessayer/ })).toBeDefined();
+      expect(screen.queryByText('Classé')).toBeNull();
+    } finally {
+      window.removeEventListener('unhandledrejection', unhandled);
+    }
+  });
+
+  it('uses an in-product correction dialog instead of window.prompt', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const promptSpy = vi.spyOn(window, 'prompt');
+    render(<ProposalCard proposal={proposal} status="idle" onConfirm={onConfirm} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Corriger/ }));
+    expect(screen.getByRole('dialog', { name: /Corriger la destination/ })).toBeDefined();
+    fireEvent.change(screen.getByLabelText('Dossier de destination'), {
+      target: { value: '/Comptabilité/Archives' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Confirmer la correction/ }));
+
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith('prop_1', '/Comptabilité/Archives'),
+    );
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 });

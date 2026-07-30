@@ -11,7 +11,7 @@ const BENEFITS = [
   {
     icon: ShieldCheck,
     title: 'Vos fichiers restent chez vous',
-    body: 'Aucun document stocké chez klasr. Seules les métadonnées sont analysées, puis purgées automatiquement.',
+    body: "Les octets sont streamés depuis votre Drive vers l'OCR puis jetés. Klasr ne conserve pas le contenu documentaire.",
   },
   {
     icon: Eye,
@@ -56,6 +56,9 @@ export default function LandingPage() {
           <Link href="/login?callbackUrl=/dashboard" className="hover:text-ink">
             Se connecter
           </Link>
+          <Link href="/demo" className="hover:text-ink">
+            Démo locale
+          </Link>
           <Link
             href="/login?callbackUrl=/dashboard"
             className="rounded-lg bg-ink px-4 py-2 font-medium text-paper hover:bg-ink/85"
@@ -67,7 +70,7 @@ export default function LandingPage() {
 
       <main>
         <section className="mx-auto max-w-3xl px-6 pb-20 pt-16 text-center">
-          <h1 className="text-4xl leading-tight tracking-tight sm:text-5xl">
+          <h1 className="text-4xl leading-tight sm:text-5xl">
             Confirmez. <span className="text-lavender-deep">klasr</span> s&apos;occupe du reste.
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-ink/60">
@@ -81,6 +84,12 @@ export default function LandingPage() {
             >
               Essayer gratuitement
             </Link>
+            <Link
+              href="/demo"
+              className="rounded-lg border border-lavender-deep px-6 py-3 text-sm font-medium hover:bg-lavender/20"
+            >
+              Ouvrir la démo locale
+            </Link>
             <a
               href="#fonctionnement"
               className="rounded-lg border border-line px-6 py-3 text-sm hover:border-ink/30"
@@ -90,10 +99,10 @@ export default function LandingPage() {
           </div>
 
           {/* Aperçu produit : une proposition, réduite à l'essentiel */}
-          <div className="mx-auto mt-14 max-w-xl rounded-xl border border-line bg-white p-4 text-left">
+          <div className="mx-auto mt-14 max-w-xl rounded-lg border border-line bg-white p-4 text-left">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0 font-mono text-sm">
-                <p className="truncate text-ink/50">scan_0231.pdf</p>
+                <p className="truncate text-ink/60">scan_0231.pdf</p>
                 <p className="truncate">→ Facture_EDF_2026-06.pdf</p>
                 <p className="truncate text-ink/70">/Comptabilité/Électricité</p>
               </div>
@@ -151,7 +160,7 @@ export default function LandingPage() {
             {TIERS.map((tier) => (
               <div
                 key={tier.name}
-                className={`rounded-xl border bg-white p-6 ${
+                className={`rounded-lg border bg-white p-6 ${
                   tier.featured ? 'border-2 border-lavender-deep' : 'border-line'
                 }`}
               >
@@ -175,7 +184,7 @@ export default function LandingPage() {
       </main>
 
       <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm text-ink/50">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm text-ink/60">
           <span className="inline-flex items-center gap-2">
             <KlasrMark size={16} /> © 2026 klasr
           </span>

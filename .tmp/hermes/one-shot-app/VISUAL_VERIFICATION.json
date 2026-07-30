@@ -1,0 +1,47 @@
+{
+  "base": "http://127.0.0.1:3000",
+  "browser": "140.0.7339.16",
+  "pages": {
+    "landing": {
+      "title": "klasr — le classement, en un clic",
+      "h1": "Confirmez. klasr s'occupe du reste.",
+      "hasDemoLink": true,
+      "noHorizontalOverflow": true
+    },
+    "login": {
+      "heading": "Se connecter",
+      "googleOAuthAction": true,
+      "microsoftOAuthAction": true,
+      "noHorizontalOverflow": true
+    },
+    "demoDesktop": {
+      "initialCards": 4,
+      "bodyFont": "__inter_13ae28, __inter_Fallback_13ae28, Inter, system-ui, sans-serif",
+      "monoFont": "__jetBrainsMono_dd8b38, __jetBrainsMono_Fallback_dd8b38, \"JetBrains Mono\", ui-monospace, monospace",
+      "hasRGPDBanner": true,
+      "noHorizontalOverflow": true
+    },
+    "demoMobile": {
+      "scrollWidth": 390,
+      "viewportWidth": 390,
+      "ok": true
+    }
+  },
+  "interactions": {
+    "retryFailureShown": true,
+    "retrySucceeded": true,
+    "bulkValidationReachedEmptyState": true
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "failedResponses": [],
+  "externalRequests": [],
+  "screenshots": [
+    "/root/projects/klasr-oneshot/klasr-loop/.tmp/hermes/one-shot-app/screenshots/landing-desktop.png",
+    "/root/projects/klasr-oneshot/klasr-loop/.tmp/hermes/one-shot-app/screenshots/login-desktop.png",
+    "/root/projects/klasr-oneshot/klasr-loop/.tmp/hermes/one-shot-app/screenshots/demo-initial-desktop.png",
+    "/root/projects/klasr-oneshot/klasr-loop/.tmp/hermes/one-shot-app/screenshots/demo-correction-dialog.png",
+    "/root/projects/klasr-oneshot/klasr-loop/.tmp/hermes/one-shot-app/screenshots/demo-complete-desktop.png",
+    "/root/projects/klasr-oneshot/klasr-loop/.tmp/hermes/one-shot-app/screenshots/demo-mobile.png"
+  ]
+}

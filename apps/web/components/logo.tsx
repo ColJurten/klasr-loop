@@ -25,7 +25,7 @@ export function KlasrLogo({ size = 22 }: { size?: number }) {
   return (
     <span className="inline-flex items-center gap-2">
       <KlasrMark size={size} />
-      <span className="text-lg font-medium lowercase tracking-tight">klasr</span>
+      <span className="text-lg font-medium lowercase">klasr</span>
     </span>
   );
 }

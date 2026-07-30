@@ -62,7 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               organizationId/membershipId/role are) — showing the id keeps
               this honest rather than reintroducing fabricated demo data. */}
           <span className="truncate font-mono text-xs">{session.user.organizationId}</span>
-          <ChevronsUpDown className="h-3.5 w-3.5 text-ink/40" strokeWidth={1.5} />
+          <ChevronsUpDown className="h-3.5 w-3.5 text-ink/60" strokeWidth={1.5} />
         </button>
 
         <nav className="mt-6 flex flex-1 flex-col gap-1" aria-label="Navigation principale">
@@ -91,7 +91,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </span>
             <div className="min-w-0 text-sm">
               <p className="truncate font-medium">{displayName}</p>
-              <p className="truncate text-xs text-ink/50">{roleLabel}</p>
+              <p className="truncate text-xs text-ink/60">{roleLabel}</p>
             </div>
           </div>
           <SignOutButton />
