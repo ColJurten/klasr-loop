@@ -79,6 +79,17 @@ export async function listInputItems(): Promise<DriveInputItemView[]> {
   return response.json();
 }
 
+export async function listDriveItems(parentId = 'root', pageToken?: string): Promise<{ items: DriveInputItemView[]; nextPageToken: string | null }> {
+  const organizationId = await sessionTenant();
+  const search = new URLSearchParams({ parentId });
+  if (pageToken) search.set('pageToken', pageToken);
+  const response = await fetch(`${apiUrl()}/organizations/${organizationId}/drive/items?${search}`, {
+    headers: internalHeaders(), cache: 'no-store',
+  });
+  await assertOk(response);
+  return response.json();
+}
+
 export async function launchDriveItem(itemExternalId: string): Promise<{ enqueued: number; manual: number }> {
   const organizationId = await sessionTenant();
   const response = await fetch(`${apiUrl()}/organizations/${organizationId}/drive/launch`, {

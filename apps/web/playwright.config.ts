@@ -10,6 +10,7 @@ const sharedEnv = [
   'INTERNAL_API_SECRET=playwright-local-secret',
   'TOKEN_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
   'KLASR_LOCAL_MVP=true',
+  'KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT=false',
   'KLASR_ACCEPTANCE_LOCAL_MVP=true',
   'ANTHROPIC_API_KEY=',
 ].join(' ');

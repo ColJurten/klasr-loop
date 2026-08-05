@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { IsString } from 'class-validator';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { ClassificationService } from './classification.service';
 import { ConfirmProposalDto } from './dto/confirm-proposal.dto';
@@ -14,6 +14,14 @@ class SelectReferenceRootDto {
 class LaunchDriveItemDto {
   @IsString()
   itemExternalId!: string;
+}
+
+class ListDriveItemsDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(512)
+  parentId?: string;
+
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(2048)
+  pageToken?: string;
 }
 
 @Controller('organizations/:organizationId/proposals')
@@ -79,6 +87,11 @@ export class DriveWorkflowController {
   @Get('input-items')
   listInputItems(@Param('organizationId') organizationId: string) {
     return this.sync.listInputItems(organizationId);
+  }
+
+  @Get('items')
+  listItems(@Param('organizationId') organizationId: string, @Query() query: ListDriveItemsDto) {
+    return this.sync.listDriveItems(organizationId, query.parentId ?? 'root', query.pageToken);
   }
 
   @Post('launch')

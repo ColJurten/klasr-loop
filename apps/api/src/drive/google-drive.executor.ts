@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { DriveExecutor, MoveRenameCommand } from '../classification/drive-executor.port';
 import { FoldersRepository } from './folders.repository';
 import { GoogleTokenService } from './google-token.service';
@@ -12,6 +12,8 @@ export interface DriveMetadataItem {
   sizeBytes: number;
   parents: string[];
 }
+
+export interface DriveMetadataPage { items: DriveMetadataItem[]; nextPageToken: string | null; }
 
 @Injectable()
 export class GoogleDriveExecutor implements DriveExecutor {
@@ -36,7 +38,7 @@ export class GoogleDriveExecutor implements DriveExecutor {
       const response = await fetch(`https://www.googleapis.com/drive/v3/files?${search}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (!response.ok) throw new Error(`Google Drive list failed: ${response.status}`);
+      if (!response.ok) throwGoogleError('list', response.status);
       const payload = (await response.json()) as {
         nextPageToken?: string;
         files?: Array<{ id: string; name: string; mimeType: string; size?: string; parents?: string[] }>;
@@ -51,6 +53,26 @@ export class GoogleDriveExecutor implements DriveExecutor {
       sizeBytes: Number(file.size ?? 0),
       parents: file.parents ?? [],
     }));
+  }
+
+  async listChildren(organizationId: string, parentId: string, pageToken?: string): Promise<DriveMetadataPage> {
+    const accessToken = await this.tokens.getAccessToken(organizationId);
+    const effectiveParentId = parentId === 'root' && process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT === 'true'
+      ? process.env.KLASR_GOOGLE_DRIVE_ROOT_ID ?? parentId
+      : parentId;
+    const search = new URLSearchParams({
+      pageSize: '100', fields: 'nextPageToken,files(id,name,mimeType,size,parents)',
+      q: `'${effectiveParentId.replace(/'/g, "\\'")}' in parents and trashed=false`,
+      supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', orderBy: 'folder,name_natural',
+    });
+    if (pageToken) search.set('pageToken', pageToken);
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files?${search}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) throwGoogleError('list', response.status);
+    const payload = (await response.json()) as { nextPageToken?: string; files?: Array<{ id: string; name: string; mimeType: string; size?: string; parents?: string[] }> };
+    return {
+      items: (payload.files ?? []).map((file) => ({ id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: Number(file.size ?? 0), parents: file.parents ?? [] })),
+      nextPageToken: payload.nextPageToken ?? null,
+    };
   }
 
   async download(organizationId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>> {
@@ -153,4 +175,9 @@ export class GoogleDriveExecutor implements DriveExecutor {
 
 export function isFolder(item: DriveMetadataItem): boolean {
   return item.mimeType === FOLDER_MIME;
+}
+
+function throwGoogleError(operation: string, status: number): never {
+  if ([400, 401, 404, 409].includes(status)) throw new HttpException(`Google Drive ${operation} failed`, status);
+  throw new BadGatewayException(`Google Drive ${operation} failed`);
 }

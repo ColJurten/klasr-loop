@@ -70,8 +70,11 @@ try {
   if (!inputItems.some((item) => item.externalId === 'local_input_folder' && item.eligible)) {
     throw new Error('Local input folder is not eligible');
   }
-  if (inputItems.some((item) => item.externalId === 'local_folder_compta' && item.eligible)) {
-    throw new Error('Inherited destination subtree was offered as input');
+  if (!inputItems.some((item) => item.externalId === 'local_folder_compta' && item.eligible)) {
+    throw new Error('Normal inherited subtree was not offered as input');
+  }
+  if (inputItems.some((item) => item.externalId === 'local_root_cabinet')) {
+    throw new Error('Reference root was offered as input');
   }
 
   const syncResponse = await fetch(`${apiBase}/organizations/${organizationId}/drive/launch`, {

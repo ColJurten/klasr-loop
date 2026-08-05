@@ -12,9 +12,10 @@ reglementees. Le flux reel est volontairement explicite :
 6. executer le renommage/deplacement uniquement apres `Valider`, `Corriger` ou
    `Retirer`.
 
-`/demo` est une maquette fictive. Elle ne prouve pas l'integration Drive, OCR,
-PostgreSQL, pg-boss ou MongoDB. Pour valider le vrai flux local, utiliser le
-mode local credential-free ci-dessous.
+`/demo` est une maquette fictive. Elle ne prouve ni Google Drive ni le flux de
+production. Les tests unitaires prouvent les contrats isolés ; l'adaptateur
+local prouve une régression intégrée sans fournisseur ; seule une vérification
+humaine authentifiée prouve le chemin Google réel.
 
 ## Prerequis
 
@@ -83,7 +84,7 @@ pnpm --filter @klasr/web dev
 En mode local avec `KLASR_INLINE_WORKER=true`, le worker se lance dans l'API et
 `worker:dev` n'est pas necessaire.
 
-## Validation locale sans credentials
+## Validation locale sans credentials (preuve de régression locale)
 
 Chemin le plus simple :
 
@@ -110,8 +111,14 @@ Pour tester Google Drive reel :
 4. Creer un client OAuth Web.
 5. Ajouter l'URL de redirection NextAuth :
    `http://localhost:3000/api/auth/callback/google`.
-6. Renseigner `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` dans les fichiers
-   locaux.
+6. Renseigner, avec des placeholders propres à l'environnement et jamais dans
+   Git : `GOOGLE_CLIENT_ID=<identifiant-placeholder>`,
+   `GOOGLE_CLIENT_SECRET=<secret-placeholder>`,
+   `NEXTAUTH_URL=http://localhost:3000`,
+   `NEXTAUTH_SECRET=<secret-placeholder>`,
+   `API_URL=http://localhost:3001/api/v1`,
+   `INTERNAL_API_SECRET=<secret-local-identique>` et
+   `TOKEN_ENCRYPTION_KEY=<cle-placeholder>`.
 7. Verifier que le scope Drive est autorise :
    `https://www.googleapis.com/auth/drive`.
 
@@ -119,7 +126,31 @@ Frontiere connue : sans credentials Google fournis par l'evaluateur, le depot ne
 peut pas executer une operation sur un Drive de production. Le mode local couvre
 le meme contrat applicatif sans OAuth externe.
 
-## Script manuel de validation
+### Éligibilité et vérification Google réelle
+
+Un PDF, PNG, JPEG ou TIFF peut être choisi partout, y compris sous la racine de
+référence. Un dossier peut être choisi partout et ses descendants supportés sont
+parcourus récursivement. La racine de référence elle-même, le dossier
+`À traiter manuellement` et tous ses descendants sont exclus. Les documents déjà
+`PROPOSED`, `CLASSIFIED` ou `MANUAL` ne sont pas ré-enfilés. Les formats non
+supportés, notamment XLSX, restent visibles avec « Non supporté » et ne sont pas
+envoyés à l'OCR.
+
+La preuve Google exige qu'un humain ouvre `/login` et réalise lui-même le
+consentement. Il contrôle ensuite, sans copier de jeton ni de contenu : navigation
+parent/pagination, racine et descendants, PDF synthétiques à la racine, libellé
+XLSX, job pg-boss, statut OCR/proposition, validation inchangée, correction de
+nom, correction de destination et retrait. Il vérifie uniquement les métadonnées
+sûres (identifiants, noms finaux, parents, statuts), le non-réenfilage et le rendu
+bureau puis 390×844. Avant cette étape, l'état est `NEEDS HUMAN`, jamais `PASS`.
+
+Créer uniquement un dossier temporaire et des PDF/images synthétiques sans
+donnée personnelle. Après la preuve, supprimer ces fixtures dans Drive et purger
+leurs métadonnées de staging selon la procédure d'exploitation. Aucun compte,
+cookie, jeton, texte OCR ou contenu ne doit figurer dans une capture, un log ou
+un rapport.
+
+## Script manuel de validation locale (ne prouve pas Google)
 
 1. Demarrer PostgreSQL et MongoDB :
    `docker compose up -d --force-recreate --wait`.

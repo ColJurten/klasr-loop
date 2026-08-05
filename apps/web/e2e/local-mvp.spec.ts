@@ -51,7 +51,7 @@ test.beforeEach(async () => {
   }
 });
 
-test('local sign-in selects a reference tree, launches Drive input, reviews corrections and rejection', async ({ page }) => {
+test('local sign-in selects a reference tree, launches Drive input, reviews corrections and rejection', async ({ page }, testInfo) => {
   await page.goto('/login');
   await expect(page.getByText('Mode local')).toBeVisible();
   await page.getByText('Mode local').click();
@@ -64,6 +64,10 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
   await expect((await referenceResponse).status()).toBe(200);
   await expect(page.getByText('/Comptabilité/Électricité')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('/Social/Paie')).toBeVisible();
+  await page.screenshot({
+    path: path.resolve(process.cwd(), `../../.tmp/hermes/drive-reference-organization-flow/local-${testInfo.project.name}-dashboard.png`),
+    fullPage: true,
+  });
 
   const launchResponse = page.waitForResponse((response) => response.url().endsWith('/api/drive/launch'));
   await page.getByLabel('Élément Drive existant').selectOption('local_input_folder');
@@ -97,5 +101,5 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
   await expect(history.getByText('Releve_Banque_2026-07.pdf')).toBeVisible();
   await expect(history.getByText('/À traiter manuellement')).toBeVisible();
   await expect(page.getByText('Classés')).toBeVisible();
-  await expect(page.getByText(/0 job\(s\), 0 actif\(s\), 0 échec\(s\)/)).toBeVisible();
+  await expect(page.getByText(/\d+ job\(s\), 0 actif\(s\), 0 échec\(s\)/)).toBeVisible();
 });

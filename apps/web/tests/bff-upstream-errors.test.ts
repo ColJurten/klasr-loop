@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   confirmProposal: vi.fn(),
   launchDriveItem: vi.fn(),
   listReferenceFolders: vi.fn(),
+  listDriveItems: vi.fn(),
   rejectProposal: vi.fn(),
   selectReferenceRoot: vi.fn(),
   startSync: vi.fn(),
@@ -77,5 +78,14 @@ describe('dashboard BFF routes preserve upstream status codes', () => {
     await expect(response.json()).resolves.toEqual([
       { externalId: 'folder_1', name: 'Cabinet', parentExternalId: null },
     ]);
+  });
+
+  it('preserves auth errors and validates bounded Drive navigation input', async () => {
+    api.listDriveItems.mockRejectedValueOnce(Object.assign(new Error('authorization expired'), { status: 401 }));
+    const { GET } = await import('@/app/api/drive/items/route');
+    const unauthorized = await GET(new Request('http://localhost/api/drive/items?parentId=root'));
+    expect(unauthorized.status).toBe(401);
+    const invalid = await GET(new Request(`http://localhost/api/drive/items?parentId=${'x'.repeat(513)}`));
+    expect(invalid.status).toBe(400);
   });
 });

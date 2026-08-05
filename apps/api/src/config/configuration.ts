@@ -12,5 +12,8 @@ export const configValidationSchema = Joi.object({
   GOOGLE_CLIENT_ID: Joi.string().allow('').default(''),
   GOOGLE_CLIENT_SECRET: Joi.string().allow('').default(''),
   KLASR_LOCAL_MVP: Joi.string().valid('true', 'false').default('false'),
+  KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: Joi.string().valid('true', 'false').default('false'),
+  KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: Joi.string().allow('').default(''),
+  KLASR_GOOGLE_DRIVE_ROOT_ID: Joi.string().allow('').default(''),
   KLASR_INLINE_WORKER: Joi.string().valid('true', 'false').default('false'),
 });

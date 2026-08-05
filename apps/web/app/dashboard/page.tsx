@@ -43,6 +43,11 @@ export default async function DashboardPage() {
             Mode local
           </p>
         )}
+        {data?.mode === 'service-account-staging' && (
+          <p className="mt-3 inline-flex rounded-lg border border-lavender-deep/35 bg-lavender/30 px-3 py-1 text-xs font-medium">
+            Validation staging · identité de service Google
+          </p>
+        )}
       </header>
 
       {!data && (
@@ -62,10 +67,14 @@ export default async function DashboardPage() {
           <div>
             <p className="flex items-center gap-2 text-sm font-medium">
               <PlugZap className="h-4 w-4 text-lavender-deep" strokeWidth={1.5} />
-              {data?.connection ? 'Google Drive connecté' : 'Google Drive non connecté'}
+              {data?.mode === 'service-account-staging'
+                ? 'Google Drive staging autorisé par compte de service'
+                : data?.connection ? 'Google Drive connecté' : 'Google Drive non connecté'}
             </p>
             <p className="mt-1 text-xs text-ink/60">
-              {data?.connection?.lastSyncAt
+              {data?.mode === 'service-account-staging'
+                ? 'Validation automatisée hors production — ne prouve pas le consentement OAuth utilisateur.'
+                : data?.connection?.lastSyncAt
                 ? `Dernière synchronisation : ${new Date(data.connection.lastSyncAt).toLocaleString('fr-FR')}`
                 : 'Connectez Google pour synchroniser les métadonnées Drive.'}
             </p>

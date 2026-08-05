@@ -20,6 +20,14 @@ export async function listReferenceFolders(): Promise<Array<{ externalId: string
   return response.json();
 }
 
+export async function listDriveItems(parentId = 'root', pageToken?: string) {
+  const search = new URLSearchParams({ parentId });
+  if (pageToken) search.set('pageToken', pageToken);
+  const response = await fetch(`/api/drive/items?${search}`);
+  if (!response.ok) throw new Error(`API error ${response.status}`);
+  return response.json() as Promise<{ items: import('./types').DriveInputItemView[]; nextPageToken: string | null }>;
+}
+
 export async function launchDriveItem(itemExternalId: string): Promise<unknown> {
   const response = await fetch('/api/drive/launch', {
     method: 'POST',

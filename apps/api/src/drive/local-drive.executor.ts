@@ -32,6 +32,15 @@ export class LocalDriveExecutor implements DriveExecutor {
     return [...this.itemsFor(organizationId).values()];
   }
 
+  async listChildren(organizationId: string, parentId: string, pageToken?: string) {
+    const offset = pageToken ? Number(pageToken) : 0;
+    const items = [...this.itemsFor(organizationId).values()].filter((item) =>
+      parentId === 'root' ? item.parents.length === 0 : item.parents.includes(parentId),
+    );
+    const page = items.slice(offset, offset + 100);
+    return { items: page, nextPageToken: offset + page.length < items.length ? String(offset + page.length) : null };
+  }
+
   async download(_organizationId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>> {
     const bytes = new TextEncoder().encode(LOCAL_TEXTS.get(documentExternalId) ?? '');
     return new ReadableStream<Uint8Array>({

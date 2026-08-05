@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { DocumentsRepository } from '../documents/documents.repository';
 import { DriveConnectionsService } from '../drive/drive-connections.service';
-import { DriveMetadataItem, isFolder } from '../drive/google-drive.executor';
+import { DriveMetadataItem, DriveMetadataPage, isFolder } from '../drive/google-drive.executor';
 import { FoldersRepository } from '../drive/folders.repository';
 import { JobsService } from '../jobs/jobs.service';
 import { UsageMetricsRepository } from '../metrics/usage-metrics.repository';
@@ -9,6 +9,7 @@ import { DRIVE_EXECUTOR } from './drive-executor.port';
 
 interface MetadataLister {
   listMetadata(organizationId: string): Promise<DriveMetadataItem[]>;
+  listChildren?(organizationId: string, parentId: string, pageToken?: string): Promise<DriveMetadataPage>;
 }
 
 const SUPPORTED = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/tiff']);
@@ -65,13 +66,13 @@ export class SyncService {
 
   async listInputItems(organizationId: string): Promise<DriveInputItemView[]> {
     const reference = await this.folders?.getReferenceRoot(organizationId);
-    const inherited = new Set((await this.folders?.listInherited(organizationId, true))?.map((folder) => folder.externalId) ?? []);
+    const holding = new Set((await this.folders?.listInherited(organizationId, true))?.filter((folder) => folder.holding).map((folder) => folder.externalId) ?? []);
     const metadata = await this.drive.listMetadata(organizationId);
     return metadata
       .filter((item) => item.id !== reference?.externalId)
       .map((item) => {
         const folder = isFolder(item);
-        const insideInheritedTree = inherited.has(item.id) || item.parents.some((parent) => inherited.has(parent));
+        const insideHoldingTree = isInSubtree(metadata, item, holding);
         const supported = folder || SUPPORTED.has(item.mimeType);
         return {
           externalId: item.id,
@@ -80,11 +81,11 @@ export class SyncService {
           type: folder ? 'folder' : 'file',
           parentExternalId: item.parents[0] ?? null,
           supported,
-          eligible: Boolean(reference) && !insideInheritedTree && supported,
+          eligible: Boolean(reference) && !insideHoldingTree && supported,
           reason: !reference
             ? 'reference-required'
-            : insideInheritedTree
-              ? 'inside-reference-tree'
+            : insideHoldingTree
+              ? 'inside-holding-tree'
               : supported
                 ? undefined
                 : 'unsupported',
@@ -92,21 +93,41 @@ export class SyncService {
       });
   }
 
+  async listDriveItems(organizationId: string, parentId: string, pageToken?: string) {
+    const reference = await this.folders?.getReferenceRoot(organizationId);
+    const holding = new Set((await this.folders?.listInherited(organizationId, true))?.filter((folder) => folder.holding).map((folder) => folder.externalId) ?? []);
+    if (holding.has(parentId)) throw new BadRequestException('Holding tree cannot be browsed as input');
+    const page = this.drive.listChildren
+      ? await this.drive.listChildren(organizationId, parentId, pageToken)
+      : { items: (await this.drive.listMetadata(organizationId)).filter((item) => parentId === 'root' ? item.parents.length === 0 : item.parents.includes(parentId)), nextPageToken: null };
+    return {
+      items: page.items.map((item) => {
+        const folder = isFolder(item);
+        const supported = folder || SUPPORTED.has(item.mimeType);
+        const excluded = item.id === reference?.externalId || holding.has(item.id);
+        return {
+          externalId: item.id, name: item.name, mimeType: item.mimeType, type: folder ? 'folder' as const : 'file' as const,
+          parentExternalId: item.parents[0] ?? null, supported, eligible: (!reference && folder) || (Boolean(reference) && supported && !excluded),
+          reason: !reference ? (folder ? undefined : 'reference-required') : excluded ? (item.id === reference.externalId ? 'reference-root' : 'inside-holding-tree') : supported ? undefined : 'unsupported',
+        };
+      }),
+      nextPageToken: page.nextPageToken,
+    };
+  }
+
   async launchDriveItem(organizationId: string, itemExternalId: string): Promise<{ enqueued: number; manual: number }> {
     const reference = await this.folders?.getReferenceRoot(organizationId);
     if (!reference) throw new BadRequestException('Reference root is required before launch');
     const metadata = await this.drive.listMetadata(organizationId);
-    const inherited = new Set((await this.folders?.listInherited(organizationId, true))?.map((folder) => folder.externalId) ?? []);
+    const holding = new Set((await this.folders?.listInherited(organizationId, true))?.filter((folder) => folder.holding).map((folder) => folder.externalId) ?? []);
     const selected = itemExternalId === 'all'
       ? metadata.find((item) => item.id === 'local_input_folder') ?? metadata.find((item) => !isFolder(item))
       : metadata.find((item) => item.id === itemExternalId);
     if (!selected) throw new NotFoundException('Drive input item not found');
-    if (selected.id === reference.externalId || inherited.has(selected.id) || selected.parents.some((parent) => inherited.has(parent))) {
+    if (selected.id === reference.externalId || isInSubtree(metadata, selected, holding)) {
       throw new BadRequestException('Reference or holding tree cannot be used as input');
     }
-    const selectedFiles = expandSelectedFiles(metadata, selected.id).filter(
-      (item) => !item.parents.some((parent) => inherited.has(parent)),
-    );
+    const selectedFiles = expandSelectedFiles(metadata, selected.id, holding);
     let enqueued = 0;
     let manual = 0;
     for (const item of selectedFiles) {
@@ -137,7 +158,7 @@ export class SyncService {
   }
 }
 
-function expandSelectedFiles(metadata: DriveMetadataItem[], selectedExternalId: string): DriveMetadataItem[] {
+function expandSelectedFiles(metadata: DriveMetadataItem[], selectedExternalId: string, excludedFolders = new Set<string>()): DriveMetadataItem[] {
   const selected = metadata.find((item) => item.id === selectedExternalId);
   if (!selected) return [];
   if (!isFolder(selected)) return [selected];
@@ -156,6 +177,7 @@ function expandSelectedFiles(metadata: DriveMetadataItem[], selectedExternalId: 
     const item = queue.shift()!;
     if (seen.has(item.id)) continue;
     seen.add(item.id);
+    if (isInSubtree(metadata, item, excludedFolders)) continue;
     if (item.mimeType === FOLDER_MIME) {
       queue.push(...(childrenByParent.get(item.id) ?? []));
     } else {
@@ -163,4 +185,19 @@ function expandSelectedFiles(metadata: DriveMetadataItem[], selectedExternalId: 
     }
   }
   return files;
+}
+
+function isInSubtree(metadata: DriveMetadataItem[], item: DriveMetadataItem, roots: Set<string>): boolean {
+  if (roots.has(item.id)) return true;
+  const byId = new Map(metadata.map((entry) => [entry.id, entry]));
+  const queue = [...item.parents];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (roots.has(id)) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    queue.push(...(byId.get(id)?.parents ?? []));
+  }
+  return false;
 }

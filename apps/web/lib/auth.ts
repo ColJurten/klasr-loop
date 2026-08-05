@@ -41,6 +41,15 @@ function localProviderEnabled(): boolean {
   return true;
 }
 
+function acceptanceProviderEnabled(): boolean {
+  if (process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT !== 'true') return false;
+  if (process.env.NODE_ENV === 'production') {
+    if (process.env.NEXT_PHASE === 'phase-production-build') return false;
+    throw new Error('KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT cannot run in production');
+  }
+  return true;
+}
+
 /**
  * OAuth Google / Microsoft — the only sign-in paths (product decision).
  * Session carries organizationId; API calls must derive tenant from it,
@@ -64,6 +73,22 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? '',
       tenantId: process.env.AZURE_AD_TENANT_ID ?? 'common',
     }),
+    ...(acceptanceProviderEnabled()
+      ? [
+          CredentialsProvider({
+            id: 'google-service-account-acceptance',
+            name: 'Validation Google staging',
+            credentials: {},
+            async authorize() {
+              return {
+                id: 'google-service-account-acceptance',
+                email: 'google-staging-acceptance@klasr.test',
+                name: 'Validation Google staging',
+              };
+            },
+          }),
+        ]
+      : []),
     ...(localProviderEnabled()
       ? [
           CredentialsProvider({

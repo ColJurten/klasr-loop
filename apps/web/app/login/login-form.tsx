@@ -40,6 +40,15 @@ export function LoginForm() {
           )}
 
           <div className="mt-6 flex flex-col gap-3">
+            {process.env.NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT === 'true' && (
+              <button
+                type="button"
+                onClick={() => signIn('google-service-account-acceptance', { callbackUrl })}
+                className="rounded-lg border border-lavender-deep/40 bg-lavender/25 px-4 py-2.5 text-sm hover:border-lavender-deep"
+              >
+                Validation Google staging
+              </button>
+            )}
             {process.env.NEXT_PUBLIC_KLASR_LOCAL_MVP === 'true' && (
               <button
                 type="button"

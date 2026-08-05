@@ -11,7 +11,22 @@ describe('GoogleDriveExecutor', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT;
+    delete process.env.KLASR_GOOGLE_DRIVE_ROOT_ID;
     global.fetch = jest.fn() as never;
+  });
+
+  it('maps the virtual root to the configured shared acceptance root only in service-account mode', async () => {
+    process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT = 'true';
+    process.env.KLASR_GOOGLE_DRIVE_ROOT_ID = 'shared_root';
+    (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => ({ files: [] }) });
+    const executor = new GoogleDriveExecutor(tokenService as never, folders as never);
+
+    await executor.listChildren('org_1', 'root');
+
+    expect(new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get('q')).toBe(
+      "'shared_root' in parents and trashed=false",
+    );
   });
 
   it('lists Drive metadata only with a refreshed server-side access token', async () => {
@@ -69,6 +84,27 @@ describe('GoogleDriveExecutor', () => {
     expect(firstUrl.searchParams.get('fields')).toContain('nextPageToken');
     const secondUrl = new URL((global.fetch as jest.Mock).mock.calls[1][0]);
     expect(secondUrl.searchParams.get('pageToken')).toBe('page_2');
+  });
+
+  it('lists one parent page with a bounded page token and safe metadata', async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nextPageToken: 'next_2',
+        files: [{ id: 'doc_1', name: 'facture.pdf', mimeType: 'application/pdf', size: '12', parents: ['parent'] }],
+      }),
+    });
+    const executor = new GoogleDriveExecutor(tokenService as never, folders as never);
+
+    await expect(executor.listChildren('org_1', 'parent', 'page_1')).resolves.toEqual({
+      items: [expect.objectContaining({ id: 'doc_1', name: 'facture.pdf', sizeBytes: 12 })],
+      nextPageToken: 'next_2',
+    });
+    const url = new URL((global.fetch as jest.Mock).mock.calls[0][0]);
+    expect(url.searchParams.get('q')).toBe("'parent' in parents and trashed=false");
+    expect(url.searchParams.get('pageToken')).toBe('page_1');
+    expect(url.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(url.searchParams.get('includeItemsFromAllDrives')).toBe('true');
   });
 
   it('downloads content as a Response body stream and does not materialize bytes', async () => {

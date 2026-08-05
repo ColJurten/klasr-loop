@@ -17,7 +17,7 @@ describe('SyncService — Drive reference and selected launch', () => {
   ];
 
   function makeService(statuses = ['PENDING', 'PROPOSED', 'MANUAL']) {
-    const drive = { listMetadata: jest.fn().mockResolvedValue(metadata) };
+    const drive: { listMetadata: jest.Mock; listChildren?: jest.Mock } = { listMetadata: jest.fn().mockResolvedValue(metadata) };
     const repository = {
       upsertDocumentMetadata: jest.fn()
         .mockResolvedValueOnce({ id: 'doc_1', status: statuses[0], created: true, supported: true })
@@ -66,6 +66,44 @@ describe('SyncService — Drive reference and selected launch', () => {
     );
   });
 
+  it('makes only folders eligible while a fresh organization chooses its first reference root', async () => {
+    const { service, drive, folders } = makeService();
+    folders.getReferenceRoot.mockResolvedValue(null);
+    drive.listChildren = jest.fn().mockResolvedValue({
+      items: [metadata[0], metadata[5]],
+      nextPageToken: null,
+    });
+
+    await expect(service.listDriveItems('org_fresh', 'root')).resolves.toEqual({
+      items: [
+        expect.objectContaining({ externalId: 'root', type: 'folder', eligible: true }),
+        expect.objectContaining({ externalId: 'file_1', type: 'file', eligible: false, reason: 'reference-required' }),
+      ],
+      nextPageToken: null,
+    });
+  });
+
+  it('keeps the known reference root and holding folder excluded from browser choices', async () => {
+    const { service, drive, folders } = makeService();
+    folders.listInherited.mockResolvedValue([
+      { externalId: 'holding', path: '/À traiter manuellement', holding: true },
+    ]);
+    drive.listChildren = jest.fn().mockResolvedValue({
+      items: [
+        metadata[0],
+        { id: 'holding', name: 'À traiter manuellement', mimeType: FOLDER, sizeBytes: 0, parents: ['root'] },
+      ],
+      nextPageToken: null,
+    });
+
+    const result = await service.listDriveItems('org_1', 'root');
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ externalId: 'root', eligible: false, reason: 'reference-root' }),
+      expect.objectContaining({ externalId: 'holding', eligible: false, reason: 'inside-holding-tree' }),
+    ]);
+  });
+
   it('recursively launches one selected folder and skips inherited destination files', async () => {
     const { service, repository, jobs } = makeService();
 
@@ -88,9 +126,52 @@ describe('SyncService — Drive reference and selected launch', () => {
     expect(jobs.enqueueAnalysis).not.toHaveBeenCalled();
   });
 
-  it('rejects the inherited reference subtree as input', async () => {
-    const { service } = makeService();
+  it('allows a supported file beneath the inherited reference tree', async () => {
+    const { service, jobs } = makeService(['PENDING']);
 
-    await expect(service.launchDriveItem('org_1', 'child')).rejects.toThrow(BadRequestException);
+    await expect(service.launchDriveItem('org_1', 'organized')).resolves.toEqual({ enqueued: 1, manual: 0 });
+    expect(jobs.enqueueAnalysis).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects only the reference root and the holding subtree', async () => {
+    const { service, folders } = makeService();
+    folders.listInherited.mockResolvedValue([
+      { externalId: 'child', path: '/Compta', holding: false },
+      { externalId: 'grandchild', path: '/Compta/Électricité', holding: false },
+      { externalId: 'holding', path: '/À traiter manuellement', holding: true },
+    ]);
+    driveMetadata(service, [
+      ...metadata,
+      { id: 'holding', name: 'À traiter manuellement', mimeType: FOLDER, sizeBytes: 0, parents: ['root'] },
+      { id: 'held', name: 'rejet.pdf', mimeType: 'application/pdf', sizeBytes: 10, parents: ['holding'] },
+    ]);
+
+    await expect(service.launchDriveItem('org_1', 'root')).rejects.toThrow(BadRequestException);
+    await expect(service.launchDriveItem('org_1', 'holding')).rejects.toThrow(BadRequestException);
+    await expect(service.launchDriveItem('org_1', 'held')).rejects.toThrow(BadRequestException);
+  });
+
+  it('recurses beneath a normal inherited folder but excludes a nested holding branch', async () => {
+    const { service, folders, repository, jobs } = makeService(['PENDING']);
+    folders.listInherited.mockResolvedValue([
+      { externalId: 'child', path: '/Compta', holding: false },
+      { externalId: 'holding', path: '/Compta/À traiter manuellement', holding: true },
+    ]);
+    driveMetadata(service, [
+      { id: 'root', name: 'Cabinet', mimeType: FOLDER, sizeBytes: 0, parents: [] },
+      { id: 'child', name: 'Compta', mimeType: FOLDER, sizeBytes: 0, parents: ['root'] },
+      { id: 'normal', name: 'nouveau.pdf', mimeType: 'application/pdf', sizeBytes: 10, parents: ['child'] },
+      { id: 'holding', name: 'À traiter manuellement', mimeType: FOLDER, sizeBytes: 0, parents: ['child'] },
+      { id: 'held', name: 'rejet.pdf', mimeType: 'application/pdf', sizeBytes: 10, parents: ['holding'] },
+    ]);
+
+    await expect(service.launchDriveItem('org_1', 'child')).resolves.toEqual({ enqueued: 1, manual: 0 });
+    expect(repository.upsertDocumentMetadata).toHaveBeenCalledTimes(1);
+    expect(repository.upsertDocumentMetadata).toHaveBeenCalledWith('org_1', expect.objectContaining({ externalId: 'normal' }));
+    expect(jobs.enqueueAnalysis).toHaveBeenCalledTimes(1);
   });
 });
+
+function driveMetadata(service: SyncService, items: unknown[]): void {
+  ((service as unknown as { drive: { listMetadata: jest.Mock } }).drive.listMetadata).mockResolvedValue(items);
+}

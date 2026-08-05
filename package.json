@@ -8,7 +8,8 @@
     "test": "pnpm --recursive --if-present run test",
     "build": "pnpm --recursive --if-present run build",
     "test:integration": "pnpm --filter @klasr/api exec node ../../scripts/local-mvp-integration.mjs",
-    "test:e2e": "pnpm --filter @klasr/web exec playwright test"
+    "test:e2e": "pnpm --filter @klasr/web exec playwright test",
+    "test:live-google-sa": "node scripts/live-google-service-account.mjs"
   },
   "packageManager": "pnpm@10.15.1"
 }

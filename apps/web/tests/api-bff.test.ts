@@ -9,7 +9,7 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { getServerSession } from 'next-auth';
-import { getDashboardData, confirmProposal, startSync } from '@/lib/api';
+import { getDashboardData, confirmProposal, listDriveItems, startSync } from '@/lib/api';
 
 const session = {
   user: {
@@ -29,6 +29,16 @@ describe('web BFF API client', () => {
       ok: true,
       json: async () => ({ ok: true }),
     }) as never;
+  });
+
+  it('scopes parent navigation to the session tenant and forwards opaque pagination', async () => {
+    process.env.INTERNAL_API_SECRET = 'test-secret';
+    process.env.API_URL = 'http://api.local/api/v1';
+    await listDriveItems('folder_1', 'page_2');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://api.local/api/v1/organizations/org_session/drive/items?parentId=folder_1&pageToken=page_2',
+      expect.objectContaining({ headers: { 'x-internal-secret': 'test-secret' }, cache: 'no-store' }),
+    );
   });
 
   it('derives dashboard organizationId from the server session and sends only the internal secret header', async () => {
