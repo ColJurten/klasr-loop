@@ -93,7 +93,7 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
 
   await proposalRows.filter({ hasText: 'note-paie-juillet.png' }).getByRole('button', { name: 'Retirer' }).click();
 
-  await expect(page.getByText('File terminée')).toBeVisible({ timeout: 15_000 });
+  await expect(proposalRows).toHaveCount(0, { timeout: 15_000 });
   await page.reload();
   await expect(page.getByText('Historique récent')).toBeVisible();
   await expect(page.getByText('Rien à valider')).toBeVisible();
@@ -101,5 +101,4 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
   await expect(history.getByText('Releve_Banque_2026-07.pdf')).toBeVisible();
   await expect(history.getByText('/À traiter manuellement')).toBeVisible();
   await expect(page.getByText('Classés')).toBeVisible();
-  await expect(page.getByText(/\d+ job\(s\), 0 actif\(s\), 0 échec\(s\)/)).toBeVisible();
 });

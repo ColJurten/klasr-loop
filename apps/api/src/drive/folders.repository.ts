@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Folder, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+const HOLDING_FOLDER_NAME = 'À traiter manuellement';
+
 export interface FolderMetadata {
   id: string;
   name: string;
@@ -147,10 +149,10 @@ export class FoldersRepository {
     }
 
     const queue = rootExternalId
-      ? (childrenByParent.get(rootExternalId) ?? []).map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null }))
+      ? (childrenByParent.get(rootExternalId) ?? []).map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null, holding: folder.name === HOLDING_FOLDER_NAME }))
       : folders
           .filter((folder) => !(folder.parents ?? []).some((parent) => byId.has(parent)))
-          .map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null }));
+          .map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null, holding: folder.name === HOLDING_FOLDER_NAME }));
 
     const visited = new Set<string>();
     while (queue.length > 0) {
@@ -166,18 +168,18 @@ export class FoldersRepository {
           path: current.path,
           parentId: current.parentDbId,
           inherited: true,
-          holding: false,
+          holding: current.holding,
         },
         update: {
           name: current.folder.name,
           path: current.path,
           parentId: current.parentDbId,
           inherited: true,
-          holding: false,
+          holding: current.holding,
         },
       });
       for (const child of childrenByParent.get(current.folder.id) ?? []) {
-        queue.push({ folder: child, path: `${current.path}/${child.name}`.replace(/\/+/g, '/'), parentDbId: saved.id });
+        queue.push({ folder: child, path: `${current.path}/${child.name}`.replace(/\/+/g, '/'), parentDbId: saved.id, holding: current.holding || child.name === HOLDING_FOLDER_NAME });
       }
     }
   }

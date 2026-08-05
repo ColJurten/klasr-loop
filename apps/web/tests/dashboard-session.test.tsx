@@ -27,8 +27,9 @@ vi.mock('next-auth', () => ({
 const getDashboardData = vi.fn().mockResolvedValue({
   mode: 'production',
   connection: null,
-  metrics: { pending: 0, analyzing: 0, classified: 0, documentsIn: 0, ruleMatches: 0, llmCalls: 0, ocrRuns: 0 },
+  metrics: { pending: 0, analyzing: 0, classified: 0, outcomes: 0, documentsIn: 0, ruleMatches: 0, llmCalls: 0, ocrRuns: 0 },
   queue: { queued: 0, ready: 0, active: 0, failed: 0, inlineWorker: false, consuming: false },
+  analysisFailures: 0,
   proposals: [],
   history: [],
 });

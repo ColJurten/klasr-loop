@@ -7,6 +7,8 @@ const send = jest.fn();
 const work = jest.fn();
 const getQueue = jest.fn();
 const createQueue = jest.fn();
+const queryRaw = jest.fn();
+const prisma = { $queryRaw: queryRaw };
 
 jest.mock('pg-boss', () => ({
   PgBoss: jest.fn().mockImplementation(() => ({ start, stop, send, work, getQueue, createQueue, on: jest.fn() })),
@@ -28,6 +30,7 @@ describe('JobsService', () => {
       activeCount: 1,
       failedCount: 0,
     });
+    queryRaw.mockResolvedValue([{ count: 0n }]);
   });
 
   afterEach(() => {
@@ -35,7 +38,7 @@ describe('JobsService', () => {
   });
 
   it('registers an analysis worker that consumes pg-boss jobs', async () => {
-    const service = new JobsService({ get: () => 'postgres://local' } as unknown as ConfigService);
+    const service = new JobsService({ get: () => 'postgres://local' } as unknown as ConfigService, prisma as never);
     const handler = jest.fn().mockResolvedValue(undefined);
 
     service.registerAnalysisHandler(handler);
@@ -52,7 +55,7 @@ describe('JobsService', () => {
   });
 
   it('reports real queue state from pg-boss', async () => {
-    const service = new JobsService({ get: () => 'postgres://local' } as unknown as ConfigService);
+    const service = new JobsService({ get: () => 'postgres://local' } as unknown as ConfigService, prisma as never);
 
     await service.onModuleInit();
 
@@ -64,5 +67,14 @@ describe('JobsService', () => {
       inlineWorker: true,
       consuming: false,
     });
+  });
+
+  it('queries prompt failed-job state for only the requested tenant', async () => {
+    queryRaw.mockResolvedValueOnce([{ count: 2n }]).mockResolvedValueOnce([{ count: 0n }]);
+    const service = new JobsService({ get: () => undefined } as unknown as ConfigService, prisma as never);
+    await expect(service.failedAnalysisCount('org_failed')).resolves.toBe(2);
+    await expect(service.failedAnalysisCount('org_other')).resolves.toBe(0);
+    expect(queryRaw.mock.calls[0][0].values).toContain('org_failed');
+    expect(queryRaw.mock.calls[1][0].values).toContain('org_other');
   });
 });

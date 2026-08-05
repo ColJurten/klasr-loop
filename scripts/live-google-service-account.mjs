@@ -44,7 +44,7 @@ const evidence = {
   serviceAccountAuth: 'FAIL', realDriveListing: 'FAIL', realDriveDownloadOcr: 'FAIL',
   realProposalReview: 'FAIL', realDriveConfirmMutation: 'FAIL', realDriveCorrectMutation: 'FAIL',
   realDriveRejectMutation: 'FAIL', terminalNoReenqueue: 'FAIL', desktopBrowser: 'FAIL',
-  mobile390Browser: 'FAIL', cleanup: 'FAIL', fixtures: [], destinations: {},
+  mobile390Browser: 'FAIL', launchCompletion: 'FAIL', freshProviderMetadata: 'FAIL', cleanup: 'FAIL',
 };
 let accessToken;
 let browser;
@@ -61,7 +61,6 @@ try {
     const item = exact(await listChildren(reference.id), name, 'application/vnd.google-apps.folder');
     return [name, item];
   })));
-  evidence.destinations = Object.fromEntries(Object.entries(destinations).map(([name, item]) => [name, item.id]));
   evidence.realDriveListing = 'PASS';
 
   const inputFolder = await createFolder(runName, sharedRootId);
@@ -74,19 +73,12 @@ try {
       createdIds.push(item.id);
       return item;
     }));
-  const suppliedSource = existingFixtures.every(Boolean) ? 'user-supplied dedicated staging PDF' : 'runner-generated PNG upload';
   for (const item of supplied) {
     const snapshot = await metadata(item.id);
     fixtureSnapshots.push(snapshot);
     await restoreMetadata(snapshot.id, { ...snapshot, parents: [inputFolder.id] });
   }
   const extension = path.extname(supplied[0].name);
-  const fixtureSpecs = [
-    { key: 'confirm', item: supplied[0], proposedName: `Calendrier_CDA_Classe${extension}`, destination: 'invoices' },
-    { key: 'reject', item: supplied[1], proposedName: `Document_Staging_Classe${path.extname(supplied[1].name)}`, destination: 'quotes' },
-  ];
-  evidence.fixtures = fixtureSpecs.map(({ key, item, proposedName, destination }) => ({ key, id: item.id, originalName: item.name, proposedName, destination, source: suppliedSource }));
-
   await ensureApps();
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -97,16 +89,24 @@ try {
   await page.getByText('Validation staging · identité de service Google').waitFor();
   organizationId = await tenantId();
   await resetTenantData(organizationId);
-  await seedRules(organizationId, fixtureSpecs, destinations);
+  assert(await prisma.classificationRule.count({ where: { organizationId } }) === 0, 'Acceptance tenant must have zero rules');
 
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
   for (const name of ['invoices', 'meetings', 'quotes']) await page.getByText(new RegExp(`/${name}$`)).waitFor();
-  await chooseBrowserItem(page, runName, "Lancer l'organisation");
-  const proposals = await waitForProposals(organizationId, 2);
+  await chooseBrowserItem(page, runName, "Lancer l'organisation", true);
+  await waitForProposalCards(page, 2);
+  await expect(page.getByText('Analyse en cours', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: "Lancer l'organisation" })).toBeEnabled();
+  evidence.launchCompletion = 'PASS';
+  const confirmedCard = proposalCardFor(page, supplied[0].name);
+  const rejectedCard = proposalCardFor(page, supplied[1].name);
+  await expect(confirmedCard.getByLabel(/Confiance 20 %/)).toBeVisible();
+  await expect(rejectedCard.getByLabel(/Confiance \d+ %/)).toBeVisible();
+  await expect(confirmedCard).toContainText(supplied[0].name);
+  await expect(rejectedCard).toContainText(supplied[1].name);
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
-  await page.reload();
   await page.screenshot({ path: path.join(evidenceDir, 'live-google-sa-desktop-review.png'), fullPage: true });
   evidence.desktopBrowser = 'PASS';
 
@@ -119,20 +119,39 @@ try {
   evidence.mobile390Browser = 'PASS';
   await mobile.close();
 
-  const confirmed = proposalFor(proposals, supplied[0].id);
-  const rejected = proposalFor(proposals, supplied[1].id);
-  await page.locator(`[data-testid="proposal-${confirmed.id}"]`).getByRole('button', { name: /Valider le classement/ }).click();
-  await page.locator(`[data-testid="proposal-${rejected.id}"]`).getByRole('button', { name: 'Retirer' }).click();
-  await waitForTerminal(organizationId, 2);
+  const confirmPath = await displayedDestination(confirmedCard);
+  await confirmedCard.getByRole('button', { name: /Valider le classement/ }).click();
+  await expect(confirmedCard).toHaveCount(0);
+  await rejectedCard.getByRole('button', { name: 'Retirer' }).click();
+  await expect(rejectedCard).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Historique' })).toBeVisible();
 
-  const confirmedMeta = await metadata(confirmed.document.externalId);
-  assert(confirmedMeta.name === fixtureSpecs[0].proposedName && sameParents(confirmedMeta.parents, [destinations.invoices.id]), 'confirm metadata mismatch');
+  const confirmedMeta = await metadata(supplied[0].id);
+  const confirmDestination = Object.values(destinations).find((item) => `/${item.name}` === confirmPath);
+  assert(
+    confirmDestination && confirmedMeta.name === supplied[0].name && sameParents(confirmedMeta.parents, [confirmDestination.id]),
+    `confirm metadata mismatch: ${JSON.stringify({ confirmPath, actualName: confirmedMeta.name, expectedName: supplied[0].name, actualParents: confirmedMeta.parents, expectedParent: confirmDestination?.id })}`,
+  );
   evidence.realDriveConfirmMutation = 'PASS';
-  const rejectedMeta = await metadata(rejected.document.externalId);
+  const rejectedMeta = await metadata(supplied[1].id);
   const holding = exact(await listChildren(reference.id), 'À traiter manuellement', 'application/vnd.google-apps.folder');
   if (!holdingWasPresent) createdIds.push(holding.id);
-  assert(rejectedMeta.name === supplied[1].name && sameParents(rejectedMeta.parents, [holding.id]), 'reject metadata mismatch');
+  assert(
+    rejectedMeta.name === supplied[1].name && sameParents(rejectedMeta.parents, [holding.id]),
+    `reject metadata mismatch: ${JSON.stringify({ actualName: rejectedMeta.name, expectedName: supplied[1].name, actualParents: rejectedMeta.parents, expectedParent: holding.id })}`,
+  );
   evidence.realDriveRejectMutation = 'PASS';
+  evidence.freshProviderMetadata = 'PASS';
+  assert(await prisma.document.count({ where: { organizationId, status: { in: ['CLASSIFIED', 'MANUAL'] } } }) === 2, 'UI decisions did not persist terminal document states');
+
+  await page.screenshot({ path: path.join(evidenceDir, 'live-google-sa-desktop-final.png'), fullPage: true });
+  const finalMobile = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const finalMobilePage = await finalMobile.newPage();
+  await copyCookies(context, finalMobile);
+  await finalMobilePage.goto(`${webBase}/dashboard`);
+  await finalMobilePage.getByRole('region', { name: 'Historique' }).waitFor();
+  await finalMobilePage.screenshot({ path: path.join(evidenceDir, 'live-google-sa-mobile-390-final.png'), fullPage: true });
+  await finalMobile.close();
 
   const relaunch = await api(`/organizations/${organizationId}/drive/launch`, {
     method: 'POST', body: JSON.stringify({ itemExternalId: inputFolder.id }),
@@ -142,24 +161,24 @@ try {
 
   await restoreFixtures();
   await resetTenantData(organizationId);
-  await seedRules(organizationId, [{ key: 'correct', item: supplied[0], proposedName: `Direct_Proposal${extension}`, destination: 'invoices' }], destinations);
+  assert(await prisma.classificationRule.count({ where: { organizationId } }) === 0, 'Correction run must have zero rules');
   await page.goto(`${webBase}/dashboard`);
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
-  await chooseBrowserItem(page, supplied[0].name, "Lancer l'organisation");
-  const directRows = await waitForProposals(organizationId, 1);
-  const direct = proposalFor(directRows, supplied[0].id);
-  await page.reload();
-  const directCard = page.locator(`[data-testid="proposal-${direct.id}"]`);
+  await chooseBrowserItem(page, supplied[0].name, "Lancer l'organisation", true);
+  await waitForProposalCards(page, 1);
+  const directCard = proposalCardFor(page, supplied[0].name);
   await directCard.getByRole('button', { name: 'Corriger' }).click();
   const correctedName = `Calendrier_CDA_Corrige${extension}`;
   await directCard.getByLabel('Nom final').fill(correctedName);
   await directCard.getByLabel('Dossier de destination').selectOption(destinations.meetings.id);
   await directCard.getByRole('button', { name: 'Confirmer la correction' }).click();
-  await waitForTerminal(organizationId, 1);
+  await expect(directCard).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Historique' })).toBeVisible();
   const correctedMeta = await metadata(supplied[0].id);
   assert(correctedMeta.name === correctedName && sameParents(correctedMeta.parents, [destinations.meetings.id]), 'direct correction metadata mismatch');
   evidence.realDriveCorrectMutation = 'PASS';
+  assert(await prisma.document.count({ where: { organizationId, status: 'CLASSIFIED' } }) === 1, 'UI correction did not persist classified state');
   const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: supplied[0].id }) });
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
 } finally {
@@ -210,7 +229,7 @@ function sameParents(actual = [], expected = []) { return actual.length === expe
 function renderPng(text) { const canvas = createCanvas(1600, 900); const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 1600, 900); ctx.fillStyle = 'black'; ctx.font = 'bold 54px sans-serif'; text.split(' ').reduce((lines, word) => { const last = lines.at(-1); if (ctx.measureText(`${last} ${word}`).width < 1400) lines[lines.length - 1] = `${last} ${word}`; else lines.push(word); return lines; }, ['']).forEach((line, index) => ctx.fillText(line, 100, 180 + index * 100)); return canvas.toBuffer('image/png'); }
 
 async function ensureApps() {
-  const common = { ...process.env, NODE_ENV: 'test', DATABASE_URL: databaseUrl, MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_LOCAL_MVP: 'false', KLASR_INLINE_WORKER: 'true', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, ANTHROPIC_API_KEY: '' };
+  const common = { ...process.env, NODE_ENV: 'test', DATABASE_URL: databaseUrl, MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_LOCAL_MVP: 'false', KLASR_INLINE_WORKER: 'true', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId };
   if (!(await reachable(`${apiBase}/health`))) children.push({ child: spawn('pnpm', ['--filter', '@klasr/api', 'exec', 'nest', 'start'], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, PORT: String(apiPort), HOST: '127.0.0.1' } }), url: `${apiBase}/health` });
   await waitReachable(`${apiBase}/health`);
   if (!(await reachable(webBase))) children.push({ child: spawn('pnpm', ['--filter', '@klasr/web', 'exec', 'next', 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
@@ -249,11 +268,10 @@ async function lifecycleCheck() {
 async function tenantId() { for (let i = 0; i < 40; i += 1) { const membership = await prisma.membership.findFirst({ where: { user: { email } }, select: { organizationId: true } }); if (membership) return membership.organizationId; await delay(250); } throw new Error('Acceptance tenant was not onboarded'); }
 
 async function resetTenantData(id) { const rules = await prisma.classificationRule.findMany({ where: { organizationId: id }, select: { id: true } }); await prisma.actionHistory.deleteMany({ where: { organizationId: id } }); await prisma.classificationProposal.deleteMany({ where: { organizationId: id } }); await prisma.document.deleteMany({ where: { organizationId: id } }); await prisma.ruleCondition.deleteMany({ where: { ruleId: { in: rules.map((rule) => rule.id) } } }); await prisma.classificationRule.deleteMany({ where: { organizationId: id } }); await prisma.folder.deleteMany({ where: { organizationId: id } }); await prisma.organization.update({ where: { id }, data: { referenceRootExternalId: null, referenceRootName: null } }); }
-async function seedRules(id, specs, destinations) { for (let i = 0; i < specs.length; i += 1) { const { item, proposedName, destination } = specs[i]; await prisma.classificationRule.create({ data: { organizationId: id, priority: i + 1, destinationPath: `/${destination}`, suggestedNameTemplate: proposedName, conditions: { create: [{ field: 'FILENAME', operator: 'EQUALS', value: item.name }] } } }); assert(destinations[destination], 'Missing destination'); } }
 async function cleanupTenant(id) { const rules = await prisma.classificationRule.findMany({ where: { organizationId: id }, select: { id: true } }); await prisma.actionHistory.deleteMany({ where: { organizationId: id } }); await prisma.classificationProposal.deleteMany({ where: { organizationId: id } }); await prisma.document.deleteMany({ where: { organizationId: id } }); await prisma.ruleCondition.deleteMany({ where: { ruleId: { in: rules.map((rule) => rule.id) } } }); await prisma.classificationRule.deleteMany({ where: { organizationId: id } }); await prisma.folder.deleteMany({ where: { organizationId: id } }); await prisma.organization.update({ where: { id }, data: { referenceRootExternalId: null, referenceRootName: null } }); }
 async function api(route, init = {}) { const response = await fetch(`${apiBase}${route}`, { ...init, headers: { 'x-internal-secret': internalSecret, 'content-type': 'application/json', ...(init.headers ?? {}) } }); assert(response.ok, `API request failed (${response.status})`); return response.json(); }
-async function chooseBrowserItem(page, name, action) { const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); }
-async function waitForProposals(id, count) { for (let i = 0; i < 180; i += 1) { const rows = await prisma.classificationProposal.findMany({ where: { organizationId: id, status: 'PENDING' }, include: { document: true } }); if (rows.length === count) return rows; await delay(1000); } throw new Error('Real OCR did not produce expected proposals'); }
-async function waitForTerminal(id, count) { for (let i = 0; i < 60; i += 1) { if (await prisma.document.count({ where: { organizationId: id, status: { in: ['CLASSIFIED', 'MANUAL'] } } }) === count) return; await delay(500); } throw new Error('Browser decisions did not reach terminal state'); }
-function proposalFor(rows, externalId) { const row = rows.find((item) => item.document.externalId === externalId); assert(row, 'Missing proposal for provider fixture'); return row; }
+async function chooseBrowserItem(page, name, action, expectAnalysis = false) { const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
+async function waitForProposalCards(page, count) { await expect(page.locator('[data-testid^="proposal-"]')).toHaveCount(count, { timeout: 180_000 }); }
+function proposalCardFor(page, documentName) { return page.locator('[data-testid^="proposal-"]').filter({ hasText: documentName }); }
+async function displayedDestination(card) { return (await card.locator('p span.font-mono').last().textContent()).trim(); }
 async function copyCookies(from, to) { await to.addCookies(await from.cookies()); }

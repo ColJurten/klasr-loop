@@ -26,18 +26,33 @@ describe('classifyWithCascade (cheapest capable model first)', () => {
     expect(second.calls).toBe(0);
   });
 
-  it('falls through and counts external calls', async () => {
+  it('preserves provider order, reaches Anthropic, and counts its call', async () => {
+    const local = new StubProvider('local', null);
+    const anthropic = new StubProvider('anthropic', hit);
     const result = await classifyWithCascade(
-      [new StubProvider('local', null), new StubProvider('anthropic', hit)],
+      [local, anthropic],
       params,
     );
     expect(result?.modelUsed).toBe('anthropic');
     expect(result?.llmCallsUsed).toBe(1);
+    expect(local.calls).toBe(1);
+    expect(anthropic.calls).toBe(1);
   });
 
-  it('returns null when every stage declines (document goes to the manual queue)', async () => {
-    const result = await classifyWithCascade([new StubProvider('local', null)], params);
-    expect(result).toBeNull();
+  it('uses an uncounted deterministic fallback when no external key configured', async () => {
+    const result = await classifyWithCascade([new StubProvider('local', null)], { ...params, folderPaths: ['/Zeta', '/Alpha'] });
+    expect(result).toEqual(expect.objectContaining({ destinationPath: '/Alpha', modelUsed: 'local-fallback', llmCallsUsed: 0 }));
+  });
+
+  it('keeps a weak-positive path instead of choosing alphabetically', async () => {
+    const result = await classifyWithCascade([new StubProvider('local', null)], {
+      documentText: 'facture', filename: 'document.pdf', folderPaths: ['/Alpha', '/Comptabilité/Factures/Archives'],
+    });
+    expect(result?.destinationPath).toBe('/Comptabilité/Factures/Archives');
+  });
+
+  it('returns null without a destination folder', async () => {
+    await expect(classifyWithCascade([], { ...params, folderPaths: [] })).resolves.toBeNull();
   });
 });
 
@@ -51,11 +66,11 @@ describe('LocalHeuristicProvider', () => {
     expect(result?.destinationPath).toBe('/Banque/Relevés');
   });
 
-  it('declines when nothing matches', async () => {
+  it('declines low confidence so later providers remain reachable', async () => {
     const result = await new LocalHeuristicProvider().classify({
       documentText: 'zzzz qqqq',
-      filename: 'x.bin',
-      folderPaths: ['/Comptabilité/Factures'],
+      filename: 'document-original.pdf',
+      folderPaths: ['/Zeta', '/Alpha'],
     });
     expect(result).toBeNull();
   });

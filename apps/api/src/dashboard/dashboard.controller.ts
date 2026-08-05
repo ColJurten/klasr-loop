@@ -23,12 +23,13 @@ export class DashboardController {
   async get(@Param('organizationId') organizationId: string) {
     const localMode = process.env.KLASR_LOCAL_MVP === 'true';
     const serviceAccountMode = process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT === 'true';
-    const [proposals, connection, totals, history, queue, referenceRoot, folders, inputItems] = await Promise.all([
+    const [proposals, connection, totals, history, queue, analysisFailures, referenceRoot, folders, inputItems] = await Promise.all([
       this.classification.listPending(organizationId),
       this.connections.findByOrganization(organizationId),
       this.metrics.totals(organizationId),
       this.classification.listHistory(organizationId),
       this.jobs.queueState(),
+      this.jobs.failedAnalysisCount(organizationId),
       this.folders.getReferenceRoot(organizationId),
       this.folders.listInherited(organizationId),
       localMode ? this.sync.listInputItems(organizationId) : Promise.resolve([]),
@@ -44,6 +45,7 @@ export class DashboardController {
         : null,
       metrics: totals,
       queue,
+      analysisFailures,
       referenceRoot,
       folders,
       inputItems,

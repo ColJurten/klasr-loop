@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface AnalysisJob {
   organizationId: string;
@@ -19,7 +21,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly inline = process.env.KLASR_INLINE_WORKER === 'true';
   private readonly workerProcess = process.env.KLASR_WORKER === 'true';
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: ConfigService, private readonly prisma: PrismaService) {}
 
   async onModuleInit(): Promise<void> {
     if (process.env.NODE_ENV === 'production' && this.inline) {
@@ -69,6 +71,15 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       inlineWorker: this.inline,
       consuming: this.workerId !== null,
     };
+  }
+
+  async failedAnalysisCount(organizationId: string): Promise<number> {
+    const rows = await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+      SELECT COUNT(*)::bigint AS count
+      FROM pgboss.job
+      WHERE name = 'analysis' AND state = 'failed' AND data->>'organizationId' = ${organizationId}
+    `);
+    return Number(rows[0]?.count ?? 0);
   }
 
   async waitForAnalysisIdle(timeoutMs = 10_000): Promise<void> {

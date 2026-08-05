@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronLeft, Folder, FolderCheck, Play, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { launchDriveItem, listDriveItems, selectReferenceRoot } from '@/lib/client-api';
@@ -9,8 +10,11 @@ import type { DashboardView, DriveInputItemView, FolderChoiceView } from '@/lib/
 const LOCAL_REFERENCE_ID = 'local_root_cabinet';
 
 export function DriveWorkflow({ data }: { data: DashboardView | null }) {
+  const router = useRouter();
   const [referenceState, setReferenceState] = useState<'idle' | 'running' | 'error'>('idle');
   const [launchState, setLaunchState] = useState<'idle' | 'running' | 'error' | 'done'>('idle');
+  const [launchBaseline, setLaunchBaseline] = useState({ outcomes: 0, failures: 0 });
+  const [launchTarget, setLaunchTarget] = useState<number | null>(null);
   const [selectedInput, setSelectedInput] = useState(data?.inputItems?.find((item) => item.eligible)?.externalId ?? '');
   const [showReferencePicker, setShowReferencePicker] = useState(() => Boolean(data && data.mode !== 'local' && !data.referenceRoot));
   const productionReferencePicker = Boolean(data && data.mode !== 'local' && showReferencePicker);
@@ -20,6 +24,22 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
       setShowReferencePicker(true);
     }
   }, [data]);
+
+  useEffect(() => {
+    if (launchState !== 'done') return;
+    if (launchTarget !== null && (data?.metrics.outcomes ?? 0) >= launchTarget) {
+      setLaunchState('idle');
+      return;
+    }
+    if ((data?.analysisFailures ?? 0) > launchBaseline.failures) setLaunchState('error');
+  }, [data, launchBaseline.failures, launchState, launchTarget]);
+
+  useEffect(() => {
+    if (launchState !== 'done') return;
+    const interval = window.setInterval(() => router.refresh(), 1_000);
+    const timeout = window.setTimeout(() => setLaunchState('error'), 30_000);
+    return () => { window.clearInterval(interval); window.clearTimeout(timeout); };
+  }, [launchState, router]);
 
   async function chooseReference(folderExternalId: string) {
     setReferenceState('running');
@@ -33,11 +53,14 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
 
   async function launch() {
     if (!selectedInput) return;
+    const baseline = { outcomes: data?.metrics.outcomes ?? 0, failures: data?.analysisFailures ?? 0 };
+    setLaunchBaseline(baseline);
     setLaunchState('running');
     try {
-      await launchDriveItem(selectedInput);
+      const result = await launchDriveItem(selectedInput);
+      setLaunchTarget(baseline.outcomes + result.enqueued);
       setLaunchState('done');
-      reloadDashboard();
+      router.refresh();
     } catch {
       setLaunchState('error');
     }
@@ -45,11 +68,14 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
 
   async function launchItem(itemExternalId: string) {
     setSelectedInput(itemExternalId);
+    const baseline = { outcomes: data?.metrics.outcomes ?? 0, failures: data?.analysisFailures ?? 0 };
+    setLaunchBaseline(baseline);
     setLaunchState('running');
     try {
-      await launchDriveItem(itemExternalId);
+      const result = await launchDriveItem(itemExternalId);
+      setLaunchTarget(baseline.outcomes + result.enqueued);
       setLaunchState('done');
-      reloadDashboard();
+      router.refresh();
     } catch {
       setLaunchState('error');
     }
@@ -108,7 +134,7 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
         {!data?.referenceRoot ? (
           <p className="mt-2 text-sm text-ink/60">Sélectionnez d&apos;abord un dossier de référence.</p>
         ) : data.mode !== 'local' ? (
-          <DriveBrowser mode="input" busy={launchState === 'running'} onChoose={(item) => void launchItem(item.externalId)} />
+          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done'} onChoose={(item) => void launchItem(item.externalId)} />
         ) : inputItems.length === 0 ? (
           <p className="mt-2 text-sm text-ink/60">Aucun fichier disponible.</p>
         ) : (
@@ -129,22 +155,22 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
               ))}
             </select>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="validate" disabled={!selectedInput || launchState === 'running'} onClick={() => void launch()}>
+              <Button type="button" variant="validate" disabled={!selectedInput || launchState === 'running' || launchState === 'done'} onClick={() => void launch()}>
                 <Play className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={1.5} />
                 Lancer l&apos;organisation
               </Button>
-              {launchState === 'running' && (
-                <span role="status" className="inline-flex items-center gap-2 text-sm text-ink/65">
-                  <RefreshCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  Analyse en cours
-                </span>
-              )}
             </div>
           </>
         )}
+        {(launchState === 'running' || launchState === 'done') && (
+          <p role="status" className="mt-3 inline-flex items-center gap-2 text-sm text-ink/65">
+            <RefreshCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+            Analyse en cours
+          </p>
+        )}
         {launchState === 'error' && (
           <p role="alert" className="mt-3 rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
-            Le lancement a échoué. Les propositions déjà traitées ne sont pas ré-enfilées.
+            L&apos;analyse a échoué. Vérifiez la connexion Drive puis relancez ce fichier. Aucun contenu documentaire n&apos;a été conservé.
           </p>
         )}
       </section>

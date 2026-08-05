@@ -1,5 +1,6 @@
 /** LLM cascade: try providers in order, cheapest first (eco-design, ADR-001). */
 import { LlmClassification, LlmProvider } from './provider';
+import { deterministicLocalFallback } from './local-heuristic.provider';
 
 export interface CascadeResult extends LlmClassification {
   llmCallsUsed: number;
@@ -19,5 +20,6 @@ export async function classifyWithCascade(
       return { ...result, llmCallsUsed: calls, modelUsed: provider.name };
     }
   }
-  return null;
+  const fallback = await deterministicLocalFallback(params);
+  return fallback ? { ...fallback, llmCallsUsed: calls, modelUsed: 'local-fallback' } : null;
 }

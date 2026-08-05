@@ -151,9 +151,6 @@ export class SyncService {
     }
     await this.metrics.increment(organizationId, { documentsIn: enqueued + manual });
     await this.connections?.touchSync(organizationId);
-    if (process.env.KLASR_LOCAL_MVP === 'true' && process.env.KLASR_INLINE_WORKER === 'true') {
-      await this.jobs.waitForAnalysisIdle();
-    }
     return { enqueued, manual };
   }
 }

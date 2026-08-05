@@ -118,6 +118,20 @@ describe('SyncService — Drive reference and selected launch', () => {
     expect(jobs.enqueueAnalysis).toHaveBeenCalledWith({ organizationId: 'org_1', documentId: 'doc_1' });
   });
 
+  it('acknowledges enqueue without waiting for inline analysis', async () => {
+    const { service, jobs } = makeService();
+    process.env.KLASR_LOCAL_MVP = 'true';
+    process.env.KLASR_INLINE_WORKER = 'true';
+
+    try {
+      await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 1, manual: 1 });
+      expect(jobs.waitForAnalysisIdle).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.KLASR_LOCAL_MVP;
+      delete process.env.KLASR_INLINE_WORKER;
+    }
+  });
+
   it('does not re-enqueue already PROPOSED, CLASSIFIED, or MANUAL documents', async () => {
     const { service, jobs } = makeService(['PROPOSED', 'CLASSIFIED', 'MANUAL']);
 

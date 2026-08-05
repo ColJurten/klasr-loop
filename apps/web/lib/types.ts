@@ -46,6 +46,7 @@ export interface DashboardView {
     pending: number;
     analyzing: number;
     classified: number;
+    outcomes: number;
     documentsIn: number;
     ruleMatches: number;
     llmCalls: number;
@@ -59,6 +60,7 @@ export interface DashboardView {
     inlineWorker: boolean;
     consuming: boolean;
   };
+  analysisFailures: number;
   referenceRoot: null | {
     externalId: string;
     name: string;

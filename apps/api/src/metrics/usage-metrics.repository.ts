@@ -33,15 +33,17 @@ export class UsageMetricsRepository {
     pending: number;
     analyzing: number;
     classified: number;
+    outcomes: number;
     documentsIn: number;
     ruleMatches: number;
     llmCalls: number;
     ocrRuns: number;
   }> {
-    const [pending, analyzing, classified, metrics] = await Promise.all([
+    const [pending, analyzing, classified, outcomes, metrics] = await Promise.all([
       this.prisma.classificationProposal.count({ where: { organizationId, status: 'PENDING' } }),
       this.prisma.document.count({ where: { organizationId, status: 'PENDING' } }),
       this.prisma.document.count({ where: { organizationId, status: 'CLASSIFIED' } }),
+      this.prisma.document.count({ where: { organizationId, status: { in: ['PROPOSED', 'CLASSIFIED', 'MANUAL'] } } }),
       this.prisma.usageMetric.aggregate({
         where: { organizationId },
         _sum: { documentsIn: true, ruleMatches: true, llmCalls: true, ocrRuns: true },
@@ -51,6 +53,7 @@ export class UsageMetricsRepository {
       pending,
       analyzing,
       classified,
+      outcomes,
       documentsIn: metrics._sum.documentsIn ?? 0,
       ruleMatches: metrics._sum.ruleMatches ?? 0,
       llmCalls: metrics._sum.llmCalls ?? 0,

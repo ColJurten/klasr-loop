@@ -18,3 +18,4 @@ __pycache__/
 -e 
 # Agent loop transient verdicts
 .agent/
+apps/api/*.traineddata

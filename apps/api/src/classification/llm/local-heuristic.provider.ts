@@ -1,7 +1,6 @@
 /**
  * Heuristic "local model": keyword scoring against folder path segments.
- * First stage of the cascade (eco-design) and the offline fallback when no
- * external LLM is configured or reachable.
+ * First stage of the cascade (eco-design).
  */
 import { LlmClassification, LlmProvider } from './provider';
 
@@ -56,4 +55,18 @@ export class LocalHeuristicProvider implements LlmProvider {
       confidence: Math.round(Math.min(bestScore, 0.8) * 100) / 100,
     };
   }
+}
+
+export async function deterministicLocalFallback(params: {
+  documentText: string;
+  filename: string;
+  folderPaths: string[];
+}): Promise<LlmClassification | null> {
+  const tokens = tokenize(`${params.filename} ${params.documentText}`);
+  const ranked = params.folderPaths.map((path) => {
+    const parts = [...tokenize(path)];
+    return { path, score: parts.length ? parts.filter((part) => tokenHits(part, tokens)).length / parts.length : 0 };
+  }).sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+  if (!ranked[0]) return null;
+  return { proposedName: params.filename, destinationPath: ranked[0].path, confidence: 0.2 };
 }

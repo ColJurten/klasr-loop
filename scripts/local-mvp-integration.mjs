@@ -141,12 +141,15 @@ try {
     throw new Error(`Rejected/proposed/classified items were resubmitted: ${JSON.stringify(relaunchPayload)}`);
   }
 
-  const queueResponse = await fetch(`${apiBase}/organizations/${organizationId}/dashboard`, {
-    headers: { 'x-internal-secret': internalSecret },
-  });
-  const dashboard = await queueResponse.json();
-  if (dashboard.queue.queued !== 0 || dashboard.queue.active !== 0 || dashboard.queue.failed !== 0) {
-    throw new Error(`Queue not idle after processing: ${JSON.stringify(dashboard.queue)}`);
+  const jobStates = await prisma.$queryRaw`
+    SELECT state::text AS state, COUNT(*)::int AS count
+    FROM pgboss.job
+    WHERE name = 'analysis'
+      AND data->>'organizationId' = ${organizationId}
+    GROUP BY state
+  `;
+  if (jobStates.some(({ state }) => state !== 'completed')) {
+    throw new Error(`Analysis jobs did not all complete: ${JSON.stringify(jobStates)}`);
   }
 
   console.log('integration ok: reference tree -> selected Drive launch -> pg-boss analysis -> Mongo/PostgreSQL assertions -> confirm/correct/reject');

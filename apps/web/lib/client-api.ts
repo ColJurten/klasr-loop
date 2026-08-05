@@ -28,7 +28,7 @@ export async function listDriveItems(parentId = 'root', pageToken?: string) {
   return response.json() as Promise<{ items: import('./types').DriveInputItemView[]; nextPageToken: string | null }>;
 }
 
-export async function launchDriveItem(itemExternalId: string): Promise<unknown> {
+export async function launchDriveItem(itemExternalId: string): Promise<{ enqueued: number; manual: number }> {
   const response = await fetch('/api/drive/launch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

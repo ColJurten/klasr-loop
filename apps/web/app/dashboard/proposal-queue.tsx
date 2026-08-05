@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle2, ShieldCheck } from 'lucide-react';
 import { ProposalCard, type ProposalStatus } from '@/components/proposal-card';
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ export function ProposalQueue({
   onConfirmProposal?: ConfirmProposalHandler;
   onRejectProposal?: RejectProposalHandler;
 }) {
+  const router = useRouter();
   const [statuses, setStatuses] = useState<Record<string, ProposalStatus>>({});
   const [bulkState, setBulkState] = useState<'idle' | 'running' | 'done' | 'partial'>('idle');
 
@@ -43,6 +45,7 @@ export function ProposalQueue({
     try {
       await onConfirmProposal(proposalId, options);
       setStatuses((current) => ({ ...current, [proposalId]: 'done' }));
+      router.refresh();
     } catch {
       setStatuses((current) => ({ ...current, [proposalId]: 'error' }));
       throw new Error('confirm failed');
@@ -56,6 +59,7 @@ export function ProposalQueue({
     try {
       await onRejectProposal(proposalId);
       setStatuses((current) => ({ ...current, [proposalId]: 'done' }));
+      router.refresh();
     } catch {
       setStatuses((current) => ({ ...current, [proposalId]: 'error' }));
     }

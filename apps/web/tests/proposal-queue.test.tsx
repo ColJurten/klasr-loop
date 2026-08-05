@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProposalQueue } from '@/app/dashboard/proposal-queue';
 import type { ProposalView } from '@/lib/types';
 
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
 const proposals: ProposalView[] = [
   {
     id: 'prop_ok',
