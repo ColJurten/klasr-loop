@@ -9,6 +9,10 @@ test('every workflow honors the pnpm-only repository contract', () => {
   assert.doesNotMatch(workflows(), /(?:^|[ (])npm(?: | ci| run| test| install|:)/m);
 });
 
+test('root pnpm test includes standalone script behavioral tests', () => {
+  assert.match(JSON.parse(read('package.json')).scripts.test, /node --test scripts\/test\/\*\.test\.mjs/);
+});
+
 test('worker subscribes to every dispatch type emitted by worker-post', () => {
   const worker = read('.github/workflows/claude-worker.yml');
   const post = read('scripts/agent/worker-post.sh');

@@ -55,7 +55,7 @@ export function extractSpecBlock(body) {
 }
 
 /** Parse + validate. Returns { ok, errors: string[], spec|null }. */
-export function validateSpec(rawYaml) {
+export function validateSpec(rawYaml, expectedVersion) {
   const errors = [];
   if (!rawYaml || rawYaml.trim() === '') {
     return { ok: false, errors: ['spec block is empty or missing'], spec: null };
@@ -68,6 +68,9 @@ export function validateSpec(rawYaml) {
   }
   if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) {
     return { ok: false, errors: ['spec must be a YAML mapping'], spec: null };
+  }
+  if (expectedVersion !== undefined && spec.version !== expectedVersion) {
+    return { ok: false, errors: [`v${expectedVersion} marker requires version: ${expectedVersion}`], spec };
   }
   for (const field of REQUIRED_FIELDS) {
     if (!(field in spec)) errors.push(`missing required field: ${field}`);
@@ -148,5 +151,6 @@ export function validateSpec(rawYaml) {
 export function specFromIssueBody(body) {
   const raw = extractSpecBlock(body);
   if (raw === null) return { ok: false, errors: ['no spec marker found in issue body'], spec: null };
-  return validateSpec(raw);
+  const marker = SPEC_MARKERS.find((candidate) => body.includes(`<!-- ${candidate}`));
+  return validateSpec(raw, Number(marker.at(-1)));
 }

@@ -108,6 +108,16 @@ test('v2 accepts evidence-qualified natural-path criteria', () => {
   assert.equal(result.spec.acceptance_criteria[0].id, 'AC1');
 });
 
+test('spec marker version must match the parsed version', () => {
+  const mismatchedV2 = specFromIssueBody(v2.replace('version: 2', 'version: 1'));
+  assert.equal(mismatchedV2.ok, false);
+  assert.ok(mismatchedV2.errors.some((error) => error.includes('v2 marker requires version: 2')));
+
+  const mismatchedV1 = specFromIssueBody(validBody.replace('version: 1', 'version: 2'));
+  assert.equal(mismatchedV1.ok, false);
+  assert.ok(mismatchedV1.errors.some((error) => error.includes('v1 marker requires version: 1')));
+});
+
 test('v2 rejects duplicate criterion ids and unknown evidence classes', () => {
   const raw = extractSpecBlock(v2).replace(
     'constraints: [Keep product invariants]',

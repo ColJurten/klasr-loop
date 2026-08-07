@@ -14,13 +14,16 @@ test('publisher source contains no literal repository SHA', () => {
   assert.match(source, /pullRequestMatchesIssue/);
 });
 
-test('EXPECTED_BRANCH requires exact ref, SHA, and a closing keyword for the same issue', () => {
+test('EXPECTED_BRANCH requires exact ref, SHA, and a same-repository closing reference', () => {
   const pr = { state: 'open', head: { ref: 'custom-branch', sha }, body: 'Closes #13' };
-  assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'custom-branch'), true);
-  assert.equal(pullRequestMatchesIssue({ ...pr, body: 'Closes #14' }, sha, 13, 'custom-branch'), false);
-  assert.equal(pullRequestMatchesIssue(pr, 'b'.repeat(40), 13, 'custom-branch'), false);
-  assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'other-branch'), false);
-  assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: '' }, sha, 13), true);
+  const repository = 'ColJurten/klasr-loop';
+  assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'custom-branch', repository), true);
+  assert.equal(pullRequestMatchesIssue({ ...pr, body: 'cLoSeS coljurten/KLASR-loop#13' }, sha, 13, 'custom-branch', repository), true);
+  assert.equal(pullRequestMatchesIssue({ ...pr, body: 'Closes other/repo#13' }, sha, 13, 'custom-branch', repository), false);
+  assert.equal(pullRequestMatchesIssue({ ...pr, body: 'Closes #14' }, sha, 13, 'custom-branch', repository), false);
+  assert.equal(pullRequestMatchesIssue(pr, 'b'.repeat(40), 13, 'custom-branch', repository), false);
+  assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'other-branch', repository), false);
+  assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: '' }, sha, 13, undefined, repository), true);
 });
 
 test('live runner evidence self-check enforces the sanitized manifest allowlist', () => {

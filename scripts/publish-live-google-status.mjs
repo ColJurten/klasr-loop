@@ -59,7 +59,7 @@ try {
 
 async function currentPrHead(repository, sha, issue, expectedBranch, headers) {
   const pulls = await apiJson(`https://api.github.com/repos/${repository}/commits/${sha}/pulls`, headers);
-  const pr = pulls.find((item) => pullRequestMatchesIssue(item, sha, issue, expectedBranch));
+  const pr = pulls.find((item) => pullRequestMatchesIssue(item, sha, issue, expectedBranch, repository));
   return pr?.head?.sha;
 }
 async function failedForPendingLiveEvidence(repository, runId, headers) {

@@ -100,10 +100,17 @@ test('acceptance requires exact-attempt verifier and security clearance', () => 
   assert.equal(hasAcceptanceClearance(secured, sha, 1, true), false, 'security-required needs its own PASS');
   secured = recordEvent(secured, 'security-blocker', { attempt: 1, clearance: clearancePatch('security-reviewer', false, sha, 1, true) });
   assert.equal(hasAcceptanceClearance(secured, sha, 1, true), false, 'security BLOCKER cannot finalize');
+  secured = recordEvent(secured, 'verify-again', { attempt: 1, clearance: clearancePatch('verifier', true, sha, 1, true) });
+  assert.equal(secured.clearance.security.status, 'FAIL', 'verifier-only patch preserves sticky security failure');
   secured = recordEvent(secured, 'security-pass', { attempt: 1, clearance: clearancePatch('security-reviewer', true, sha, 1, true) });
-  assert.equal(hasAcceptanceClearance(secured, sha, 1, true), true);
+  assert.equal(secured.clearance.security.status, 'FAIL', 'same-attempt PASS cannot overwrite security FAIL');
+  assert.equal(hasAcceptanceClearance(secured, sha, 1, true), false);
+
+  const sameSha = recordEvent(secured, 'same-sha-attempt', { start_attempt: 2, sha });
+  assert.equal(sameSha.clearance.security.status, 'FAIL', 'start_attempt without a new SHA cannot reset security FAIL');
 
   const next = recordEvent(secured, 'next-attempt', { start_attempt: 2, sha: 'b'.repeat(40) });
+  assert.equal(next.clearance.security.status, 'missing', 'new attempt resets sticky security FAIL');
   assert.equal(hasAcceptanceClearance(next, 'b'.repeat(40), 2, true), false, 'new attempt resets every clearance');
 });
 

@@ -80,14 +80,22 @@ export function recordEvent(control, eventKey, patch = {}) {
   const lineagePatch = startAttempt ? {
     lifecycle: { attempt: startAttempt, supersedes: startAttempt === control.lifecycle?.attempt ? null : control.lifecycle?.attempt ?? null, superseded_by: null },
     evidence: { sha: sha ?? null, manifest: null, status: 'missing' },
-    clearance: {
+    clearance: sha !== control.evidence?.sha ? {
       verifier: { status: 'missing', sha: null, attempt: null },
       security: { status: 'missing', sha: null, attempt: null },
-    },
+    } : control.clearance,
     human_verdict: 'pending',
   } : {
     ...(evidence === undefined && sha === undefined ? {} : { evidence: { ...control.evidence, ...evidence, ...(sha === undefined ? {} : { sha }) } }),
-    ...(clearance === undefined ? {} : { clearance: { ...control.clearance, ...clearance } }),
+    ...(clearance === undefined ? {} : { clearance: {
+      ...control.clearance,
+      ...clearance,
+      ...(control.clearance?.security?.status === 'FAIL'
+        && control.clearance.security.sha === clearance.security?.sha
+        && control.clearance.security.attempt === clearance.security?.attempt
+        ? { security: control.clearance.security }
+        : {}),
+    } }),
   };
   return {
     ...control,
