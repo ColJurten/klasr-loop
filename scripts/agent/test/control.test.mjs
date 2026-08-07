@@ -106,8 +106,11 @@ test('acceptance requires exact-attempt verifier and security clearance', () => 
   assert.equal(secured.clearance.security.status, 'FAIL', 'same-attempt PASS cannot overwrite security FAIL');
   assert.equal(hasAcceptanceClearance(secured, sha, 1, true), false);
 
-  const sameSha = recordEvent(secured, 'same-sha-attempt', { start_attempt: 2, sha });
-  assert.equal(sameSha.clearance.security.status, 'FAIL', 'start_attempt without a new SHA cannot reset security FAIL');
+  assert.throws(
+    () => recordEvent(secured, 'same-sha-attempt', { start_attempt: 2, sha }),
+    /new attempt requires a new sha/,
+    'same-SHA attempt advancement is rejected at the shared mutation boundary',
+  );
 
   const next = recordEvent(secured, 'next-attempt', { start_attempt: 2, sha: 'b'.repeat(40) });
   assert.equal(next.clearance.security.status, 'missing', 'new attempt resets sticky security FAIL');

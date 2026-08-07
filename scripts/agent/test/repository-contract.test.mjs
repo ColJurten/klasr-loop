@@ -92,6 +92,8 @@ test('human-required recovery still requires the acceptance finalizer gate', () 
   assert.match(acceptance, /finalize-evidence\.mjs[\s\S]*STATUS="awaiting-human-verdict"/);
   assert.match(acceptance, /hasAcceptanceClearance[\s\S]*CONTROL_CLEARED/);
   assert.doesNotMatch(acceptance, /STATUS="done"/);
+  assert.match(post, /SPEC_VALID=false/);
+  assert.match(post, /authoritative issue spec is invalid/);
 });
 
 test('worker does not expose dead Projects credentials', () => {

@@ -29,7 +29,7 @@ route_live_acceptance() {
   esac
 }
 
-STATUS="" ; NEW_CYCLE="$CYCLE" ; PR_NUM="" ; SECURITY_REQUIRED=false ; LIVE_REQUIRED=false ; ESCALATION="" ; CLEARANCE_JSON='{}'
+STATUS="" ; NEW_CYCLE="$CYCLE" ; PR_NUM="" ; SPEC_VALID=false ; SECURITY_REQUIRED=false ; LIVE_REQUIRED=false ; ESCALATION="" ; CLEARANCE_JSON='{}'
 
 # Load current state before deciding; it is also the transition source and lineage authority.
 CONTROL_COMMENT_ID=$(gh api "repos/$REPO/issues/$TASK/comments" --paginate \
@@ -46,13 +46,17 @@ HEAD_SHA=$(gh api "repos/$REPO/commits/$BRANCH" --jq .sha 2>/dev/null || git rev
 # Does the validated spec require a security review?
 gh api "repos/$REPO/issues/$TASK" --jq .body > /tmp/issue-body.md || true
 if node scripts/agent/validate-spec.mjs /tmp/issue-body.md > /tmp/spec.json 2>/dev/null; then
+  SPEC_VALID=true
   SECURITY_REQUIRED=$(jq -r '.spec.security_review_required // false' /tmp/spec.json)
   LIVE_REQUIRED=$(jq -r '[.spec.acceptance_criteria[]? | select(.evidence_class == "live-provider")] | length > 0' /tmp/spec.json)
 fi
 PR_NUM=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)
 [ "$PR_NUM" = "null" ] && PR_NUM=""
 
-if [ "$RUN_OUTCOME" != "success" ]; then
+if [ "$SPEC_VALID" != "true" ]; then
+  STATUS="human-required"
+  ESCALATION="Agent run stopped because the authoritative issue spec is invalid; human attention required. <!-- klasr-agent-status -->"
+elif [ "$RUN_OUTCOME" != "success" ]; then
   STATUS="human-required"
   if [ "$ROLE" = "verifier" ] || [ "$ROLE" = "security-reviewer" ]; then
     CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch(process.argv[1],false,process.argv[2],Number(process.argv[3]),process.argv[4]==='true'))))" "$ROLE" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")

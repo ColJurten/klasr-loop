@@ -73,6 +73,9 @@ export function recordEvent(control, eventKey, patch = {}) {
   }
   const processed = [...control.processed_events, eventKey].slice(-MAX_TRACKED_EVENTS);
   const { start_attempt: startAttempt, attempt: _attempt, sha, evidence, clearance, ...fields } = patch;
+  if (startAttempt > control.lifecycle?.attempt && sha === control.evidence?.sha) {
+    throw new Error('a new attempt requires a new sha');
+  }
   if (!startAttempt && (sha !== undefined && sha !== control.evidence?.sha
     || evidence?.sha !== undefined && evidence.sha !== control.evidence?.sha)) {
     throw new Error('sha may only change when starting an attempt');
