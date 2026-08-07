@@ -19,6 +19,7 @@ test('worker subscribes to every dispatch type emitted by worker-post', () => {
 
 test('CI uses frozen pnpm and exposes a non-skippable always-present gate', () => {
   const ci = read('.github/workflows/ci.yml');
+  assert.match(ci, /pull_request:\n\s+branches: \[main, hermes-oneshot\]/);
   assert.match(ci, /pnpm install --frozen-lockfile/);
   assert.match(ci, /gate:\n[\s\S]*if: always\(\)/);
   for (const command of ['pnpm lint', 'pnpm typecheck', 'pnpm test', 'pnpm build', 'pnpm test:integration', 'pnpm test:e2e']) assert.ok(ci.includes(command), command);
