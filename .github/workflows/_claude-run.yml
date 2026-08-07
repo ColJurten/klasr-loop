@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       role:
-        description: 'spec-writer | implementer | verifier | security-reviewer | feedback-responder'
+        description: 'spec-writer | implementer | verifier | security-reviewer | acceptance-validator | feedback-responder'
         required: true
         type: string
       prompt:
@@ -84,9 +84,11 @@ jobs:
             spec-writer)
               echo 'value=--allowed-tools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh label:*)"' >> "$GITHUB_OUTPUT" ;;
             implementer|feedback-responder)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh api:*),Bash(npm:*),Bash(node:*),Bash(npx:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh api:*),Bash(pnpm:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
+            acceptance-validator)
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh api repos/*/issues/*/comments:*),Bash(gh api repos/*/commits/*/status:*)"' >> "$GITHUB_OUTPUT" ;;
             verifier)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh api:*),Bash(npm test:*),Bash(npm run lint:*),Bash(npm ci:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh api:*),Bash(pnpm:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
             security-reviewer)
               echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"' >> "$GITHUB_OUTPUT" ;;
             *)

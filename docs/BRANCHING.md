@@ -3,16 +3,16 @@
 ## Permanent branches
 
 - **`main`** — production. Only receives merges from `release/*` and `hotfix/*`. Every merge to `main` is tagged `vX.Y.Z` (SemVer). Protected: no direct pushes, PR + green CI required.
-- **`develop`** — integration. All feature/fix branches merge here via PR. Protected: PR + green CI required.
+- **`develop`** — obsolète, ignorée. Les branches feature/fix ciblent `main` via PR.
 
 ## Working branches
 
 | Type | From | Merges to | Naming | Example |
 |---|---|---|---|---|
-| Feature | `develop` | `develop` | `feature/<issue>-<slug>` | `feature/42-rule-engine` |
-| Bug fix | `develop` | `develop` | `fix/<issue>-<slug>` | `fix/57-oauth-refresh` |
-| Hotfix | `main` | `main` **and** `develop` | `hotfix/<slug>` | `hotfix/tenant-leak` |
-| Release | `develop` | `main` **and** `develop` | `release/vX.Y.Z` | `release/v0.3.0` |
+| Feature | `main` | `main` | `feature/<issue>-<slug>` | `feature/42-rule-engine` |
+| Bug fix | `main` | `main` | `fix/<issue>-<slug>` | `fix/57-oauth-refresh` |
+| Hotfix | `main` | `main` | `hotfix/<slug>` | `hotfix/tenant-leak` |
+| Release | `main` | `main` | `release/vX.Y.Z` | `release/v0.3.0` |
 
 ## Commits — Conventional Commits
 
@@ -22,15 +22,14 @@ Breaking changes: `!` after type/scope + `BREAKING CHANGE:` footer → major bum
 
 ## Release procedure (also codified in the `release` skill)
 
-1. `git checkout -b release/vX.Y.Z develop`
+1. `git checkout -b release/vX.Y.Z main`
 2. Bump versions, generate changelog from Conventional Commits, final QA fixes only.
 3. PR → `main`, CI green, merge, then `git tag -a vX.Y.Z -m "Klasr vX.Y.Z"` and push tag.
 4. Tag push triggers `.github/workflows/release.yml`: builds and publishes Docker images (`ghcr.io/<owner>/klasr-{api,web,intelligence}:vX.Y.Z`) and a GitHub Release with changelog.
-5. Merge back `main` → `develop`.
 
 ## Branch protection (configure in GitHub → Settings → Branches)
 
-For `main` and `develop`: require PR before merging, require status checks `ci / api`, `ci / web`, require branches up to date, no force pushes, linear history preferred.
+Pour `main` : PR obligatoire, check `ci / gate` au SHA courant, approbation humaine après le dernier push, conversations résolues, rejet des revues périmées, aucun bypass bot ni auto-merge, aucun force push.
 
 ## CI portability note (jury dossier)
 

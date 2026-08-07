@@ -15,6 +15,7 @@ export const DISPATCH_TYPES = [
   'agent.implement',
   'agent.verify',
   'agent.security_review',
+  'agent.acceptance',
   'agent.supervisor_feedback',
   'agent.ci_failure',
 ];
@@ -109,11 +110,7 @@ export function normalizeEvent(kind, payload, env) {
             surface: isPr ? 'pr-conversation' : 'issue',
           });
         case 'approve':
-          return dispatch('agent.supervisor_feedback', key, task, sender.login, {
-            command,
-            comment_id: comment.id,
-            approval: true,
-          });
+          return ignore('approval requires a native GitHub PR review or other authoritative human action', key, { task, actor: sender.login });
         case 'block':
         case 'status':
           return dispatch('agent.supervisor_feedback', key, task, sender.login, { command, comment_id: comment.id });
@@ -135,7 +132,7 @@ export function normalizeEvent(kind, payload, env) {
           return ignore('agent push: verification is dispatched explicitly by the worker', key);
         }
         // A human pushed to the agent branch: re-verify.
-        return dispatch('agent.verify', key, prTask(pr), sender?.login, { pull_request: pr.number });
+        return dispatch('agent.verify', key, prTask(pr), sender?.login, { pull_request: pr.number, head_sha: pr.head.sha });
       }
       return ignore(`unhandled pull_request action: ${action}`, key);
     }
@@ -149,6 +146,9 @@ export function normalizeEvent(kind, payload, env) {
       }
       if (!isSupervisor(sender?.login, supervisors)) {
         return ignore('review from non-supervisor: recorded but not dispatched', key, { actor: sender?.login });
+      }
+      if (review.state === 'approved') {
+        return ignore('native GitHub approval is authoritative; state remains awaiting-human-verdict', key, { task: prTask(pr), actor: sender.login });
       }
       if (review.state === 'commented' && !(review.body ?? '').trim()) {
         return ignore('empty review shell', key);
@@ -197,19 +197,37 @@ export function normalizeEvent(kind, payload, env) {
 
     case 'workflow_run': {
       const run = payload.workflow_run;
-      if (run.conclusion === 'success') return ignore('CI success: no action', key);
-      if (run.conclusion !== 'failure') return ignore(`CI conclusion ${run.conclusion}: no action`, key);
       const branch = run.head_branch;
       const agentPr = (run.pull_requests ?? []).find((pr) => isAgentBranch(pr.head?.ref ?? branch));
+      if (run.conclusion === 'success') {
+        if (!agentPr) return ignore('CI success outside an agent PR', key);
+        if (env.currentPrHeadSha !== run.head_sha) return ignore('stale workflow run: PR head has advanced', key);
+        return dispatch('agent.verify', key, prTask(agentPr), 'ci', { pull_request: agentPr.number, head_sha: run.head_sha, attempt: Number(env.currentAttempt ?? 1) });
+      }
+      if (run.conclusion !== 'failure') return ignore(`CI conclusion ${run.conclusion}: no action`, key);
       if (agentPr || isAgentBranch(branch)) {
-        return dispatch('agent.ci_failure', key, agentPr?.number ?? null, 'ci', {
+        if (!agentPr) return ignore('agent-branch CI failure has no open PR', key);
+        if (agentPr && env.currentPrHeadSha !== run.head_sha) return ignore('stale workflow run: PR head has advanced', key);
+        const failedJobs = String(env.failedJobs ?? env.failedJob ?? 'unknown').split(',').map((job) => job.trim()).filter(Boolean);
+        if (failedJobs.every((job) => ['live-google-status', 'gate'].includes(job)) && env.liveStatusState !== 'success') {
+          return ignore('live-evidence-pending', key, { task: prTask(agentPr) });
+        }
+        const task = prTask(agentPr);
+        const repairKey = ['repair', env.repo ?? 'unknown', task ?? 'unknown', run.head_sha, run.id, failedJobs.join(','), run.run_attempt, env.cycle ?? 0].join(':').slice(0, 240);
+        return dispatch('agent.ci_failure', repairKey, task, 'ci', {
+          repo: env.repo ?? 'unknown',
+          issue: task,
+          workflow_run_id: run.id,
+          attempt: Number(env.currentAttempt ?? 1),
           run_id: run.id,
-          run_attempt: run.run_attempt,
+          workflow_run_attempt: run.run_attempt,
           head_branch: branch,
           head_sha: run.head_sha,
+          failed_job: failedJobs.join(','),
+          cycle: Number(env.cycle ?? 0),
         });
       }
-      if (['main', 'develop'].includes(branch)) {
+      if (branch === 'main') {
         // Deterministic path: fingerprinted issue creation, no Claude session.
         return {
           action: 'protected-branch-failure',

@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         The agent loop will convert this issue into a formal specification
-        (`klasr-agent-spec:v1`) before any implementation. Implementation only
+        (`klasr-agent-spec:v2`) before any implementation. Implementation only
         starts when a supervisor applies the `agent:queued` label to a valid spec.
   - type: textarea
     id: problem
@@ -34,13 +34,14 @@ body:
         <details><summary>Squelette de spec (rempli par le spec-writer)</summary>
 
         ```
-        <!-- klasr-agent-spec:v1
-        version: 1
+        <!-- klasr-agent-spec:v2
+        version: 2
         task_id: 0
         title:
         problem:
         desired_outcome:
-        acceptance_criteria: []
+        acceptance_criteria:
+          - { id: AC1, behavior: '', evidence_class: unit, assertion: '' }
         constraints: []
         non_goals: []
         affected_areas: []
@@ -48,6 +49,12 @@ body:
         security_review_required: false
         test_plan: []
         dependencies: []
+        user_journeys: []
+        failure_states: []
+        forbidden_shortcuts: []
+        cleanup_plan: { required: false, proof: not-applicable }
+        completion_policy: { final_state: awaiting-human-verdict, current_sha_required: true, reviewer_verdict_required: true }
+        human: { owner: ColJurten, verdict: pending }
         -->
         ```
         </details>

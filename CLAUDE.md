@@ -29,16 +29,16 @@ architecture and documented trade-offs over clever shortcuts.
 
 ## Commands
 
-- API: `cd apps/api && npm run lint && npm run test && npm run build`
-- Web: `cd apps/web && npm run lint && npm run test && npm run build`
+- Workspace: `pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+- Tests ciblés: `pnpm --filter @klasr/api test`, `pnpm --filter @klasr/web test`, `pnpm --filter @klasr/agent-orchestration test`
 - Local datastores: `docker compose up -d` (postgres, mongo)
 
 ## Git workflow (summary — full rules in docs/BRANCHING.md and the git-workflow skill)
 
-- `main` = production, tags `vX.Y.Z` only. `develop` = integration.
+- `main` = branche cible et source de vérité. `develop` est obsolète et ignorée.
 - Branches: `feature/<issue>-<slug>`, `fix/<issue>-<slug>`, `hotfix/<slug>` (from main), `release/vX.Y.Z`.
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `ci:`). SemVer releases.
-- Never commit directly to `main` or `develop`. Every change goes through a PR with green CI.
+- Never commit directly to `main`. Every change goes through a PR with green `ci / gate`.
 
 ## The loop (see docs/LOOP.md)
 
@@ -53,4 +53,4 @@ Lint clean, tests pass (new code has tests), no cross-tenant leak possible, STAT
 
 
 ## Agent loop
-The event-driven agent system (states, roles, security model, configuration) is specified in `docs/AGENT_LOOP_SPEC.md`. Orchestration is deterministic code under `scripts/agent/` — run `npm test` there before changing it.
+The event-driven agent system (states, roles, security model, configuration) is specified in `docs/AGENT_LOOP_SPEC.md`. Orchestration is deterministic code under `scripts/agent/` — run `pnpm --filter @klasr/agent-orchestration test` before changing it.

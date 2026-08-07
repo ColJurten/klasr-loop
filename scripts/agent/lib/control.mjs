@@ -18,6 +18,9 @@ export function emptyControl(taskId) {
     last_processed_event: null,
     processed_events: [],
     last_commit: null,
+    lifecycle: { attempt: 1, supersedes: null, superseded_by: null },
+    evidence: { sha: null, manifest: null, status: 'missing' },
+    human_verdict: 'pending',
   };
 }
 
@@ -42,12 +45,34 @@ export function hasProcessed(control, eventKey) {
   return Boolean(control && control.processed_events.includes(eventKey));
 }
 
+/** Shape the worker patch without allowing a role to invent evidence lineage. */
+export function shapeWorkerPatch(role, fields, headSha, establishedSha, nextAttempt) {
+  if (role === 'implementer' || role === 'feedback-responder') {
+    return { ...fields, start_attempt: nextAttempt, sha: headSha };
+  }
+  return headSha && headSha === establishedSha ? { ...fields, sha: headSha } : fields;
+}
+
 /** Pure update: returns a new record with the event recorded and fields merged. */
 export function recordEvent(control, eventKey, patch = {}) {
+  if (patch.attempt !== undefined && patch.attempt !== control.lifecycle?.attempt) {
+    throw new Error(`stale attempt ${patch.attempt}; current attempt is ${control.lifecycle?.attempt}`);
+  }
   const processed = [...control.processed_events, eventKey].slice(-MAX_TRACKED_EVENTS);
+  const { start_attempt: startAttempt, attempt: _attempt, sha, evidence, ...fields } = patch;
+  if (!startAttempt && (sha !== undefined && sha !== control.evidence?.sha
+    || evidence?.sha !== undefined && evidence.sha !== control.evidence?.sha)) {
+    throw new Error('sha may only change when starting an attempt');
+  }
+  const lineagePatch = startAttempt ? {
+    lifecycle: { attempt: startAttempt, supersedes: startAttempt === control.lifecycle?.attempt ? null : control.lifecycle?.attempt ?? null, superseded_by: null },
+    evidence: { sha: sha ?? null, manifest: null, status: 'missing' },
+    human_verdict: 'pending',
+  } : evidence === undefined && sha === undefined ? {} : { evidence: { ...control.evidence, ...evidence, ...(sha === undefined ? {} : { sha }) } };
   return {
     ...control,
-    ...patch,
+    ...fields,
+    ...lineagePatch,
     last_processed_event: eventKey,
     processed_events: processed,
   };

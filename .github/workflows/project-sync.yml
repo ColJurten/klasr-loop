@@ -1,0 +1,24 @@
+name: project-sync
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: startsWith(github.event.label.name, 'agent:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Safe Projects v2 sync
+        env:
+          KLASR_PROJECT_TOKEN: ${{ secrets.KLASR_PROJECT_TOKEN }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          AGENT_STATUS: ${{ github.event.label.name }}
+          KLASR_PROJECT_ID: ${{ vars.KLASR_PROJECT_ID }}
+        run: node scripts/agent/sync-project.mjs

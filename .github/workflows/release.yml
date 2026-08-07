@@ -56,7 +56,7 @@ jobs:
           range=$([ -n "$prev" ] && echo "$prev..${GITHUB_REF_NAME}" || echo "${GITHUB_REF_NAME}")
           {
             echo "## Changes"
-            git log --pretty='- %s (%h)' $range | grep -E '^\- (feat|fix|perf)' || git log --pretty='- %s (%h)' $range
+            git log --pretty='- %s (%h)' "$range" | grep -E '^\- (feat|fix|perf)' || git log --pretty='- %s (%h)' "$range"
           } > RELEASE_NOTES.md
       - uses: softprops/action-gh-release@v2
         with:

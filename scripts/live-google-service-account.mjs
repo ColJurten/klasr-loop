@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { sign } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -13,15 +13,29 @@ if (process.argv.includes('--lifecycle-check')) {
   process.exit(0);
 }
 
+const syntheticLineage = { sha: '0'.repeat(40), issue: 1, attempt: 1 };
+const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineage : parseLineage(process.env);
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const evidenceDir = path.join(root, '.tmp/hermes/drive-reference-organization-flow');
+const screenshotDir = path.join(evidenceDir, 'screenshots');
+const manifestPath = path.join(evidenceDir, 'manifest.sanitized.json');
+mkdirSync(screenshotDir, { recursive: true });
+
+if (process.argv.includes('--evidence-self-check')) {
+  assertManifest(sanitizedManifest({ serviceAccountAuth: 'PASS' }, { fixtureRestored: true, createdItemsRemoved: true, tenantCleaned: true, appsStopped: true, noOrphans: true }, lineage));
+  process.stdout.write('live evidence schema check PASS\n');
+  process.exit(0);
+}
+
 const requireApi = createRequire(path.join(root, 'apps/api/package.json'));
 const requireWeb = createRequire(path.join(root, 'apps/web/package.json'));
 const { createCanvas } = requireApi('@napi-rs/canvas');
 const { PrismaClient } = requireApi('@prisma/client');
 const { chromium, expect } = requireWeb('@playwright/test');
 
-const credentialPath = required('KLASR_GOOGLE_SERVICE_ACCOUNT_FILE');
-const sharedRootId = required('KLASR_GOOGLE_DRIVE_ROOT_ID');
+let credentialPath;
+let sharedRootId;
 const apiPort = Number(process.env.KLASR_LIVE_API_PORT ?? 3201);
 const webPort = Number(process.env.KLASR_LIVE_WEB_PORT ?? 4201);
 const apiBase = loopback(process.env.KLASR_LIVE_API_URL ?? `http://127.0.0.1:${apiPort}/api/v1`);
@@ -31,7 +45,6 @@ const mongoUrl = process.env.MONGO_URL ?? 'mongodb://127.0.0.1:27017';
 const internalSecret = process.env.KLASR_LIVE_INTERNAL_SECRET ?? 'google-sa-live-internal';
 const nextAuthSecret = process.env.KLASR_LIVE_NEXTAUTH_SECRET ?? 'google-sa-live-nextauth';
 const tokenKey = process.env.TOKEN_ENCRYPTION_KEY ?? 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
-const evidenceDir = path.join(root, '.tmp/hermes/drive-reference-organization-flow');
 const email = 'google-staging-acceptance@klasr.test';
 const runName = `klasr-sa-${Date.now()}`;
 const createdIds = [];
@@ -50,8 +63,11 @@ let accessToken;
 let browser;
 let organizationId;
 let holdingWasPresent = false;
+const cleanup = { fixtureRestored: false, createdItemsRemoved: false, tenantCleaned: false, appsStopped: false, noOrphans: false };
 
 try {
+  credentialPath = required('KLASR_GOOGLE_SERVICE_ACCOUNT_FILE');
+  sharedRootId = required('KLASR_GOOGLE_DRIVE_ROOT_ID');
   accessToken = await serviceAccountToken();
   evidence.serviceAccountAuth = 'PASS';
   const rootItems = await listChildren(sharedRootId);
@@ -107,7 +123,7 @@ try {
   await expect(rejectedCard).toContainText(supplied[1].name);
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
-  await page.screenshot({ path: path.join(evidenceDir, 'live-google-sa-desktop-review.png'), fullPage: true });
+  await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-review.png'), fullPage: true });
   evidence.desktopBrowser = 'PASS';
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -115,7 +131,7 @@ try {
   await copyCookies(context, mobile);
   await mobilePage.goto(`${webBase}/dashboard`);
   await mobilePage.getByText('Validation staging · identité de service Google').waitFor();
-  await mobilePage.screenshot({ path: path.join(evidenceDir, 'live-google-sa-mobile-390.png'), fullPage: true });
+  await mobilePage.screenshot({ path: path.join(screenshotDir, 'live-google-sa-mobile-390.png'), fullPage: true });
   evidence.mobile390Browser = 'PASS';
   await mobile.close();
 
@@ -144,13 +160,13 @@ try {
   evidence.freshProviderMetadata = 'PASS';
   assert(await prisma.document.count({ where: { organizationId, status: { in: ['CLASSIFIED', 'MANUAL'] } } }) === 2, 'UI decisions did not persist terminal document states');
 
-  await page.screenshot({ path: path.join(evidenceDir, 'live-google-sa-desktop-final.png'), fullPage: true });
+  await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-final.png'), fullPage: true });
   const finalMobile = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const finalMobilePage = await finalMobile.newPage();
   await copyCookies(context, finalMobile);
   await finalMobilePage.goto(`${webBase}/dashboard`);
   await finalMobilePage.getByRole('region', { name: 'Historique' }).waitFor();
-  await finalMobilePage.screenshot({ path: path.join(evidenceDir, 'live-google-sa-mobile-390-final.png'), fullPage: true });
+  await finalMobilePage.screenshot({ path: path.join(screenshotDir, 'live-google-sa-mobile-390-final.png'), fullPage: true });
   await finalMobile.close();
 
   const relaunch = await api(`/organizations/${organizationId}/drive/launch`, {
@@ -183,19 +199,57 @@ try {
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
 } finally {
   if (browser) await browser.close().catch(() => undefined);
-  await restoreFixtures().catch(() => undefined);
+  cleanup.fixtureRestored = await restoreFixtures().then(() => true, () => false);
   for (const id of [...createdIds].reverse()) await trash(id).catch(() => undefined);
-  if (organizationId) await cleanupTenant(organizationId).catch(() => undefined);
+  cleanup.createdItemsRemoved = await createdGone().catch(() => false);
+  cleanup.tenantCleaned = organizationId ? await cleanupTenant(organizationId).then(() => true, () => false) : true;
   evidence.cleanup = await cleanupVerified().catch(() => false) ? 'PASS' : 'FAIL';
-  await stopApps(children).catch(() => { process.exitCode = 1; });
-  await prisma.$disconnect();
+  cleanup.appsStopped = await stopApps(children).then(() => true, () => false);
+  cleanup.noOrphans = children.every(({ child }) => !groupAlive(child.pid))
+    && !(await Promise.all([reachable(`${apiBase}/health`), reachable(webBase)])).some(Boolean);
+  if (!cleanup.appsStopped) process.exitCode = 1;
+  await prisma.$disconnect().catch(() => { process.exitCode = 1; });
   accessToken = undefined;
-  process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+  const manifest = sanitizedManifest(evidence, cleanup, lineage);
+  assertManifest(manifest);
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 }
 
 if (Object.entries(evidence).some(([key, value]) => key !== 'identity' && typeof value === 'string' && value !== 'PASS')) process.exitCode = 1;
 
 function required(name) { const value = process.env[name]; if (!value) throw new Error(`Missing ${name}`); return value; }
+function sanitizedManifest(raw, proof, manifestLineage) {
+  const results = {
+    service_account_auth: raw.serviceAccountAuth === 'PASS', drive_listing: raw.realDriveListing === 'PASS',
+    drive_download_ocr: raw.realDriveDownloadOcr === 'PASS', proposal_review: raw.realProposalReview === 'PASS',
+    confirm_mutation: raw.realDriveConfirmMutation === 'PASS', correction_mutation: raw.realDriveCorrectMutation === 'PASS',
+    reject_mutation: raw.realDriveRejectMutation === 'PASS', terminal_no_reenqueue: raw.terminalNoReenqueue === 'PASS',
+    desktop_browser: raw.desktopBrowser === 'PASS', mobile_390_browser: raw.mobile390Browser === 'PASS',
+    launch_completion: raw.launchCompletion === 'PASS', fresh_provider_metadata: raw.freshProviderMetadata === 'PASS',
+  };
+  const cleanupResult = { fixture_restored: proof.fixtureRestored, created_items_removed: proof.createdItemsRemoved, tenant_cleaned: proof.tenantCleaned };
+  const processes = { apps_stopped: proof.appsStopped, no_orphans: proof.noOrphans };
+  const passed = [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
+  return {
+    version: 1,
+    identity: 'Google service account non-production acceptance',
+    ...manifestLineage,
+    status: passed ? 'PASS' : 'FAIL', results, cleanup: cleanupResult, processes,
+  };
+}
+function parseLineage(env) {
+  const value = { sha: env.KLASR_EVIDENCE_SHA, issue: Number(env.KLASR_EVIDENCE_ISSUE), attempt: Number(env.KLASR_EVIDENCE_ATTEMPT) };
+  assert(/^[0-9a-f]{40}$/.test(value.sha ?? '') && /^\d+$/.test(env.KLASR_EVIDENCE_ISSUE ?? '') && value.issue > 0 && /^\d+$/.test(env.KLASR_EVIDENCE_ATTEMPT ?? '') && value.attempt > 0, 'Evidence lineage is invalid');
+  return value;
+}
+function assertManifest(manifest) {
+  const keys = (value) => Object.keys(value).sort().join(',');
+  assert(keys(manifest) === 'attempt,cleanup,identity,issue,processes,results,sha,status,version', 'Sanitized manifest top-level schema mismatch');
+  assert(keys(manifest.results) === 'confirm_mutation,correction_mutation,desktop_browser,drive_download_ocr,drive_listing,fresh_provider_metadata,launch_completion,mobile_390_browser,proposal_review,reject_mutation,service_account_auth,terminal_no_reenqueue', 'Sanitized manifest result schema mismatch');
+  assert(keys(manifest.cleanup) === 'created_items_removed,fixture_restored,tenant_cleaned', 'Sanitized manifest cleanup schema mismatch');
+  assert(keys(manifest.processes) === 'apps_stopped,no_orphans', 'Sanitized manifest process schema mismatch');
+  assert(/^[0-9a-f]{40}$/.test(manifest.sha) && Number.isInteger(manifest.issue) && manifest.issue > 0 && Number.isInteger(manifest.attempt) && manifest.attempt > 0, 'Sanitized manifest lineage is invalid');
+}
 function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) throw new Error('Live app URLs must use loopback'); return value.replace(/\/$/, ''); }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }

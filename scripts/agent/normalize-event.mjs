@@ -14,6 +14,13 @@ const decision = normalizeEvent(kind, payload, {
   supervisors: process.env.SUPERVISOR_ACTORS ?? '',
   owner: process.env.REPO_OWNER ?? '',
   extraBots: (process.env.EXTRA_BOT_ACTORS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+  repo: process.env.REPO,
+  currentPrHeadSha: process.env.CURRENT_PR_HEAD_SHA,
+  failedJob: process.env.FAILED_JOB,
+  failedJobs: process.env.FAILED_JOBS,
+  liveStatusState: process.env.LIVE_STATUS_STATE,
+  cycle: process.env.REPAIR_CYCLE,
+  currentAttempt: process.env.CURRENT_AGENT_ATTEMPT,
 });
 const output = { decision };
 if (decision.action === 'dispatch') output.dispatch = buildDispatchPayload(decision);

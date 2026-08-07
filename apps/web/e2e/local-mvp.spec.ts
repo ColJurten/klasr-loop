@@ -65,7 +65,7 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
   await expect(page.getByText('/Comptabilité/Électricité')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('/Social/Paie')).toBeVisible();
   await page.screenshot({
-    path: path.resolve(process.cwd(), `../../.tmp/hermes/drive-reference-organization-flow/local-${testInfo.project.name}-dashboard.png`),
+    path: path.resolve(process.cwd(), `../../.tmp/hermes/drive-reference-organization-flow/local-${testInfo.project.name}-dashboard.sanitized.png`),
     fullPage: true,
   });
 
