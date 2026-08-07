@@ -8,7 +8,9 @@ const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'u
 
 test('publisher source contains no literal repository SHA', () => {
   const source = readFileSync(new URL('../../publish-live-google-status.mjs', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, new RegExp(sha, 'i'));
+  assert.doesNotMatch(source, /[0-9a-f]{40}/);
+  assert.match(source, /EXPECTED_BRANCH/);
+  assert.match(source, /item\.head\?\.sha === sha/);
 });
 
 test('live runner evidence self-check enforces the sanitized manifest allowlist', () => {

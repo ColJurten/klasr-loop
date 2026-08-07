@@ -24,7 +24,7 @@ try {
     && CLEANUP_KEYS.every((key) => manifest.cleanup[key] === true) && PROCESS_KEYS.every((key) => manifest.processes[key] === true);
   const repository = process.env.GITHUB_REPOSITORY ?? (dryRun ? 'dry-run/repository' : required('GITHUB_REPOSITORY'));
   const headers = dryRun ? null : { accept: 'application/vnd.github+json', authorization: `Bearer ${required('GH_TOKEN')}`, 'content-type': 'application/json', 'x-github-api-version': '2022-11-28' };
-  const currentHead = dryRun ? process.env.DRY_RUN_CURRENT_HEAD_SHA : await currentPrHead(repository, manifest.sha, manifest.issue, headers);
+  const currentHead = dryRun ? process.env.DRY_RUN_CURRENT_HEAD_SHA : await currentPrHead(repository, manifest.sha, manifest.issue, process.env.EXPECTED_BRANCH, headers);
   if (currentHead !== manifest.sha) throw new Error('Manifest SHA is not the current PR head');
 
   const status = { state: complete ? 'success' : 'failure', context: CONTEXT, description: complete ? 'Sanitized live Google evidence passed' : 'Sanitized live Google evidence failed' };
@@ -56,9 +56,12 @@ try {
   process.stderr.write(`Live status was not published: ${error.message}\n`); process.exitCode = 1;
 }
 
-async function currentPrHead(repository, sha, issue, headers) {
+async function currentPrHead(repository, sha, issue, expectedBranch, headers) {
   const pulls = await apiJson(`https://api.github.com/repos/${repository}/commits/${sha}/pulls`, headers);
-  const pr = pulls.find((item) => item.state === 'open' && Number(item.head?.ref?.match(/^(?:feature|fix)\/(\d+)-/)?.[1]) === issue);
+  const pr = pulls.find((item) => item.state === 'open' && item.head?.sha === sha && (
+    Number(item.head?.ref?.match(/^(?:feature|fix)\/(\d+)-/)?.[1]) === issue
+    || Boolean(expectedBranch) && item.head?.ref === expectedBranch
+  ));
   return pr?.head?.sha;
 }
 async function failedForPendingLiveEvidence(repository, runId, headers) {
