@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   emptyControl,
+  clearancePatch,
   hasProcessed,
+  hasAcceptanceClearance,
   MAX_TRACKED_EVENTS,
   parseControl,
   recordEvent,
@@ -65,6 +67,7 @@ test('control records lifecycle and current evidence lineage', () => {
   const control = emptyControl(13);
   assert.deepEqual(control.lifecycle, { attempt: 1, supersedes: null, superseded_by: null });
   assert.deepEqual(control.evidence, { sha: null, manifest: null, status: 'missing' });
+  assert.deepEqual(control.clearance.verifier, { status: 'missing', sha: null, attempt: null });
   assert.equal(control.human_verdict, 'pending');
 });
 
@@ -75,6 +78,46 @@ test('starting a new attempt supersedes prior evidence', () => {
   assert.equal(second.lifecycle.attempt, 2);
   assert.equal(second.lifecycle.supersedes, 1);
   assert.deepEqual(second.evidence, { sha: 'b', manifest: null, status: 'missing' });
+  assert.equal(second.clearance.verifier.status, 'missing');
+  assert.equal(second.clearance.security.status, 'missing');
+});
+
+test('acceptance requires exact-attempt verifier and security clearance', () => {
+  const sha = 'a'.repeat(40);
+  let control = recordEvent(emptyControl(13), 'start', { start_attempt: 1, sha });
+  assert.equal(hasAcceptanceClearance(control, sha, 1, false), false, 'workflow escalation has no verifier');
+  for (const cause of ['workflow-failure', 'illegal-transition']) {
+    const escalated = recordEvent(control, cause, { status: 'human-required', attempt: 1 });
+    assert.equal(hasAcceptanceClearance(escalated, sha, 1, false), false, `${cause} cannot finalize`);
+  }
+
+  control = recordEvent(control, 'verify', { attempt: 1, clearance: clearancePatch('verifier', true, sha, 1, false) });
+  assert.equal(hasAcceptanceClearance(control, sha, 1, false), true, 'no-security verifier PASS recovers');
+  assert.equal(hasAcceptanceClearance(control, 'b'.repeat(40), 1, false), false, 'stale SHA rejected');
+
+  let secured = recordEvent(emptyControl(13), 'start', { start_attempt: 1, sha });
+  secured = recordEvent(secured, 'verify', { attempt: 1, clearance: clearancePatch('verifier', true, sha, 1, true) });
+  assert.equal(hasAcceptanceClearance(secured, sha, 1, true), false, 'security-required needs its own PASS');
+  secured = recordEvent(secured, 'security-blocker', { attempt: 1, clearance: clearancePatch('security-reviewer', false, sha, 1, true) });
+  assert.equal(hasAcceptanceClearance(secured, sha, 1, true), false, 'security BLOCKER cannot finalize');
+  secured = recordEvent(secured, 'security-pass', { attempt: 1, clearance: clearancePatch('security-reviewer', true, sha, 1, true) });
+  assert.equal(hasAcceptanceClearance(secured, sha, 1, true), true);
+
+  const next = recordEvent(secured, 'next-attempt', { start_attempt: 2, sha: 'b'.repeat(40) });
+  assert.equal(hasAcceptanceClearance(next, 'b'.repeat(40), 2, true), false, 'new attempt resets every clearance');
+});
+
+test('old control schema preserves state and dedupe history but migrates clearance fail-closed', () => {
+  const old = { ...emptyControl(13), version: 1 };
+  delete old.clearance;
+  old.status = 'live-acceptance';
+  old.processed_events = ['legacy:event'];
+  const migrated = parseControl(renderControlComment(old));
+  assert.equal(migrated.version, 2);
+  assert.equal(migrated.status, 'live-acceptance');
+  assert.deepEqual(migrated.processed_events, ['legacy:event']);
+  assert.equal(migrated.clearance.verifier.status, 'missing');
+  assert.equal(hasAcceptanceClearance(migrated, 'a'.repeat(40), 1, false), false);
 });
 
 test('shared control mutation rejects a stale attempt', () => {

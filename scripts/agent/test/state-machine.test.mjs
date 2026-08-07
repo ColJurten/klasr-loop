@@ -18,7 +18,7 @@ test('every worker-post source/target transition is executable', () => {
     ['code-review', 'live-acceptance'], ['code-review', 'human-required'],
     ...['live-acceptance', 'code-review', 'awaiting-human-verdict', 'changes-requested', 'human-required'].map((to) => ['live-acceptance', to]),
     ['human-required', 'local-validation'], ['blocked', 'local-validation'], ['awaiting-human-verdict', 'local-validation'],
-    ['human-required', 'human-required'], ['human-required', 'awaiting-human-verdict'],
+    ['human-required', 'human-required'], ['human-required', 'code-review'], ['human-required', 'live-acceptance'], ['human-required', 'awaiting-human-verdict'],
   ];
   for (const [from, to] of runtimeEdges) assert.equal(assertTransition(from, to), to, `${from} -> ${to}`);
 });

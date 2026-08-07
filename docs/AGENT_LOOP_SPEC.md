@@ -6,11 +6,13 @@ La boucle v2 reste l'unique orchestrateur déterministe : normalisation, contrô
 
 Le manifeste de preuve est lié à l'issue, à la tentative et au SHA courant. Le finaliseur rejette les critères absents/échoués, la classe insuffisante, les preuves périmées ou remplacées, le nettoyage incomplet, les processus actifs/orphelins et une revue absente ou non courante. Il ne produit que `awaiting-human-verdict`, jamais `done`.
 
+Agent Control conserve aussi les décisions du verifier et du security-reviewer avec leur tentative et leur SHA exacts. Toute nouvelle tentative les réinitialise. L'acceptance-validator ne peut atteindre `awaiting-human-verdict` qu'après un PASS verifier courant et, selon la spec, un PASS sécurité courant ou `NOT_REQUIRED`; un ancien schéma de contrôle est refusé.
+
 Le chemin v3 est `queued → local-validation → code-review → live-acceptance → awaiting-human-verdict`, avec `changes-requested`, `blocked` et `human-required`. Une tentative périmée ne peut pas muter l'état courant. `acceptance-validator` est le seul nouveau rôle de raisonnement : lecture seule sur le code produit, il audite le parcours NATURAL_PATH et écrit uniquement son verdict machine ; CI reste l'exécuteur des tests et l'implementer existant répare les échecs produit déterministes.
 
 `ci / gate` est toujours présent. Il agrège lint, typecheck, tests, build, boucle agent, intégration répétée, E2E desktop/mobile, hygiène, actionlint et artefacts. Pour une PR interne avec `KLASR_LIVE_GOOGLE_ENABLED=true`, un job GitHub-hosted et sans secret exige le statut externe `klasr/live-google` au SHA exact de la tête ; une PR de fork reste sans secret et n'exécute aucun code sur le VPS. `CODEOWNERS` réserve la revue finale à un humain : preuve au dernier push/SHA, conversations résolues, aucune approbation bot, aucun auto-merge. La synchronisation Projects v2 utilise uniquement des identifiants issus des variables du dépôt et devient un no-op sûr si la configuration ou la permission manque ; Agent Control reste la source de vérité.
 
-Le runner root/VPS exécute exactement `KLASR_EVIDENCE_SHA="$(git rev-parse HEAD)" KLASR_EVIDENCE_ISSUE=<issue> KLASR_EVIDENCE_ATTEMPT=<tentative> pnpm test:live-google-sa && node scripts/publish-live-google-status.mjs`. Le publisher accepte uniquement le manifeste assaini, publie succès ou échec pour le SHA courant approuvé, et `--dry-run` n'effectue aucun accès réseau. Pour une branche d'implémentation nommée manuellement, le runner de confiance peut fournir `EXPECTED_BRANCH`; le publisher exige toujours que cette branche exacte soit la PR ouverte contenant le SHA du manifeste. Les branches créées par l'agent restent liées au numéro d'issue par convention. Les variables d'authentification restent exclusivement configurées dans l'environnement du VPS, sans valeur intégrée à cette commande ; les credentials Google ne sont jamais transmis à Actions.
+Le runner root/VPS exécute exactement `KLASR_EVIDENCE_SHA="$(git rev-parse HEAD)" KLASR_EVIDENCE_ISSUE=<issue> KLASR_EVIDENCE_ATTEMPT=<tentative> pnpm test:live-google-sa && node scripts/publish-live-google-status.mjs`. Le publisher accepte uniquement le manifeste assaini, publie succès ou échec pour le SHA courant approuvé, et `--dry-run` n'effectue aucun accès réseau. Pour une branche d'implémentation nommée manuellement, le runner de confiance peut fournir `EXPECTED_BRANCH`; le publisher exige toujours que cette branche exacte soit la PR ouverte contenant le SHA du manifeste et que son corps ferme la même issue avec un mot-clé GitHub (`Closes #13`, par exemple). Les branches créées par l'agent restent liées au numéro d'issue par convention. Les variables d'authentification restent exclusivement configurées dans l'environnement du VPS, sans valeur intégrée à cette commande ; les credentials Google ne sont jamais transmis à Actions.
 
 > This document describes the system AS IMPLEMENTED in this repository — not a
 > future design. Orchestration code: `scripts/agent/` (tested by `pnpm test`
@@ -78,7 +80,7 @@ security-relevant transition.
 | `issues` opened/edited/reopened | `agent-task` label, spec missing/invalid | dispatch `agent.intake` (spec-writer) |
 | `issues` labeled `agent:queued` | supervisor actor + valid spec | dispatch `agent.implement` |
 | `issues` labeled `agent:queued` | invalid spec | ignored + escalation reason (no run) |
-| `issue_comment` created | allowlisted `/agent spec\|run\|revise\|approve\|block\|status` | dispatch intake / implement / supervisor_feedback |
+| `issue_comment` created | allowlisted `/agent spec\|run\|revise\|block\|status` | dispatch intake / implement / supervisor_feedback ; `/agent approve` est ignoré |
 | `issue_comment` created | no command, or non-supervisor, or self-marker | ignored |
 | `pull_request` synchronize | human push to agent branch | dispatch `agent.verify` |
 | `pull_request` synchronize | bot/self push | ignored (verify is dispatched explicitly by the worker) |
@@ -115,7 +117,9 @@ Evidence artifacts use an explicit allowlist of sanitized manifest, log, and scr
   nobody. Bots are never trusted by type; external supervisor bots must be
   listed explicitly (`EXTRA_BOT_ACTORS` marks additional self identities to
   IGNORE, not to trust).
-- **Commands**: `/agent <spec|run|revise|approve|block|status>` line-anchored;
+- **Commands**: `/agent <spec|run|revise|approve|block|status>` line-anchored ;
+  `/agent approve` et les événements de revue `APPROVED` sont explicitement
+  ignorés par l'automatisation. La revue GitHub native reste l'autorité humaine.
   anything else in a comment is inert.
 - **Recursion prevention**: bot-actor check + hidden markers
   (`klasr-agent-state`, `klasr-agent-status`, `klasr-fingerprint`) + stable

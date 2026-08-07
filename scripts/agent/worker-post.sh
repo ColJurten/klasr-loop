@@ -29,7 +29,7 @@ route_live_acceptance() {
   esac
 }
 
-STATUS="" ; NEW_CYCLE="$CYCLE" ; PR_NUM="" ; SECURITY_REQUIRED=false ; LIVE_REQUIRED=false ; ESCALATION=""
+STATUS="" ; NEW_CYCLE="$CYCLE" ; PR_NUM="" ; SECURITY_REQUIRED=false ; LIVE_REQUIRED=false ; ESCALATION="" ; CLEARANCE_JSON='{}'
 
 # Load current state before deciding; it is also the transition source and lineage authority.
 CONTROL_COMMENT_ID=$(gh api "repos/$REPO/issues/$TASK/comments" --paginate \
@@ -54,6 +54,9 @@ PR_NUM=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number -
 
 if [ "$RUN_OUTCOME" != "success" ]; then
   STATUS="human-required"
+  if [ "$ROLE" = "verifier" ] || [ "$ROLE" = "security-reviewer" ]; then
+    CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch(process.argv[1],false,process.argv[2],Number(process.argv[3]),process.argv[4]==='true'))))" "$ROLE" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")
+  fi
   ESCALATION="Agent run (${ROLE}) failed at the workflow level; human attention required. <!-- klasr-agent-status -->"
 else
   case "$ROLE" in
@@ -68,7 +71,8 @@ else
       fi ;;
     verifier)
       VERDICT=$(jq -r '.verdict // empty' <<< "${VERDICT_JSON:-}" 2>/dev/null || true)
-      [ -z "$VERDICT" ] && VERDICT="BLOCKED"
+      case "$VERDICT" in PASS|REQUEST_CHANGES|BLOCKED) ;; *) VERDICT="BLOCKED" ;; esac
+      CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch('verifier',process.argv[1]==='PASS',process.argv[2],Number(process.argv[3]),process.argv[4]==='true'))))" "$VERDICT" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")
       STATUS=$(node -e "import('./scripts/agent/lib/state-machine.mjs').then(m=>console.log(m.afterVerification('$VERDICT', $CYCLE, $MAX_CYCLES)))")
       if [ "$VERDICT" = "PASS" ] && [ "$SECURITY_REQUIRED" = "true" ]; then
         STATUS="code-review"
@@ -80,23 +84,27 @@ else
       fi
       ;;
     security-reviewer)
-      BLOCKING=$(jq -r '[.findings[]? | select(.severity=="BLOCKER")] | length' <<< "${VERDICT_JSON:-{}}" 2>/dev/null || echo 0)
+      BLOCKING=$(jq -er 'if (.findings | type) == "array" then [.findings[] | select(.severity=="BLOCKER")] | length else error("missing findings") end' <<< "${VERDICT_JSON:-{}}" 2>/dev/null || echo 1)
+      CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch('security-reviewer',process.argv[1]==='0',process.argv[2],Number(process.argv[3]),true))))" "${BLOCKING:-0}" "$HEAD_SHA" "$ATTEMPT")
       if [ "${BLOCKING:-0}" -gt 0 ]; then STATUS="human-required"; else route_live_acceptance; fi ;;
     acceptance-validator)
       VERDICT=$(jq -r '.verdict // empty' <<< "${VERDICT_JSON:-}" 2>/dev/null || true)
       if [ "$VERDICT" = "PASS" ]; then
+        CONTROL_CLEARED=$(node -e "import('./scripts/agent/lib/control.mjs').then(async m=>{const {readFileSync}=await import('node:fs');const c=m.parseControl(readFileSync('/tmp/control.md','utf8'));process.stdout.write(String(m.hasAcceptanceClearance(c,process.argv[1],Number(process.argv[2]),process.argv[3]==='true')))})" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")
         MARKER="klasr-live-evidence:$HEAD_SHA"
         if ! gh api "repos/$REPO/issues/$TASK/comments" --paginate --jq "[.[] | select(.body | contains(\"$MARKER\"))] | if length == 1 then .[0].body else error(\"expected one evidence comment\") end" > /tmp/evidence-comment.md 2>/dev/null; then
           printf '' > /tmp/evidence-comment.md
         fi
         sed -n '/^```json$/,/^```$/p' /tmp/evidence-comment.md | sed '1d;$d' > /tmp/live-manifest.json || true
-        jq --argjson reviewer "$VERDICT_JSON" --argjson issue "$TASK" --argjson attempt "$ATTEMPT" --arg sha "$HEAD_SHA" '
+        if ! jq --argjson reviewer "$VERDICT_JSON" --argjson issue "$TASK" --argjson attempt "$ATTEMPT" --arg sha "$HEAD_SHA" '
           .spec as $spec | $reviewer + {issue:$issue,attempt:$attempt,sha:$sha,status:"current",
           cleanup:{passed:($reviewer.cleanup.passed == true),proof:$reviewer.cleanup.proof},
           processes:{active:($reviewer.processes.active // []),orphaned:($reviewer.processes.orphaned // [])},
           reviewer:{verdict:$reviewer.verdict,approved:$reviewer.approved,sha:$reviewer.sha,edited_files:$reviewer.reviewerEditedFiles}}
-          | {issue,attempt,sha,status,criteria,cleanup,processes,reviewer}' /tmp/spec.json > /tmp/final-manifest.json
-        if { [ "$LIVE_REQUIRED" != "true" ] || jq -e --argjson issue "$TASK" --argjson attempt "$ATTEMPT" --arg sha "$HEAD_SHA" '.issue==$issue and .attempt==$attempt and .sha==$sha and .status=="PASS"' /tmp/live-manifest.json >/dev/null; } \
+          | {issue,attempt,sha,status,criteria,cleanup,processes,reviewer}' /tmp/spec.json > /tmp/final-manifest.json; then
+          STATUS="human-required"
+        elif [ "$CONTROL_CLEARED" = "true" ] \
+          && { [ "$LIVE_REQUIRED" != "true" ] || jq -e --argjson issue "$TASK" --argjson attempt "$ATTEMPT" --arg sha "$HEAD_SHA" '.issue==$issue and .attempt==$attempt and .sha==$sha and .status=="PASS"' /tmp/live-manifest.json >/dev/null; } \
           && jq '.spec' /tmp/spec.json > /tmp/final-spec.json \
           && node scripts/agent/finalize-evidence.mjs /tmp/final-spec.json /tmp/final-manifest.json "$TASK" "$ATTEMPT" "$HEAD_SHA"; then
           STATUS="awaiting-human-verdict"
@@ -119,7 +127,9 @@ NEW_ATTEMPT="$ATTEMPT"
 if { [ "$ROLE" = "implementer" ] || [ "$ROLE" = "feedback-responder" ]; } && [ -n "$PREVIOUS_SHA" ] && [ "$HEAD_SHA" != "$PREVIOUS_SHA" ]; then NEW_ATTEMPT=$((ATTEMPT + 1)); fi
 BASE_PATCH=$(jq -n --argjson task "$TASK" --arg s "$STATUS" --arg b "$BRANCH" --argjson c "$NEW_CYCLE" \
   --argjson pr "${PR_NUM:-null}" --argjson attempt "$ATTEMPT" --arg sha "$HEAD_SHA" --arg manifest "${FINAL_EVIDENCE_MARKER:-}" \
+  --argjson clearance "$CLEARANCE_JSON" \
   '{task_id:$task, status:$s, branch:$b, cycle:$c, pull_request:$pr, attempt:$attempt}
+   + (if ($clearance | length) == 0 then {} else {clearance:$clearance} end)
    + (if $manifest == "" then {} else {evidence:{sha:$sha,manifest:$manifest,status:"current"},human_verdict:"pending"} end)')
 PATCH=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.shapeWorkerPatch(process.argv[1],JSON.parse(process.argv[2]),process.argv[3],process.argv[4]||null,Number(process.argv[5])))))" "$ROLE" "$BASE_PATCH" "$HEAD_SHA" "$PREVIOUS_SHA" "$NEW_ATTEMPT")
 node scripts/agent/update-control-state.mjs "$([ -s /tmp/control.md ] && echo /tmp/control.md || echo -)" "$EVENT_KEY" "$PATCH" > /tmp/new-control.md

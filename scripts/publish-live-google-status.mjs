@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { liveEvidenceEventKey } from './agent/lib/evidence.mjs';
+import { pullRequestMatchesIssue } from './agent/lib/pull-request.mjs';
 
 const EXPECTED_SHA = process.env.EXPECTED_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const CONTEXT = 'klasr/live-google';
@@ -29,7 +30,7 @@ try {
 
   const status = { state: complete ? 'success' : 'failure', context: CONTEXT, description: complete ? 'Sanitized live Google evidence passed' : 'Sanitized live Google evidence failed' };
   const comment = `${marker(manifest.sha)}\n\`\`\`json\n${JSON.stringify(manifest)}\n\`\`\``;
-  const dispatch = { event_type: 'agent.acceptance', client_payload: { version: 1, event_key: liveEvidenceEventKey(manifest), task: manifest.issue, attempt: manifest.attempt, head_sha: manifest.sha, actor: 'trusted-vps' } };
+  const dispatch = { event_type: 'agent.acceptance', client_payload: { version: 1, event_key: liveEvidenceEventKey({ ...manifest, status: complete ? 'PASS' : 'FAIL' }), task: manifest.issue, attempt: manifest.attempt, head_sha: manifest.sha, actor: 'trusted-vps' } };
   let rerun; let successDispatch;
   if (complete) {
     const runs = dryRun ? JSON.parse(process.env.DRY_RUN_WORKFLOW_RUNS ?? '[]') : await apiJson(`https://api.github.com/repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${manifest.sha}&status=completed&per_page=100`, headers);
@@ -58,10 +59,7 @@ try {
 
 async function currentPrHead(repository, sha, issue, expectedBranch, headers) {
   const pulls = await apiJson(`https://api.github.com/repos/${repository}/commits/${sha}/pulls`, headers);
-  const pr = pulls.find((item) => item.state === 'open' && item.head?.sha === sha && (
-    Number(item.head?.ref?.match(/^(?:feature|fix)\/(\d+)-/)?.[1]) === issue
-    || Boolean(expectedBranch) && item.head?.ref === expectedBranch
-  ));
+  const pr = pulls.find((item) => pullRequestMatchesIssue(item, sha, issue, expectedBranch));
   return pr?.head?.sha;
 }
 async function failedForPendingLiveEvidence(repository, runId, headers) {

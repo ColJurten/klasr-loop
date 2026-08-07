@@ -21,7 +21,7 @@ export const TRANSITIONS = {
   'changes-requested': ['local-validation', 'human-required'],
   'awaiting-human-verdict': ['local-validation', 'changes-requested', 'human-required'],
   blocked: ['local-validation', 'human-required'],
-  'human-required': ['human-required', 'local-validation', 'spec-ready', 'needs-spec', 'awaiting-human-verdict'],
+  'human-required': ['human-required', 'local-validation', 'code-review', 'live-acceptance', 'spec-ready', 'needs-spec', 'awaiting-human-verdict'],
 };
 
 export function isLegalTransition(from, to) {

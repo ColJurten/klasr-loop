@@ -19,7 +19,8 @@ test('worker subscribes to every dispatch type emitted by worker-post', () => {
 
 test('CI uses frozen pnpm and exposes a non-skippable always-present gate', () => {
   const ci = read('.github/workflows/ci.yml');
-  assert.match(ci, /pull_request:\n\s+branches: \[main, develop, hermes-oneshot\]/);
+  assert.match(ci, /pull_request:\s*\n\s*push:/);
+  assert.doesNotMatch(ci.match(/pull_request:[\s\S]*?push:/)?.[0] ?? '', /branches:/);
   assert.match(ci, /pnpm install --frozen-lockfile/);
   assert.match(ci, /gate:\n[\s\S]*if: always\(\)/);
   for (const command of ['pnpm lint', 'pnpm typecheck', 'pnpm test', 'pnpm build', 'pnpm test:integration', 'pnpm test:e2e']) assert.ok(ci.includes(command), command);
@@ -74,8 +75,8 @@ test('lifecycle is CI then read-only review then acceptance review then human ve
   const implementerCase = post.match(/implementer\|feedback-responder\)[\s\S]*?;;/)?.[0] ?? '';
   assert.doesNotMatch(implementerCase, /agent\.verify/);
   assert.match(normalizer, /run\.conclusion === 'success'[\s\S]*agent\.verify/);
-  assert.match(post.match(/verifier\)[\s\S]*?;;/)?.[0] ?? '', /route_live_acceptance/);
-  assert.match(post.match(/security-reviewer\)[\s\S]*?;;/)?.[0] ?? '', /route_live_acceptance/);
+  assert.match(post.match(/\n    verifier\)[\s\S]*?\n    security-reviewer\)/)?.[0] ?? '', /route_live_acceptance/);
+  assert.match(post.match(/\n    security-reviewer\)[\s\S]*?\n    acceptance-validator\)/)?.[0] ?? '', /route_live_acceptance/);
   assert.match(post, /route_live_acceptance\(\)[\s\S]*LIVE_STATUS[\s\S]*success\) queue_dispatch "agent\.acceptance"/);
   assert.match(post, /acceptance-validator\)[\s\S]*awaiting-human-verdict/);
   assert.doesNotMatch(post, /STATUS="done"/);
@@ -85,7 +86,13 @@ test('human-required recovery still requires the acceptance finalizer gate', () 
   const post = read('scripts/agent/worker-post.sh');
   const acceptance = post.match(/acceptance-validator\)[\s\S]*?;;/)?.[0] ?? '';
   assert.match(acceptance, /finalize-evidence\.mjs[\s\S]*STATUS="awaiting-human-verdict"/);
+  assert.match(acceptance, /hasAcceptanceClearance[\s\S]*CONTROL_CLEARED/);
   assert.doesNotMatch(acceptance, /STATUS="done"/);
+});
+
+test('worker does not expose dead Projects credentials', () => {
+  const worker = read('.github/workflows/claude-worker.yml');
+  assert.doesNotMatch(worker, /KLASR_PROJECT_TOKEN|KLASR_PROJECT_ID/);
 });
 
 test('acceptance-validator is read-only and specifies every natural-path proof', () => {

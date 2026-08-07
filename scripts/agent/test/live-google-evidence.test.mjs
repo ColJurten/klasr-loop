@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { pullRequestMatchesIssue } from '../lib/pull-request.mjs';
 
 const root = new URL('../../../', import.meta.url);
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -10,7 +11,16 @@ test('publisher source contains no literal repository SHA', () => {
   const source = readFileSync(new URL('../../publish-live-google-status.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /[0-9a-f]{40}/);
   assert.match(source, /EXPECTED_BRANCH/);
-  assert.match(source, /item\.head\?\.sha === sha/);
+  assert.match(source, /pullRequestMatchesIssue/);
+});
+
+test('EXPECTED_BRANCH requires exact ref, SHA, and a closing keyword for the same issue', () => {
+  const pr = { state: 'open', head: { ref: 'custom-branch', sha }, body: 'Closes #13' };
+  assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'custom-branch'), true);
+  assert.equal(pullRequestMatchesIssue({ ...pr, body: 'Closes #14' }, sha, 13, 'custom-branch'), false);
+  assert.equal(pullRequestMatchesIssue(pr, 'b'.repeat(40), 13, 'custom-branch'), false);
+  assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'other-branch'), false);
+  assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: '' }, sha, 13), true);
 });
 
 test('live runner evidence self-check enforces the sanitized manifest allowlist', () => {
@@ -72,6 +82,17 @@ test('publisher fails closed for wrong SHA or failed required proof', () => {
   assert.equal(actions.failure_dispatch.event_type, 'agent.acceptance');
   assert.equal(actions.failure_dispatch.client_payload.event_key, `live-evidence:13:${sha}:2:FAIL`);
   assert.equal(actions.rerun, undefined);
+});
+
+test('publisher derives the FAIL event key from recomputed completeness', () => {
+  const manifest = {
+    version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2, status: 'PASS',
+    results: Object.fromEntries(['service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'].map((key) => [key, key !== 'service_account_auth'])),
+    cleanup: { fixture_restored: true, created_items_removed: true, tenant_cleaned: true }, processes: { apps_stopped: true, no_orphans: true },
+  };
+  const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify(manifest), encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_REPOSITORY: 'owner/repo', DRY_RUN_CURRENT_HEAD_SHA: sha } });
+  assert.notEqual(run.status, 0);
+  assert.match(JSON.parse(run.stdout).failure_dispatch.client_payload.event_key, /:FAIL$/);
 });
 
 test('publisher dry-run fails closed for a stale current head or no matching failed CI run', () => {
