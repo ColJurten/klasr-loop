@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { liveEvidenceEventKey } from './agent/lib/evidence.mjs';
-import { pullRequestMatchesIssue } from './agent/lib/pull-request.mjs';
+import { resolveLivePullRequest } from './agent/lib/pull-request.mjs';
 import { trustedComment } from './agent/lib/trusted-comments.mjs';
 
 const EXPECTED_SHA = process.env.EXPECTED_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -60,7 +60,7 @@ try {
 
 async function currentPrHead(repository, sha, issue, expectedBranch, headers) {
   const pulls = await apiJson(`https://api.github.com/repos/${repository}/commits/${sha}/pulls`, headers);
-  const pr = pulls.find((item) => pullRequestMatchesIssue(item, sha, issue, expectedBranch, repository));
+  const pr = resolveLivePullRequest(pulls, sha, issue, expectedBranch, repository);
   return pr?.head?.sha;
 }
 async function failedForPendingLiveEvidence(repository, runId, headers) {

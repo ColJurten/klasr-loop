@@ -23,9 +23,14 @@ export function resolveCiPullRequest(pulls, repository, branch, sha) {
 
 export function pullRequestMatchesIssue(pr, sha, issue, expectedBranch, repository) {
   if (pr?.state !== 'open' || pr.head?.sha !== sha) return false;
-  const conventional = Number(pr.head?.ref?.match(/^(?:feature|fix)\/(\d+)-/)?.[1]) === issue;
   const explicitIssue = closingIssueReference(pr.body, repository);
+  if (expectedBranch) return pr.head?.ref === expectedBranch && explicitIssue === issue;
+  const conventional = Number(pr.head?.ref?.match(/^(?:feature|fix)\/(\d+)-/)?.[1]) === issue;
   const hasClosingClause = new RegExp(String.raw`(?:^|\s)${CLOSING}\s+`, 'i').test(pr.body ?? '');
-  const explicitlyNamed = Boolean(expectedBranch) && pr.head?.ref === expectedBranch && explicitIssue === issue;
-  return explicitlyNamed || (conventional && (!hasClosingClause || explicitIssue === issue));
+  return conventional && (!hasClosingClause || explicitIssue === issue);
+}
+
+export function resolveLivePullRequest(pulls, sha, issue, expectedBranch, repository) {
+  const matches = pulls.filter((pr) => pullRequestMatchesIssue(pr, sha, issue, expectedBranch, repository));
+  return matches.length === 1 ? matches[0] : undefined;
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { closingIssueReference, pullRequestMatchesIssue, resolveCiPullRequest } from '../lib/pull-request.mjs';
+import { closingIssueReference, pullRequestMatchesIssue, resolveCiPullRequest, resolveLivePullRequest } from '../lib/pull-request.mjs';
 
 const root = new URL('../../../', import.meta.url);
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -11,7 +11,7 @@ test('publisher source contains no literal repository SHA', () => {
   const source = readFileSync(new URL('../../publish-live-google-status.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /[0-9a-f]{40}/);
   assert.match(source, /EXPECTED_BRANCH/);
-  assert.match(source, /pullRequestMatchesIssue/);
+  assert.match(source, /resolveLivePullRequest/);
 });
 
 test('EXPECTED_BRANCH requires exact ref, SHA, and a same-repository closing reference', () => {
@@ -23,9 +23,17 @@ test('EXPECTED_BRANCH requires exact ref, SHA, and a same-repository closing ref
   assert.equal(pullRequestMatchesIssue({ ...pr, body: 'Closes #14' }, sha, 13, 'custom-branch', repository), false);
   assert.equal(pullRequestMatchesIssue(pr, 'b'.repeat(40), 13, 'custom-branch', repository), false);
   assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'other-branch', repository), false);
+  assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes #13' }, sha, 13, 'custom-branch', repository), false);
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: '' }, sha, 13, undefined, repository), true);
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes other/repo#13' }, sha, 13, undefined, repository), false);
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes #14' }, sha, 13, undefined, repository), false);
+});
+
+test('live publisher rejects ambiguous matching open PRs', () => {
+  const repository = 'owner/repo';
+  const pr = { state: 'open', head: { ref: 'feature/13-task', sha }, body: 'Closes #13' };
+  assert.equal(resolveLivePullRequest([pr, { ...pr, number: 2 }], sha, 13, undefined, repository), undefined);
+  assert.equal(resolveLivePullRequest([pr], sha, 13, undefined, repository), pr);
 });
 
 test('closing issue reference accepts only one exact same-repository token', () => {
