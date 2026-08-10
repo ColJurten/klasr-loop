@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { pullRequestMatchesIssue } from '../lib/pull-request.mjs';
+import { pullRequestMatchesIssue, resolveCiPullRequest } from '../lib/pull-request.mjs';
 
 const root = new URL('../../../', import.meta.url);
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -24,6 +24,27 @@ test('EXPECTED_BRANCH requires exact ref, SHA, and a same-repository closing ref
   assert.equal(pullRequestMatchesIssue(pr, 'b'.repeat(40), 13, 'custom-branch', repository), false);
   assert.equal(pullRequestMatchesIssue(pr, sha, 13, 'other-branch', repository), false);
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: '' }, sha, 13, undefined, repository), true);
+  assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes other/repo#13' }, sha, 13, undefined, repository), false);
+  assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes #14' }, sha, 13, undefined, repository), false);
+});
+
+test('CI recovery resolves noncanonical PR 14 to its sole same-repository closing issue 13', () => {
+  const repository = 'ColJurten/klasr-loop';
+  const pr = { number: 14, state: 'open', head: { ref: 'feature/agentic-workflow-v3', sha, repo: { full_name: repository } }, base: { repo: { full_name: repository } }, body: 'Closes #13' };
+  assert.deepEqual(resolveCiPullRequest([pr], repository, pr.head.ref, sha), { pr, issue: 13 });
+});
+
+test('CI recovery fails closed for hostile PR ambiguity and issue disagreement', () => {
+  const repository = 'owner/repo';
+  const pr = (body, ref = 'feature/13-task') => ({ number: 14, state: 'open', head: { ref, sha, repo: { full_name: repository } }, base: { repo: { full_name: repository } }, body });
+  for (const candidate of [
+    pr('Closes #13\nFixes #14'),
+    pr('Closes #13, #14'),
+    pr('Closes other/repo#13'),
+    pr('Closes nope'),
+    pr('Closes #14'),
+  ]) assert.equal(resolveCiPullRequest([candidate], repository, candidate.head.ref, sha), undefined);
+  assert.equal(resolveCiPullRequest([pr('Closes #13'), { ...pr('Closes #13'), number: 15 }], repository, 'feature/13-task', sha), undefined);
 });
 
 test('live runner evidence self-check enforces the sanitized manifest allowlist', () => {

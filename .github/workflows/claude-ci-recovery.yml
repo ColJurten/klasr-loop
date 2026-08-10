@@ -47,10 +47,12 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number,headRefOid --jq '.[0] // {}')
-          issue=$(sed -nE 's#^(feature|fix)/([0-9]+)-.*#\2#p' <<< "$BRANCH")
+          gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate --slurp > /tmp/open-prs.json
+          pr=$(node scripts/agent/resolve-ci-pr.mjs "$REPO" "$BRANCH" "$HEAD_SHA" /tmp/open-prs.json || true)
+          issue=$(jq -r '.issue // empty' <<< "$pr")
           cycle=0
           agent_attempt=1
           if [ -n "$issue" ]; then
@@ -62,7 +64,9 @@ jobs:
           fi
           read -r cycle agent_attempt < <(node -e 'const [cycle,attempt]=process.argv.slice(1).map(Number);if(!Number.isInteger(cycle)||cycle<0||!Number.isInteger(attempt)||attempt<1)throw Error("invalid control lineage");console.log(cycle,attempt)' "$cycle" "$agent_attempt")
           {
-            echo "current_pr_head_sha=$(jq -r '.headRefOid // empty' <<< "$pr")"
+            echo "current_pr_head_sha=$(jq -r '.head_sha // empty' <<< "$pr")"
+            echo "current_pr_number=$(jq -r '.number // empty' <<< "$pr")"
+            echo "current_issue=$issue"
             echo "failed_job=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure")][0].name // "unknown"')"
             echo "failed_jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure") | .name] | join(",")')"
             echo "live_status_state=$(gh api "repos/$REPO/commits/${{ github.event.workflow_run.head_sha }}/statuses" --jq '[.[] | select(.context=="klasr/live-google")][0].state // "missing"')"
@@ -76,6 +80,8 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.repository }}
           CURRENT_PR_HEAD_SHA: ${{ steps.repair.outputs.current_pr_head_sha }}
+          CURRENT_PR_NUMBER: ${{ steps.repair.outputs.current_pr_number }}
+          CURRENT_ISSUE: ${{ steps.repair.outputs.current_issue }}
           FAILED_JOB: ${{ steps.repair.outputs.failed_job }}
           FAILED_JOBS: ${{ steps.repair.outputs.failed_jobs }}
           LIVE_STATUS_STATE: ${{ steps.repair.outputs.live_status_state }}

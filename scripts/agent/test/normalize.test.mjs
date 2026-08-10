@@ -99,12 +99,34 @@ test('agent own push (synchronize by bot) is NOT re-dispatched', () => {
 test('current agent CI success -> read-only verification', () => {
   const payload = load('10-ci-failure-agent.json');
   payload.workflow_run.conclusion = 'success';
-  const d = normalizeEvent('workflow_run', payload, { ...env, currentPrHeadSha: 'abc1234def' });
+  const d = normalizeEvent('workflow_run', payload, { ...env, currentPrHeadSha: 'abc1234def', currentPrNumber: 45, currentIssue: 42 });
   assert.equal(d.dispatchType, 'agent.verify');
+  assert.equal(d.task, 42);
+});
+
+test('noncanonical CI success dispatches the resolved closing issue, never the PR number', () => {
+  const payload = load('10-ci-failure-agent.json');
+  payload.workflow_run.conclusion = 'success';
+  payload.workflow_run.head_branch = 'feature/agentic-workflow-v3';
+  payload.workflow_run.pull_requests[0].number = 14;
+  payload.workflow_run.pull_requests[0].head.ref = 'feature/agentic-workflow-v3';
+  const d = normalizeEvent('workflow_run', payload, { ...env, currentPrHeadSha: 'abc1234def', currentPrNumber: 14, currentIssue: 13 });
+  assert.equal(d.dispatchType, 'agent.verify');
+  assert.equal(d.task, 13);
+  assert.equal(d.refs.pull_request, 14);
+});
+
+test('CI recovery ignores missing or disagreeing trusted PR resolution', () => {
+  const payload = load('10-ci-failure-agent.json');
+  payload.workflow_run.conclusion = 'success';
+  for (const extra of [{}, { currentPrHeadSha: 'abc1234def', currentPrNumber: 99, currentIssue: 42 }]) {
+    const d = normalizeEvent('workflow_run', payload, { ...env, ...extra });
+    assert.equal(d.action, 'ignore');
+  }
 });
 
 test('CI failure on agent PR -> agent.ci_failure with run identifiers', () => {
-  const d = normalizeEvent('workflow_run', load('10-ci-failure-agent.json'), { ...env, repo: 'acme/klasr', currentPrHeadSha: 'abc1234def', failedJob: 'quality', cycle: 2 });
+  const d = normalizeEvent('workflow_run', load('10-ci-failure-agent.json'), { ...env, repo: 'acme/klasr', currentPrHeadSha: 'abc1234def', currentPrNumber: 45, currentIssue: 42, failedJob: 'quality', cycle: 2 });
   assert.equal(d.dispatchType, 'agent.ci_failure');
   assert.equal(d.refs.run_id, 556);
   assert.equal(d.task, 42);

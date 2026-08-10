@@ -92,6 +92,9 @@ test('CI recovery routes both success and failure and avoids an empty issue API 
   assert.match(recovery, /Number\.isInteger\(cycle\)[\s\S]*Number\.isInteger\(attempt\)/);
   assert.match(recovery, /workflow_run\.conclusion/);
   assert.match(recovery, /steps\.decide\.outputs\.dispatch/);
+  assert.match(recovery, /resolve-ci-pr\.mjs/);
+  assert.match(recovery, /CURRENT_ISSUE/);
+  assert.doesNotMatch(recovery, /\.\[0\] \/\/ \{\}/);
 });
 
 test('worker advances lineage only for a verifier on the exact current controlled PR head', () => {

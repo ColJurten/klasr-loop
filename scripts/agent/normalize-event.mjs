@@ -16,6 +16,8 @@ const decision = normalizeEvent(kind, payload, {
   extraBots: (process.env.EXTRA_BOT_ACTORS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   repo: process.env.REPO,
   currentPrHeadSha: process.env.CURRENT_PR_HEAD_SHA,
+  currentPrNumber: process.env.CURRENT_PR_NUMBER,
+  currentIssue: process.env.CURRENT_ISSUE,
   failedJob: process.env.FAILED_JOB,
   failedJobs: process.env.FAILED_JOBS,
   liveStatusState: process.env.LIVE_STATUS_STATE,

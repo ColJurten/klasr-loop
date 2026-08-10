@@ -202,17 +202,19 @@ export function normalizeEvent(kind, payload, env) {
       if (run.conclusion === 'success') {
         if (!agentPr) return ignore('CI success outside an agent PR', key);
         if (env.currentPrHeadSha !== run.head_sha) return ignore('stale workflow run: PR head has advanced', key);
-        return dispatch('agent.verify', key, prTask(agentPr), 'ci', { pull_request: agentPr.number, head_sha: run.head_sha, attempt: Number(env.currentAttempt ?? 1) });
+        if (Number(env.currentPrNumber) !== agentPr.number || !Number.isInteger(Number(env.currentIssue)) || Number(env.currentIssue) < 1) return ignore('current PR or closing issue could not be resolved uniquely', key);
+        return dispatch('agent.verify', key, Number(env.currentIssue), 'ci', { pull_request: agentPr.number, head_sha: run.head_sha, attempt: Number(env.currentAttempt ?? 1) });
       }
       if (run.conclusion !== 'failure') return ignore(`CI conclusion ${run.conclusion}: no action`, key);
       if (agentPr || isAgentBranch(branch)) {
         if (!agentPr) return ignore('agent-branch CI failure has no open PR', key);
         if (agentPr && env.currentPrHeadSha !== run.head_sha) return ignore('stale workflow run: PR head has advanced', key);
+        if (Number(env.currentPrNumber) !== agentPr.number || !Number.isInteger(Number(env.currentIssue)) || Number(env.currentIssue) < 1) return ignore('current PR or closing issue could not be resolved uniquely', key);
         const failedJobs = String(env.failedJobs ?? env.failedJob ?? 'unknown').split(',').map((job) => job.trim()).filter(Boolean);
         if (failedJobs.every((job) => ['live-google-status', 'gate'].includes(job)) && env.liveStatusState !== 'success') {
-          return ignore('live-evidence-pending', key, { task: prTask(agentPr) });
+          return ignore('live-evidence-pending', key, { task: Number(env.currentIssue) });
         }
-        const task = prTask(agentPr);
+        const task = Number(env.currentIssue);
         const repairKey = ['repair', env.repo ?? 'unknown', task ?? 'unknown', run.head_sha, run.id, failedJobs.join(','), run.run_attempt, env.cycle ?? 0].join(':').slice(0, 240);
         return dispatch('agent.ci_failure', repairKey, task, 'ci', {
           repo: env.repo ?? 'unknown',
