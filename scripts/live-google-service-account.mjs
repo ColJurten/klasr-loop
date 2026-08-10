@@ -283,10 +283,11 @@ function sameParents(actual = [], expected = []) { return actual.length === expe
 function renderPng(text) { const canvas = createCanvas(1600, 900); const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 1600, 900); ctx.fillStyle = 'black'; ctx.font = 'bold 54px sans-serif'; text.split(' ').reduce((lines, word) => { const last = lines.at(-1); if (ctx.measureText(`${last} ${word}`).width < 1400) lines[lines.length - 1] = `${last} ${word}`; else lines.push(word); return lines; }, ['']).forEach((line, index) => ctx.fillText(line, 100, 180 + index * 100)); return canvas.toBuffer('image/png'); }
 
 async function ensureApps() {
+  await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
   const common = { ...process.env, NODE_ENV: 'test', DATABASE_URL: databaseUrl, MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_LOCAL_MVP: 'false', KLASR_INLINE_WORKER: 'true', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId };
-  if (!(await reachable(`${apiBase}/health`))) children.push({ child: spawn('pnpm', ['--filter', '@klasr/api', 'exec', 'nest', 'start'], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, PORT: String(apiPort), HOST: '127.0.0.1' } }), url: `${apiBase}/health` });
+  children.push({ child: spawn('pnpm', ['--filter', '@klasr/api', 'exec', 'nest', 'start'], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, PORT: String(apiPort), HOST: '127.0.0.1' } }), url: `${apiBase}/health` });
   await waitReachable(`${apiBase}/health`);
-  if (!(await reachable(webBase))) children.push({ child: spawn('pnpm', ['--filter', '@klasr/web', 'exec', 'next', 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
+  children.push({ child: spawn('pnpm', ['--filter', '@klasr/web', 'exec', 'next', 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
   await waitReachable(`${webBase}/login`);
 }
 async function stopApps(owned) {
@@ -305,6 +306,7 @@ async function waitStopped(owned, timeout) {
 }
 function groupAlive(pid) { try { process.kill(-pid, 0); return true; } catch { return false; } }
 async function reachable(url) { try { return (await fetch(url)).ok; } catch { return false; } }
+async function assertAppsAbsent(urls) { for (const url of urls) assert(!(await reachable(url)), `Pre-existing app is reachable at ${url}; refusing stale runtime evidence`); }
 async function waitReachable(url) { for (let i = 0; i < 120; i += 1) { if (await reachable(url)) return; await delay(500); } throw new Error(`Loopback app did not start: ${new URL(url).pathname}`); }
 
 async function lifecycleCheck() {
@@ -317,7 +319,11 @@ async function lifecycleCheck() {
   const parent = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: 'ignore' }); setInterval(() => {}, 1000)`;
   owned.push({ child: spawn(process.execPath, ['-e', parent], { detached: true, stdio: 'ignore' }), url: `http://127.0.0.1:${port}` });
   await waitReachable(`http://127.0.0.1:${port}`);
+  let rejected = false;
+  try { await assertAppsAbsent([`http://127.0.0.1:${port}`]); } catch (error) { rejected = /Pre-existing app/.test(error.message); }
+  assert(rejected, 'Pre-existing health endpoint was not rejected');
   await stopApps(owned);
+  await assertAppsAbsent([`http://127.0.0.1:${port}`]);
 }
 async function tenantId() { for (let i = 0; i < 40; i += 1) { const membership = await prisma.membership.findFirst({ where: { user: { email } }, select: { organizationId: true } }); if (membership) return membership.organizationId; await delay(250); } throw new Error('Acceptance tenant was not onboarded'); }
 

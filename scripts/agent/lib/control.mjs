@@ -42,6 +42,7 @@ export function parseControl(commentBody) {
     if (record.version === 1) record = {
       ...record,
       version: 2,
+      lifecycle: { attempt: 1, supersedes: null, superseded_by: null },
       clearance: {
         verifier: { status: 'missing', sha: null, attempt: null },
         security: { status: 'missing', sha: null, attempt: null },

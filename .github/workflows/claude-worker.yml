@@ -160,4 +160,6 @@ jobs:
           RUN_OUTCOME: ${{ needs.run.result }}
           VERDICT_JSON: ${{ needs.run.outputs.verdict }}
           RUN_IDENTITY: ${{ needs.run.outputs.identity }}
+          KLASR_PROJECT_ID: ${{ vars.KLASR_PROJECT_ID }}
+          KLASR_PROJECT_TOKEN: ${{ secrets.KLASR_PROJECT_TOKEN }}
         run: bash scripts/agent/worker-post.sh

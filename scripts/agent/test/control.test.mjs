@@ -63,6 +63,11 @@ test('comment-derived cycle and attempt must be safe integers', () => {
   }
 });
 
+test('v1 migration rejects malformed numeric lineage', () => {
+  const old = { version: 1, task_id: 1, cycle: '1', status: 'local-validation', processed_events: [] };
+  assert.equal(parseControl(renderControlComment(old)), null);
+});
+
 test('update-in-place is a pure merge, no comment-per-transition', () => {
   const first = recordEvent(emptyControl(42), 'a', { status: 'running' });
   const second = recordEvent(first, 'b', { status: 'reviewing' });
@@ -125,14 +130,22 @@ test('acceptance requires exact-attempt verifier and security clearance', () => 
 });
 
 test('old control schema preserves state and dedupe history but migrates clearance fail-closed', () => {
-  const old = { ...emptyControl(13), version: 1 };
-  delete old.clearance;
-  old.status = 'live-acceptance';
-  old.processed_events = ['legacy:event'];
+  const old = {
+    version: 1, task_id: 13, cycle: 3, status: 'live-acceptance',
+    branch: 'feature/13-agent-loop', pull_request: 14,
+    last_processed_event: 'legacy:event', processed_events: ['older:event', 'legacy:event'],
+    last_commit: 'a'.repeat(40), evidence: { sha: 'a'.repeat(40), manifest: null, status: 'missing' },
+    human_verdict: 'pending',
+  };
   const migrated = parseControl(renderControlComment(old));
   assert.equal(migrated.version, 2);
   assert.equal(migrated.status, 'live-acceptance');
-  assert.deepEqual(migrated.processed_events, ['legacy:event']);
+  assert.equal(migrated.cycle, 3);
+  assert.equal(migrated.branch, 'feature/13-agent-loop');
+  assert.equal(migrated.pull_request, 14);
+  assert.equal(migrated.evidence.sha, 'a'.repeat(40));
+  assert.deepEqual(migrated.lifecycle, { attempt: 1, supersedes: null, superseded_by: null });
+  assert.deepEqual(migrated.processed_events, ['older:event', 'legacy:event']);
   assert.equal(migrated.clearance.verifier.status, 'missing');
   assert.equal(hasAcceptanceClearance(migrated, 'a'.repeat(40), 1, false), false);
 });

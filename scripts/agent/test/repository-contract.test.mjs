@@ -73,9 +73,9 @@ test('CI repair verifies current PR head and carries bounded repair identity fie
   for (const field of ['repo', 'issue', 'head_sha', 'workflow_run_id', 'failed_job', 'attempt', 'cycle']) assert.ok(`${recovery}\n${normalizer}`.includes(field), field);
 });
 
-test('CI recovery skips successful runs and safely routes failures without a numeric task', () => {
+test('CI recovery routes both success and failure and avoids an empty issue API path', () => {
   const recovery = read('.github/workflows/claude-ci-recovery.yml');
-  assert.match(recovery, /route:\n\s+if: github\.event\.workflow_run\.conclusion != 'success'/);
+  assert.doesNotMatch(recovery, /route:\n\s+if: github\.event\.workflow_run\.conclusion != 'success'/);
   assert.match(recovery, /cycle=0\n\s+agent_attempt=1\n\s+if \[ -n "\$issue" \]; then[\s\S]*issues\/\$issue\/comments\?per_page=100[\s\S]*else/);
   assert.doesNotMatch(recovery, /cycle=\$\{cycle:-0\}|agent_attempt=\$\{agent_attempt:-1\}/);
   assert.match(recovery, /Number\.isInteger\(cycle\)[\s\S]*Number\.isInteger\(attempt\)/);
@@ -114,9 +114,17 @@ test('human-required recovery still requires the acceptance finalizer gate', () 
   assert.match(post, /authoritative issue spec is invalid/);
 });
 
-test('worker does not expose dead Projects credentials', () => {
+test('trusted post directly syncs every canonical label transition when Projects is configured', () => {
   const worker = read('.github/workflows/claude-worker.yml');
-  assert.doesNotMatch(worker, /KLASR_PROJECT_TOKEN|KLASR_PROJECT_ID/);
+  const contextAndRun = worker.slice(0, worker.indexOf('\n  post:'));
+  const post = worker.slice(worker.indexOf('\n  post:'));
+  const script = read('scripts/agent/worker-post.sh');
+  assert.doesNotMatch(contextAndRun, /KLASR_PROJECT_TOKEN/);
+  assert.match(post, /Checkout trusted default branch only|ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(post, /KLASR_PROJECT_TOKEN: \$\{\{ secrets\.KLASR_PROJECT_TOKEN \}\}/);
+  assert.ok(post.indexOf('default_branch') < post.indexOf('KLASR_PROJECT_TOKEN'));
+  assert.match(script, /add-label "agent:\$STATUS"[\s\S]*KLASR_PROJECT_TOKEN[\s\S]*KLASR_PROJECT_ID[\s\S]*ISSUE_NODE_ID=.*gh api[\s\S]*AGENT_STATUS="agent:\$STATUS" node scripts\/agent\/sync-project\.mjs \|\| true/);
+  assert.match(script, /\[ -n "\$\{KLASR_PROJECT_TOKEN:-\}" \] && \[ -n "\$\{KLASR_PROJECT_ID:-\}" \]/);
 });
 
 test('acceptance-validator is read-only and specifies every natural-path proof', () => {
@@ -128,18 +136,32 @@ test('acceptance-validator is read-only and specifies every natural-path proof',
   assert.doesNotMatch(runner.match(/acceptance-validator\)[\s\S]*?;;/)?.[0] ?? '', /Edit|git push/);
 });
 
-test('read-only model roles have no GitHub command route or token', () => {
+test('read-only model roles have only Read and verdict Write, with no Bash route or token', () => {
   const runner = read('.github/workflows/_claude-run.yml');
+  const toolSelection = runner.match(/- name: Select least-privilege tools[\s\S]*?- name: Run Claude/)?.[0] ?? '';
   for (const role of ['acceptance-validator', 'verifier', 'security-reviewer']) {
-    const block = runner.match(new RegExp(`${role}\\)[\\s\\S]*?;;`))?.[0] ?? '';
-    assert.doesNotMatch(block, /\bgh\b|\bEdit\b/);
+    const block = toolSelection.match(new RegExp(`${role}\\)[\\s\\S]*?;;`))?.[0] ?? '';
+    assert.match(block, /--allowed-tools "Read,Write\(\.agent\/verdict\.json\)"/);
+    assert.doesNotMatch(block, /\bBash\b|\bgh\b|\bEdit\b|\bGrep\b|\bGlob\b/);
   }
+  const implementer = runner.match(/implementer\|feedback-responder\)[\s\S]*?;;/)?.[0] ?? '';
+  for (const tool of ['Edit', 'Write', 'Bash(git:', 'Bash(pnpm:', 'Bash(node:']) assert.ok(implementer.includes(tool), tool);
   assert.match(runner, /verifier\|security-reviewer\|acceptance-validator\) echo "model_value="/);
   assert.match(runner, /GH_TOKEN: \$\{\{ steps\.token\.outputs\.model_value \}\}/);
   assert.match(runner, /GITHUB_TOKEN: \$\{\{ steps\.token\.outputs\.model_value \}\}/);
   assert.match(runner, /persist-credentials: \$\{\{ inputs\.role == 'implementer' \|\| inputs\.role == 'feedback-responder' \}\}/);
-  assert.match(runner, /read-only-check\.sh/);
-  assert.match(read('scripts/agent/read-only-check.sh'), /unset GH_TOKEN GITHUB_TOKEN/);
+  assert.doesNotMatch(runner, /read-only-check\.sh/);
+});
+
+test('read-only role prompts use bundled evidence and prohibit command execution', () => {
+  for (const role of ['acceptance-validator', 'verifier', 'security-reviewer']) {
+    const prompt = read(`.claude/agents/${role}.md`);
+    assert.match(prompt, /bundled/i);
+    assert.match(prompt, /do not (?:run|execute) commands|must not (?:run|execute) commands/i);
+    assert.match(prompt, /do not fetch GitHub data yourself/i);
+    assert.match(prompt, /\.agent\/verdict\.json/);
+    assert.doesNotMatch(prompt, /re-run/i);
+  }
 });
 
 test('read-only context bundles trusted current-SHA evidence and status before model execution', () => {
@@ -154,7 +176,9 @@ test('read-only context bundles trusted current-SHA evidence and status before m
 
 test('workflow data-to-output boundaries validate and safely encode untrusted values', () => {
   const runner = read('.github/workflows/_claude-run.yml');
-  assert.match(runner, /verdict-json\.mjs/);
+  assert.match(runner, /Remove pre-existing structured result[\s\S]*rm -f \.agent\/verdict\.json/);
+  assert.match(runner, /node <<'NODE'[\s\S]*JSON\.parse[\s\S]*JSON\.stringify\(verdict\).*\\n/);
+  assert.doesNotMatch(runner, /node scripts\/|verdict-json\.mjs/);
   assert.match(runner, /\/proc\/sys\/kernel\/random\/uuid/);
   const context = read('scripts/agent/worker-context.sh');
   assert.match(context, /github-output\.mjs/);

@@ -82,6 +82,10 @@ jobs:
           token: ${{ steps.token.outputs.value }}
           persist-credentials: ${{ inputs.role == 'implementer' || inputs.role == 'feedback-responder' }}
 
+      - name: Remove pre-existing structured result
+        run: |
+          rm -f .agent/verdict.json
+
       - name: Select least-privilege tools for role
         id: tools
         run: |
@@ -91,11 +95,11 @@ jobs:
             implementer|feedback-responder)
               echo 'value=--allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh api:*),Bash(pnpm:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
             acceptance-validator)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Write(.agent/verdict.json)"' >> "$GITHUB_OUTPUT" ;;
             verifier)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(bash scripts/agent/read-only-check.sh:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Write(.agent/verdict.json)"' >> "$GITHUB_OUTPUT" ;;
             security-reviewer)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(bash scripts/agent/read-only-check.sh:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Write(.agent/verdict.json)"' >> "$GITHUB_OUTPUT" ;;
             *)
               echo "unknown role"; exit 1 ;;
           esac
@@ -115,7 +119,14 @@ jobs:
         if: always()
         run: |
           if [ -f .agent/verdict.json ]; then
-            node scripts/agent/lib/verdict-json.mjs .agent/verdict.json /tmp/verdict.json
+            node <<'NODE'
+            const { readFileSync, writeFileSync } = require('node:fs');
+            const verdict = JSON.parse(readFileSync('.agent/verdict.json', 'utf8'));
+            if (verdict === null || Array.isArray(verdict) || typeof verdict !== 'object') {
+              throw new TypeError('verdict must be a non-null, non-array object');
+            }
+            writeFileSync('/tmp/verdict.json', `${JSON.stringify(verdict)}\n`);
+          NODE
             delimiter="KLASR_$(tr -d - < /proc/sys/kernel/random/uuid)"
             while grep -Fxq "$delimiter" /tmp/verdict.json; do delimiter="KLASR_$(tr -d - < /proc/sys/kernel/random/uuid)"; done
             {

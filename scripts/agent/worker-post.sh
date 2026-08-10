@@ -150,7 +150,11 @@ IFS=',' read -ra OLD <<< "$CURRENT"
 for label in "${OLD[@]}"; do [ -n "$label" ] && gh issue edit "$TASK" --repo "$REPO" --remove-label "$label" 2>/dev/null || true; done
 gh api "repos/$REPO/labels" -f name="agent:$STATUS" -f color="7F77DD" 2>/dev/null || true
 gh issue edit "$TASK" --repo "$REPO" --add-label "agent:$STATUS" 2>/dev/null || true
-# project-sync.yml is the single fail-safe Projects v2 synchronization path.
+# GITHUB_TOKEN label writes do not emit issues:labeled, so trusted post syncs directly.
+if [ -n "${KLASR_PROJECT_TOKEN:-}" ] && [ -n "${KLASR_PROJECT_ID:-}" ]; then
+  ISSUE_NODE_ID=$(gh api "repos/$REPO/issues/$TASK" --jq .node_id 2>/dev/null || true)
+  ISSUE_NODE_ID="$ISSUE_NODE_ID" AGENT_STATUS="agent:$STATUS" node scripts/agent/sync-project.mjs || true
+fi
 
 [ -z "$ESCALATION" ] || gh issue comment "$TASK" --repo "$REPO" --body "$ESCALATION" || true
 if [ -n "$QUEUED_DISPATCH" ]; then
