@@ -2,10 +2,8 @@ const CLOSING = String.raw`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)`;
 
 export function closingIssueReference(body, repository) {
   const clauses = [...String(body ?? '').matchAll(new RegExp(String.raw`(?:^|\s)${CLOSING}\s+([^\r\n]+)`, 'gi'))];
-  const references = clauses.flatMap((clause) => [...clause[1].matchAll(/(?:[^/#\s]+\/[^/#\s]+)?#[1-9]\d*/g)].map((match) => match[0]));
-  if (clauses.length !== 1 || references.length !== 1 || !repository) return undefined;
-  const token = references[0];
-  const match = token.match(/^(?:(?<repository>[^/#\s]+\/[^/#\s]+))?#(?<issue>[1-9]\d*)$/);
+  if (clauses.length !== 1 || !repository) return undefined;
+  const match = clauses[0][1].match(/^(?:(?<repository>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+))?#(?<issue>[1-9]\d*)$/);
   if (!match || (match.groups.repository && match.groups.repository.toLowerCase() !== repository.toLowerCase())) return undefined;
   return Number(match.groups.issue);
 }

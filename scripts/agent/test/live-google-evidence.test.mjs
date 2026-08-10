@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { pullRequestMatchesIssue, resolveCiPullRequest } from '../lib/pull-request.mjs';
+import { closingIssueReference, pullRequestMatchesIssue, resolveCiPullRequest } from '../lib/pull-request.mjs';
 
 const root = new URL('../../../', import.meta.url);
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -26,6 +26,25 @@ test('EXPECTED_BRANCH requires exact ref, SHA, and a same-repository closing ref
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: '' }, sha, 13, undefined, repository), true);
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes other/repo#13' }, sha, 13, undefined, repository), false);
   assert.equal(pullRequestMatchesIssue({ ...pr, head: { ref: 'feature/13-task', sha }, body: 'Closes #14' }, sha, 13, undefined, repository), false);
+});
+
+test('closing issue reference accepts only one exact same-repository token', () => {
+  const repository = 'ColJurten/klasr-loop';
+  assert.equal(closingIssueReference('Closes #13', repository), 13);
+  assert.equal(closingIssueReference('cLoSeS coljurten/KLASR-loop#13', repository), 13);
+  for (const body of [
+    'Closes evil#13',
+    'Closes text(#13)',
+    'Closes foo#13 bar',
+    'Closes #13 extra prose',
+    'Closes #13 #14',
+    'Closes #13\nFixes #13',
+    'Closes other/repo#13',
+    'Closes owner//repo#13',
+    'Closes /repo#13',
+    'Closes owner/#13',
+    'Closes #0',
+  ]) assert.equal(closingIssueReference(body, repository), undefined, body);
 });
 
 test('CI recovery resolves noncanonical PR 14 to its sole same-repository closing issue 13', () => {
