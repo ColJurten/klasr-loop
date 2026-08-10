@@ -11,14 +11,17 @@ test('trusted comments accept the owner, configured supervisors, and workflow bo
   }
 });
 
-test('an unknown marker author is never adopted as trusted state', () => {
-  assert.throws(() => trustedComment([comment(1, 'public-user')], 'klasr-agent-state', trust), /untrusted/);
+test('an untrusted marker shadow is ignored', () => {
+  assert.equal(trustedComment([comment(1, 'public-user')], 'klasr-agent-state', trust), null);
 });
 
-test('duplicate markers fail closed even when one author is trusted', () => {
-  assert.throws(() => trustedComment([comment(1, 'public-user'), comment(2, 'owner')], 'klasr-agent-state', trust), /at most one/);
+test('one trusted marker wins over untrusted marker shadows', () => {
+  assert.equal(trustedComment([comment(1, 'public-user'), comment(2, 'owner')], 'klasr-agent-state', trust).id, 2);
+  assert.equal(trustedComment([[comment(1, 'owner')], [comment(2, 'public-user')]], 'klasr-agent-state', trust).id, 1);
+});
+
+test('duplicate trusted markers fail closed', () => {
   assert.throws(() => trustedComment([comment(1, 'owner'), comment(2, 'supervisor')], 'klasr-agent-state', trust), /at most one/);
-  assert.throws(() => trustedComment([[comment(1, 'owner')], [comment(2, 'public-user')]], 'klasr-agent-state', trust), /at most one/);
 });
 
 test('missing marker is safe and returns no state', () => {

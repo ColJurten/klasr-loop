@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   route:
+    if: github.event.workflow_run.conclusion != 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout trusted default branch only
@@ -47,18 +48,26 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
+          set -euo pipefail
           pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number,headRefOid --jq '.[0] // {}')
           issue=$(sed -nE 's#^(feature|fix)/([0-9]+)-.*#\2#p' <<< "$BRANCH")
-          gh api "repos/$REPO/issues/$issue/comments?per_page=100" --paginate --slurp > /tmp/control-comments.json
-          node scripts/agent/lib/trusted-comments.mjs /tmp/control-comments.json klasr-agent-state body > /tmp/control.md
-          read -r cycle agent_attempt < <(node -e 'import("./scripts/agent/lib/control.mjs").then(async m=>{const {readFileSync}=await import("node:fs");const c=m.parseControl(readFileSync("/tmp/control.md","utf8"));const cycle=c?c.cycle:0,attempt=c?c.lifecycle.attempt:1;if(!Number.isInteger(cycle)||cycle<0||!Number.isInteger(attempt)||attempt<1)throw Error("invalid control lineage");console.log(cycle,attempt)})')
+          cycle=0
+          agent_attempt=1
+          if [ -n "$issue" ]; then
+            gh api "repos/$REPO/issues/$issue/comments?per_page=100" --paginate --slurp > /tmp/control-comments.json
+            node scripts/agent/lib/trusted-comments.mjs /tmp/control-comments.json klasr-agent-state body > /tmp/control.md
+            read -r cycle agent_attempt < <(node -e 'import("./scripts/agent/lib/control.mjs").then(async m=>{const {readFileSync}=await import("node:fs");const c=m.parseControl(readFileSync("/tmp/control.md","utf8"));console.log(c?c.cycle:0,c?c.lifecycle.attempt:1)})')
+          else
+            : > /tmp/control.md
+          fi
+          read -r cycle agent_attempt < <(node -e 'const [cycle,attempt]=process.argv.slice(1).map(Number);if(!Number.isInteger(cycle)||cycle<0||!Number.isInteger(attempt)||attempt<1)throw Error("invalid control lineage");console.log(cycle,attempt)' "$cycle" "$agent_attempt")
           {
             echo "current_pr_head_sha=$(jq -r '.headRefOid // empty' <<< "$pr")"
             echo "failed_job=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure")][0].name // "unknown"')"
             echo "failed_jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure") | .name] | join(",")')"
             echo "live_status_state=$(gh api "repos/$REPO/commits/${{ github.event.workflow_run.head_sha }}/statuses" --jq '[.[] | select(.context=="klasr/live-google")][0].state // "missing"')"
-            echo "cycle=${cycle:-0}"
-            echo "agent_attempt=${agent_attempt:-1}"
+            echo "cycle=$cycle"
+            echo "agent_attempt=$agent_attempt"
           } >> "$GITHUB_OUTPUT"
       - name: Normalize event and decide
         id: decide

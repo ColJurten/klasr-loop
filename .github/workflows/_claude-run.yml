@@ -115,7 +115,7 @@ jobs:
         if: always()
         run: |
           if [ -f .agent/verdict.json ]; then
-            jq -e 'type == "object"' .agent/verdict.json > /tmp/verdict.json
+            node scripts/agent/lib/verdict-json.mjs .agent/verdict.json /tmp/verdict.json
             delimiter="KLASR_$(tr -d - < /proc/sys/kernel/random/uuid)"
             while grep -Fxq "$delimiter" /tmp/verdict.json; do delimiter="KLASR_$(tr -d - < /proc/sys/kernel/random/uuid)"; done
             {

@@ -73,6 +73,14 @@ test('CI repair verifies current PR head and carries bounded repair identity fie
   for (const field of ['repo', 'issue', 'head_sha', 'workflow_run_id', 'failed_job', 'attempt', 'cycle']) assert.ok(`${recovery}\n${normalizer}`.includes(field), field);
 });
 
+test('CI recovery skips successful runs and safely routes failures without a numeric task', () => {
+  const recovery = read('.github/workflows/claude-ci-recovery.yml');
+  assert.match(recovery, /route:\n\s+if: github\.event\.workflow_run\.conclusion != 'success'/);
+  assert.match(recovery, /cycle=0\n\s+agent_attempt=1\n\s+if \[ -n "\$issue" \]; then[\s\S]*issues\/\$issue\/comments\?per_page=100[\s\S]*else/);
+  assert.doesNotMatch(recovery, /cycle=\$\{cycle:-0\}|agent_attempt=\$\{agent_attempt:-1\}/);
+  assert.match(recovery, /Number\.isInteger\(cycle\)[\s\S]*Number\.isInteger\(attempt\)/);
+});
+
 test('worker advances lineage only for a verifier on the exact current controlled PR head', () => {
   const context = read('scripts/agent/worker-context.sh');
   assert.match(context, /EVENT_TYPE.*agent\.verify/);
@@ -146,7 +154,7 @@ test('read-only context bundles trusted current-SHA evidence and status before m
 
 test('workflow data-to-output boundaries validate and safely encode untrusted values', () => {
   const runner = read('.github/workflows/_claude-run.yml');
-  assert.match(runner, /jq -e 'type == "object"'/);
+  assert.match(runner, /verdict-json\.mjs/);
   assert.match(runner, /\/proc\/sys\/kernel\/random\/uuid/);
   const context = read('scripts/agent/worker-context.sh');
   assert.match(context, /github-output\.mjs/);

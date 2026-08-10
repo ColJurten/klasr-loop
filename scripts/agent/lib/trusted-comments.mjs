@@ -4,12 +4,10 @@ import { parseSupervisors } from './allowlist.mjs';
 export const WORKFLOW_BOTS = ['github-actions[bot]', 'claude[bot]'];
 
 export function trustedComment(comments, marker, { supervisors = '', repositoryOwner = '', bots = WORKFLOW_BOTS } = {}) {
-  const matches = comments.flat().filter((comment) => comment?.body?.includes(marker));
+  const trusted = new Set([...parseSupervisors(supervisors, repositoryOwner), repositoryOwner, ...bots].filter(Boolean).map((login) => login.toLowerCase()));
+  const matches = comments.flat().filter((comment) => comment?.body?.includes(marker) && trusted.has(comment?.user?.login?.toLowerCase()));
   if (matches.length === 0) return null;
   if (matches.length !== 1) throw new Error(`expected at most one ${marker} comment`);
-  const trusted = new Set([...parseSupervisors(supervisors, repositoryOwner), repositoryOwner, ...bots].filter(Boolean).map((login) => login.toLowerCase()));
-  const author = matches[0]?.user?.login?.toLowerCase();
-  if (!author || !trusted.has(author)) throw new Error(`untrusted ${marker} comment author`);
   return matches[0];
 }
 
