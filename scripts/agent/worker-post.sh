@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Worker post job: verdict handling, state transition, single control-comment
 # upsert, label sync, explicit next-stage dispatch.
-# Env: REPO, TASK, ROLE, BRANCH, CYCLE, EVENT_KEY, RUN_OUTCOME, VERDICT_JSON, RUN_IDENTITY, GH_TOKEN, MAX_CYCLES
+# Env: REPO, TASK, ROLE, BRANCH, CYCLE, EVENT_KEY, RUN_OUTCOME, VERDICT_JSON, EXPECTED_SHA, RUN_IDENTITY, GH_TOKEN, MAX_CYCLES
 set -euo pipefail
 MAX_CYCLES="${MAX_CYCLES:-5}"
 
@@ -76,7 +76,9 @@ else
     verifier)
       VERDICT=$(jq -r '.verdict // empty' <<< "${VERDICT_JSON:-}" 2>/dev/null || true)
       case "$VERDICT" in PASS|REQUEST_CHANGES|BLOCKED) ;; *) VERDICT="BLOCKED" ;; esac
-      CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch('verifier',process.argv[1]==='PASS',process.argv[2],Number(process.argv[3]),process.argv[4]==='true'))))" "$VERDICT" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")
+      REVIEW_PASS=$(printf '%s' "${VERDICT_JSON:-}" | node scripts/agent/lib/review-verdict.mjs verifier "$HEAD_SHA" "${EXPECTED_SHA:-}")
+      CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch('verifier',process.argv[1]==='true',process.argv[2],Number(process.argv[3]),process.argv[4]==='true'))))" "$REVIEW_PASS" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")
+      [ "$VERDICT" != "PASS" ] || [ "$REVIEW_PASS" = "true" ] || VERDICT="BLOCKED"
       STATUS=$(node -e "import('./scripts/agent/lib/state-machine.mjs').then(m=>console.log(m.afterVerification('$VERDICT', $CYCLE, $MAX_CYCLES)))")
       if [ "$VERDICT" = "PASS" ] && [ "$SECURITY_REQUIRED" = "true" ]; then
         STATUS="code-review"
@@ -88,9 +90,9 @@ else
       fi
       ;;
     security-reviewer)
-      BLOCKING=$(jq -er 'if (.findings | type) == "array" then [.findings[] | select(.severity=="BLOCKER")] | length else error("missing findings") end' <<< "${VERDICT_JSON:-{}}" 2>/dev/null || echo 1)
-      CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch('security-reviewer',process.argv[1]==='0',process.argv[2],Number(process.argv[3]),true))))" "${BLOCKING:-0}" "$HEAD_SHA" "$ATTEMPT")
-      if [ "${BLOCKING:-0}" -gt 0 ]; then STATUS="human-required"; else route_live_acceptance; fi ;;
+      REVIEW_PASS=$(printf '%s' "${VERDICT_JSON:-}" | node scripts/agent/lib/review-verdict.mjs security-reviewer "$HEAD_SHA" "${EXPECTED_SHA:-}")
+      CLEARANCE_JSON=$(node -e "import('./scripts/agent/lib/control.mjs').then(m=>process.stdout.write(JSON.stringify(m.clearancePatch('security-reviewer',process.argv[1]==='true',process.argv[2],Number(process.argv[3]),true))))" "$REVIEW_PASS" "$HEAD_SHA" "$ATTEMPT")
+      if [ "$REVIEW_PASS" = "true" ]; then route_live_acceptance; else STATUS="human-required"; fi ;;
     acceptance-validator)
       VERDICT=$(jq -r '.verdict // empty' <<< "${VERDICT_JSON:-}" 2>/dev/null || true)
       if [ "$VERDICT" = "PASS" ]; then

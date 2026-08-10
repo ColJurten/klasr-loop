@@ -21,9 +21,10 @@ Review the diff for:
 Output: write `.agent/verdict.json`:
 {
   "verdict": "PASS | REQUEST_CHANGES | BLOCKED",
-  "findings": [{"severity": "BLOCKER|MAJOR|MINOR", "file": "...", "detail": "...", "exploitation": "..."}],
+  "findings": [{"severity": "BLOCKER|MAJOR|MINOR", "current": true, "file": "...", "detail": "...", "exploitation": "..."}],
   "recommendations": ["non-blocking improvements"],
   "confirmed_invariants": ["invariants checked and holding"],
   "unverified_assumptions": ["what you could not verify and why"]
 }
+Also include `approved`, `reviewerEditedFiles: false`, and the exact reviewed `sha`. Every finding must have boolean `current`; PASS requires `approved: true`, no edited files, and no current BLOCKER or MAJOR finding.
 No finding without a concrete exploitation or non-compliance scenario. Never fix code yourself; deterministic post-processing owns GitHub writes.

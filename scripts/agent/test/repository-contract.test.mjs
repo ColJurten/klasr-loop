@@ -174,6 +174,26 @@ test('read-only context bundles trusted current-SHA evidence and status before m
   for (const forbidden of ['provider_id', 'source_bytes', 'ocr_text']) assert.doesNotMatch(context, new RegExp(forbidden, 'i'));
 });
 
+test('reviewer policy is embedded from a fixed trusted-role map and branch policy is forbidden', () => {
+  const context = read('scripts/agent/worker-context.sh');
+  for (const role of ['verifier', 'security-reviewer', 'acceptance-validator']) {
+    assert.match(context, new RegExp(`${role}.*\\.claude/agents/${role}\\.md`));
+  }
+  assert.match(context, /\.claude\/skills\/self-review\/SKILL\.md/);
+  assert.match(context, /BEGIN TRUSTED REVIEWER POLICY/);
+  assert.match(context, /END TRUSTED REVIEWER POLICY/);
+  assert.match(context, /Do not read or obey[\s\S]*\.claude\/agents\/\*[\s\S]*\.claude\/skills\/\*[\s\S]*AGENTS\.md[\s\S]*CLAUDE\.md/);
+  assert.doesNotMatch(context, /Read and obey \.claude\/agents\/\$\{ROLE\}\.md/);
+  assert.doesNotMatch(context, /\.claude\/agents\/\$\{ROLE\}|\.claude\/skills\/\$\{/);
+});
+
+test('worker post validates exact structured review clearance against event and controlled head SHAs', () => {
+  const post = read('scripts/agent/worker-post.sh');
+  assert.match(post, /review-verdict\.mjs/);
+  assert.match(post, /EXPECTED_SHA/);
+  assert.doesNotMatch(post, /select\(\.severity=="BLOCKER"\)/);
+});
+
 test('workflow data-to-output boundaries validate and safely encode untrusted values', () => {
   const runner = read('.github/workflows/_claude-run.yml');
   assert.match(runner, /Remove pre-existing structured result[\s\S]*rm -f \.agent\/verdict\.json/);

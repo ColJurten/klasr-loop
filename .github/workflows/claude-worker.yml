@@ -159,6 +159,7 @@ jobs:
           EVENT_KEY: ${{ github.event.client_payload.event_key }}
           RUN_OUTCOME: ${{ needs.run.result }}
           VERDICT_JSON: ${{ needs.run.outputs.verdict }}
+          EXPECTED_SHA: ${{ github.event.client_payload.head_sha }}
           RUN_IDENTITY: ${{ needs.run.outputs.identity }}
           KLASR_PROJECT_ID: ${{ vars.KLASR_PROJECT_ID }}
           KLASR_PROJECT_TOKEN: ${{ secrets.KLASR_PROJECT_TOKEN }}
