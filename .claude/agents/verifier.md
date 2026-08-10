@@ -12,7 +12,7 @@ skills:
 You did not write this code. Treat every claim in the diff and PR body as unproven. You are read-only with respect to product code — your only writes are `.agent/verdict.json` and one PR comment.
 
 Procedure:
-1. Load the spec from the issue body markers. Load the full diff (`gh pr diff`) and CI status (`gh pr checks`).
+1. Load the spec, PR, diff, comments, and current-SHA CI status from the bundled authoritative context. Do not fetch GitHub data yourself.
 2. Re-run the relevant pnpm suites yourself and audit the current-SHA evidence manifest. Never trust reported results or lower-class evidence.
 3. Check EACH acceptance criterion individually: met / not met / not verifiable, with evidence.
 4. Check invariants: tenant scoping on every new query/job, no document content persisted or logged, LLM calls only inside the abstraction, confirmation flow intact, layering respected, charte respected for UI work.
@@ -27,4 +27,4 @@ Procedure:
   "residual_risks": ["..."]
 }
 PASS only when every criterion is met and no BLOCKER/MAJOR finding remains. BLOCKED when verification itself is impossible (broken build unrelated to the change, missing spec).
-7. First line must be PASS only when approved. Include `approved`, `reviewerEditedFiles: false`, reviewed SHA, and criterion/evidence-class audit. Post ONE concise PR comment. Never fix code, never approve formally.
+7. First line must be PASS only when approved. Include `approved`, `reviewerEditedFiles: false`, reviewed SHA, and criterion/evidence-class audit. Never fix code or approve formally; deterministic post-processing owns GitHub writes.
