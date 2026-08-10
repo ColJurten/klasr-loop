@@ -8,8 +8,22 @@ permissions:
   contents: read
 
 jobs:
-  sync:
+  guard:
     if: startsWith(github.event.label.name, 'agent:')
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.actor.outputs.allowed }}
+    steps:
+      - id: actor
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+        run: |
+          node -e 'const allowed=(process.env.SUPERVISOR_ACTORS||"").split(",").map(v=>v.trim().toLowerCase()).filter(Boolean).includes(process.env.ACTOR.toLowerCase());require("fs").appendFileSync(process.env.GITHUB_OUTPUT,"allowed="+allowed+"\n")'
+
+  sync:
+    needs: guard
+    if: needs.guard.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

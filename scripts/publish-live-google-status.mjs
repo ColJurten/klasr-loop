@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { liveEvidenceEventKey } from './agent/lib/evidence.mjs';
 import { pullRequestMatchesIssue } from './agent/lib/pull-request.mjs';
+import { trustedComment } from './agent/lib/trusted-comments.mjs';
 
 const EXPECTED_SHA = process.env.EXPECTED_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const CONTEXT = 'klasr/live-google';
@@ -67,11 +68,25 @@ async function failedForPendingLiveEvidence(repository, runId, headers) {
   return jobs.jobs?.some((job) => job.steps?.some((step) => step.name === 'Require trusted live evidence for the current internal PR head' && step.conclusion === 'failure')) === true;
 }
 async function upsertComment(repository, issue, mark, body, headers) {
-  const comments = await apiJson(`https://api.github.com/repos/${repository}/issues/${issue}/comments?per_page=100`, headers);
-  const existing = comments.find((item) => item.body?.includes(mark));
+  const comments = await apiJsonPages(`https://api.github.com/repos/${repository}/issues/${issue}/comments?per_page=100`, headers);
+  const existing = trustedComment(comments, mark, {
+    supervisors: process.env.SUPERVISOR_ACTORS,
+    repositoryOwner: repository.split('/')[0],
+    bots: ['github-actions[bot]', 'claude[bot]', ...(process.env.TRUSTED_BOT_ACTORS ?? '').split(',').map((value) => value.trim()).filter(Boolean)],
+  });
   await api(existing ? `https://api.github.com/repos/${repository}/issues/comments/${existing.id}` : `https://api.github.com/repos/${repository}/issues/${issue}/comments`, { method: existing ? 'PATCH' : 'POST', headers, body: JSON.stringify({ body }) }, 'comment publish');
 }
 async function apiJson(url, headers) { const response = await fetch(url, { headers }); if (!response.ok) throw new Error(`GitHub lookup failed (${response.status})`); return response.json(); }
+async function apiJsonPages(url, headers) {
+  const values = [];
+  while (url) {
+    const response = await fetch(url, { headers });
+    if (!response.ok) throw new Error(`GitHub lookup failed (${response.status})`);
+    values.push(...await response.json());
+    url = response.headers.get('link')?.match(/<([^>]+)>; rel="next"/)?.[1];
+  }
+  return values;
+}
 async function api(url, options, operation) { const response = await fetch(url, options); if (!response.ok) throw new Error(`GitHub ${operation} failed (${response.status})`); }
 function required(name) { if (!process.env[name]) throw new Error(`Missing ${name}`); return process.env[name]; }
 function exactKeys(value, allowed) { if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join(',') !== [...allowed].sort().join(',')) throw new Error('Manifest schema is not sanitized'); }

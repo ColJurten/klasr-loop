@@ -41,15 +41,17 @@ jobs:
         id: repair
         env:
           GH_TOKEN: ${{ github.token }}
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number,headRefOid --jq '.[0] // {}')
           issue=$(sed -nE 's#^(feature|fix)/([0-9]+)-.*#\2#p' <<< "$BRANCH")
-          control=$(gh api "repos/$REPO/issues/$issue/comments" --paginate --jq '[.[] | select(.body | contains("klasr-agent-state"))][0].body // ""' 2>/dev/null || true)
-          cycle=$(sed -nE 's/.*"cycle":[[:space:]]*([0-9]+).*/\1/p' <<< "$control")
-          agent_attempt=$(node -e 'import("./scripts/agent/lib/control.mjs").then(m=>console.log(m.parseControl(process.argv[1])?.lifecycle?.attempt??1))' "$control")
+          gh api "repos/$REPO/issues/$issue/comments?per_page=100" --paginate --slurp > /tmp/control-comments.json
+          node scripts/agent/lib/trusted-comments.mjs /tmp/control-comments.json klasr-agent-state body > /tmp/control.md
+          read -r cycle agent_attempt < <(node -e 'import("./scripts/agent/lib/control.mjs").then(async m=>{const {readFileSync}=await import("node:fs");const c=m.parseControl(readFileSync("/tmp/control.md","utf8"));const cycle=c?c.cycle:0,attempt=c?c.lifecycle.attempt:1;if(!Number.isInteger(cycle)||cycle<0||!Number.isInteger(attempt)||attempt<1)throw Error("invalid control lineage");console.log(cycle,attempt)})')
           {
             echo "current_pr_head_sha=$(jq -r '.headRefOid // empty' <<< "$pr")"
             echo "failed_job=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure")][0].name // "unknown"')"

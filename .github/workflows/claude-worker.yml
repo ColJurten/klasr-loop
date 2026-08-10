@@ -59,12 +59,14 @@ jobs:
         env:
           SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
           REPO_OWNER: ${{ github.repository_owner }}
+          DRY_RUN_EVENT: ${{ github.event.inputs.dry_run_event }}
+          DRY_RUN_FIXTURE: ${{ github.event.inputs.dry_run_fixture }}
         run: |
           echo "## Agent loop dry run" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           node scripts/agent/normalize-event.mjs \
-            "${{ github.event.inputs.dry_run_event }}" \
-            "scripts/agent/test/fixtures/${{ github.event.inputs.dry_run_fixture }}" \
+            "$DRY_RUN_EVENT" \
+            "scripts/agent/test/fixtures/$DRY_RUN_FIXTURE" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "No issues, branches, comments or dispatches were created." >> "$GITHUB_STEP_SUMMARY"
@@ -95,6 +97,8 @@ jobs:
         id: guard
         env:
           GH_TOKEN: ${{ github.token }}
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           EVENT_TYPE: ${{ github.event.action }}
           REPO: ${{ github.repository }}
@@ -145,6 +149,8 @@ jobs:
       - name: Update control state and dispatch next stage
         env:
           GH_TOKEN: ${{ github.token }}
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.repository }}
           TASK: ${{ needs.context.outputs.task }}
           ROLE: ${{ needs.context.outputs.role }}

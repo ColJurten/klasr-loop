@@ -32,8 +32,8 @@ route_live_acceptance() {
 STATUS="" ; NEW_CYCLE="$CYCLE" ; PR_NUM="" ; SPEC_VALID=false ; SECURITY_REQUIRED=false ; LIVE_REQUIRED=false ; ESCALATION="" ; CLEARANCE_JSON='{}'
 
 # Load current state before deciding; it is also the transition source and lineage authority.
-CONTROL_COMMENT_ID=$(gh api "repos/$REPO/issues/$TASK/comments" --paginate \
-  --jq '[.[] | select(.body | contains("klasr-agent-state"))][0].id' 2>/dev/null || true)
+gh api "repos/$REPO/issues/$TASK/comments?per_page=100" --paginate --slurp > /tmp/control-comments.json
+CONTROL_COMMENT_ID=$(node scripts/agent/lib/trusted-comments.mjs /tmp/control-comments.json klasr-agent-state id)
 if [ -n "$CONTROL_COMMENT_ID" ] && [ "$CONTROL_COMMENT_ID" != "null" ]; then
   gh api "repos/$REPO/issues/comments/$CONTROL_COMMENT_ID" --jq .body > /tmp/control.md
 else
@@ -96,7 +96,8 @@ else
       if [ "$VERDICT" = "PASS" ]; then
         CONTROL_CLEARED=$(node -e "import('./scripts/agent/lib/control.mjs').then(async m=>{const {readFileSync}=await import('node:fs');const c=m.parseControl(readFileSync('/tmp/control.md','utf8'));process.stdout.write(String(m.hasAcceptanceClearance(c,process.argv[1],Number(process.argv[2]),process.argv[3]==='true')))})" "$HEAD_SHA" "$ATTEMPT" "$SECURITY_REQUIRED")
         MARKER="klasr-live-evidence:$HEAD_SHA"
-        if ! gh api "repos/$REPO/issues/$TASK/comments" --paginate --jq "[.[] | select(.body | contains(\"$MARKER\"))] | if length == 1 then .[0].body else error(\"expected one evidence comment\") end" > /tmp/evidence-comment.md 2>/dev/null; then
+        if ! gh api "repos/$REPO/issues/$TASK/comments?per_page=100" --paginate --slurp > /tmp/evidence-comments.json \
+          || ! node scripts/agent/lib/trusted-comments.mjs /tmp/evidence-comments.json "$MARKER" body > /tmp/evidence-comment.md; then
           printf '' > /tmp/evidence-comment.md
         fi
         sed -n '/^```json$/,/^```$/p' /tmp/evidence-comment.md | sed '1d;$d' > /tmp/live-manifest.json || true

@@ -56,6 +56,13 @@ test('corrupt or missing record parses to null (fresh control, fail-open to dedu
   assert.equal(parseControl('<!-- klasr-agent-state\nnot json\n-->'), null);
 });
 
+test('comment-derived cycle and attempt must be safe integers', () => {
+  const valid = emptyControl(1);
+  for (const record of [{ ...valid, cycle: '1\nproceed=true' }, { ...valid, lifecycle: { ...valid.lifecycle, attempt: 1.5 } }]) {
+    assert.equal(parseControl(renderControlComment(record)), null);
+  }
+});
+
 test('update-in-place is a pure merge, no comment-per-transition', () => {
   const first = recordEvent(emptyControl(42), 'a', { status: 'running' });
   const second = recordEvent(first, 'b', { status: 'reviewing' });

@@ -37,9 +37,9 @@ export function parseControl(commentBody) {
   if (end === -1) return null;
   const raw = commentBody.slice(start + OPEN.length, end).trim();
   try {
-    const record = JSON.parse(raw);
+    let record = JSON.parse(raw);
     if (!Array.isArray(record.processed_events)) return null;
-    if (record.version === 1) return {
+    if (record.version === 1) record = {
       ...record,
       version: 2,
       clearance: {
@@ -47,7 +47,9 @@ export function parseControl(commentBody) {
         security: { status: 'missing', sha: null, attempt: null },
       },
     };
-    if (record.version !== 2 || !record.clearance?.verifier || !record.clearance?.security) return null;
+    if (record.version !== 2 || !record.clearance?.verifier || !record.clearance?.security
+      || !Number.isInteger(record.cycle) || record.cycle < 0
+      || !Number.isInteger(record.lifecycle?.attempt) || record.lifecycle.attempt < 1) return null;
     return record;
   } catch {
     return null;

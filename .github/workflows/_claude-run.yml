@@ -62,13 +62,18 @@ jobs:
         id: token
         run: |
           if [ -n "${{ steps.app.outputs.token }}" ]; then
-            echo "value=${{ steps.app.outputs.token }}" >> "$GITHUB_OUTPUT"
+            value="${{ steps.app.outputs.token }}"
             echo "identity=app" >> "$GITHUB_OUTPUT"
           else
-            echo "value=${{ github.token }}" >> "$GITHUB_OUTPUT"
+            value="${{ github.token }}"
             echo "identity=github-token" >> "$GITHUB_OUTPUT"
             echo "::notice::Running with GITHUB_TOKEN — pushes will NOT trigger CI (degraded mode, see docs/AGENT_LOOP_SPEC.md)"
           fi
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+          case "${{ inputs.role }}" in
+            verifier|security-reviewer|acceptance-validator) echo "model_value=" >> "$GITHUB_OUTPUT" ;;
+            *) echo "model_value=$value" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - uses: actions/checkout@v4
         with:
@@ -86,11 +91,11 @@ jobs:
             implementer|feedback-responder)
               echo 'value=--allowed-tools "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(gh pr:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh api:*),Bash(pnpm:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
             acceptance-validator)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh api repos/*/issues/*/comments:*),Bash(gh api repos/*/commits/*/status:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*)"' >> "$GITHUB_OUTPUT" ;;
             verifier)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh api:*),Bash(pnpm:*),Bash(node:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(bash scripts/agent/read-only-check.sh:*)"' >> "$GITHUB_OUTPUT" ;;
             security-reviewer)
-              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*)"' >> "$GITHUB_OUTPUT" ;;
+              echo 'value=--allowed-tools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(bash scripts/agent/read-only-check.sh:*)"' >> "$GITHUB_OUTPUT" ;;
             *)
               echo "unknown role"; exit 1 ;;
           esac
@@ -102,17 +107,21 @@ jobs:
           prompt: ${{ inputs.prompt }}
           claude_args: ${{ steps.tools.outputs.value }}
         env:
-          GH_TOKEN: ${{ steps.token.outputs.value }}
+          GH_TOKEN: ${{ steps.token.outputs.model_value }}
+          GITHUB_TOKEN: ${{ steps.token.outputs.model_value }}
 
       - name: Collect structured result
         id: result
         if: always()
         run: |
           if [ -f .agent/verdict.json ]; then
+            jq -e 'type == "object"' .agent/verdict.json > /tmp/verdict.json
+            delimiter="KLASR_$(tr -d - < /proc/sys/kernel/random/uuid)"
+            while grep -Fxq "$delimiter" /tmp/verdict.json; do delimiter="KLASR_$(tr -d - < /proc/sys/kernel/random/uuid)"; done
             {
-              echo "verdict<<KLASR_EOF"
-              cat .agent/verdict.json
-              echo "KLASR_EOF"
+              echo "verdict<<$delimiter"
+              cat /tmp/verdict.json
+              echo "$delimiter"
             } >> "$GITHUB_OUTPUT"
           else
             echo "verdict=" >> "$GITHUB_OUTPUT"
