@@ -45,7 +45,8 @@ test('live provider acceptance uses an always-present current-SHA external statu
   assert.match(ci, /live-google-status:[\s\S]*runs-on: ubuntu-latest/);
   assert.match(ci, /github\.event\.pull_request\.head\.sha/);
   assert.match(ci, /klasr\/live-google/);
-  assert.match(ci, /statuses/);
+  assert.match(ci, /commits\/\$\{process\.env\.HEAD_SHA\}\/status`/);
+  assert.doesNotMatch(ci, /\/statuses\?|status\.sha/);
   assert.match(ci, /pull_request\.head\.repo\.fork/);
   assert.match(ci, /needs\.live-google-status\.result.*success/);
   assert.match(ci, /IS_PR.*true[\s\S]*IS_FORK.*true[\s\S]*ENABLED.*true[\s\S]*exit 1/);
