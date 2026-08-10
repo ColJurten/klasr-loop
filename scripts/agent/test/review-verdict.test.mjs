@@ -28,7 +28,7 @@ test('review clearance requires an exact approved, read-only PASS at both expect
   assert.equal(reviewVerdictPasses('security-reviewer', valid, sha, 'b'.repeat(40)), false);
 });
 
-test('security clearance rejects current major/blocker and malformed findings fail closed', () => {
+test('every review clearance rejects current major/blocker and malformed findings fail closed', () => {
   for (const findings of [
     [{ severity: 'BLOCKER', current: true }],
     [{ severity: 'MAJOR', current: true }],
@@ -37,5 +37,7 @@ test('security clearance rejects current major/blocker and malformed findings fa
     [{ severity: 'UNKNOWN', current: false }],
     [{ severity: 'MINOR' }],
     [{ severity: 'MINOR', current: 'false' }],
-  ]) assert.equal(reviewVerdictPasses('security-reviewer', { ...valid, findings }, sha, sha), false);
+  ]) for (const role of ['verifier', 'security-reviewer']) {
+    assert.equal(reviewVerdictPasses(role, { ...valid, findings }, sha, sha), false, `${role}: ${JSON.stringify(findings)}`);
+  }
 });

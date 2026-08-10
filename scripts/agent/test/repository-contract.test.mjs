@@ -3,10 +3,21 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const read = (path) => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
-const workflows = () => ['_claude-run.yml', 'ci.yml', 'claude-ci-recovery.yml', 'claude-feedback.yml', 'claude-intake.yml', 'claude-worker.yml', 'project-sync.yml', 'release.yml'].map((name) => read(`.github/workflows/${name}`)).join('\n');
+const workflowNames = ['_claude-run.yml', 'ci.yml', 'claude-ci-recovery.yml', 'claude-feedback.yml', 'claude-health-scan.yml', 'claude-intake.yml', 'claude-worker.yml', 'project-sync.yml', 'release.yml'];
+const workflows = () => workflowNames.map((name) => read(`.github/workflows/${name}`)).join('\n');
 
 test('every workflow honors the pnpm-only repository contract', () => {
   assert.doesNotMatch(workflows(), /(?:^|[ (])npm(?: | ci| run| test| install|:)/m);
+});
+
+test('every external action is pinned to an immutable commit with a version comment', () => {
+  for (const name of workflowNames) {
+    for (const line of read(`.github/workflows/${name}`).split('\n')) {
+      const reference = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/)?.[1];
+      if (!reference || reference.startsWith('./')) continue;
+      assert.match(line, /@[0-9a-f]{40}\s+#\s+v\d+\b/, `${name}: ${line.trim()}`);
+    }
+  }
 });
 
 test('root pnpm test includes standalone script behavioral tests', () => {
@@ -79,6 +90,8 @@ test('CI recovery routes both success and failure and avoids an empty issue API 
   assert.match(recovery, /cycle=0\n\s+agent_attempt=1\n\s+if \[ -n "\$issue" \]; then[\s\S]*issues\/\$issue\/comments\?per_page=100[\s\S]*else/);
   assert.doesNotMatch(recovery, /cycle=\$\{cycle:-0\}|agent_attempt=\$\{agent_attempt:-1\}/);
   assert.match(recovery, /Number\.isInteger\(cycle\)[\s\S]*Number\.isInteger\(attempt\)/);
+  assert.match(recovery, /workflow_run\.conclusion/);
+  assert.match(recovery, /steps\.decide\.outputs\.dispatch/);
 });
 
 test('worker advances lineage only for a verifier on the exact current controlled PR head', () => {
@@ -192,6 +205,13 @@ test('worker post validates exact structured review clearance against event and 
   assert.match(post, /review-verdict\.mjs/);
   assert.match(post, /EXPECTED_SHA/);
   assert.doesNotMatch(post, /select\(\.severity=="BLOCKER"\)/);
+});
+
+test('acceptance evidence preserves only allowlisted reviewer finding fields', () => {
+  const post = read('scripts/agent/worker-post.sh');
+  const manifest = post.match(/reviewer:\{verdict:[\s\S]*?\| \{issue,attempt,sha,status,criteria,cleanup,processes,reviewer\}/)?.[0] ?? '';
+  assert.match(manifest, /findings:\[ \$reviewer\.findings\[\]\? \| \{severity,current\} \]/);
+  assert.doesNotMatch(manifest, /findings:\$reviewer\.findings|\$reviewer \+ \{issue/);
 });
 
 test('workflow data-to-output boundaries validate and safely encode untrusted values', () => {

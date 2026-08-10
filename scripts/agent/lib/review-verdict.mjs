@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-
-const severities = new Set(['BLOCKER', 'MAJOR', 'MINOR']);
+import { findingsPass } from './findings.mjs';
 
 export function reviewVerdictPasses(role, verdict, controlledSha, expectedSha) {
   if (!['verifier', 'security-reviewer'].includes(role)
@@ -12,10 +11,7 @@ export function reviewVerdictPasses(role, verdict, controlledSha, expectedSha) {
     || verdict.reviewerEditedFiles !== false
     || verdict.sha !== controlledSha) return false;
 
-  if (role !== 'security-reviewer') return true;
-  return Array.isArray(verdict.findings) && verdict.findings.every((finding) =>
-    finding && severities.has(finding.severity) && typeof finding.current === 'boolean'
-      && !(finding.current && ['BLOCKER', 'MAJOR'].includes(finding.severity)));
+  return findingsPass(verdict.findings);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

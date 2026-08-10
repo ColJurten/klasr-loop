@@ -107,7 +107,8 @@ else
           .spec as $spec | $reviewer + {issue:$issue,attempt:$attempt,sha:$sha,status:"current",
           cleanup:{passed:($reviewer.cleanup.passed == true),proof:$reviewer.cleanup.proof},
           processes:{active:($reviewer.processes.active // []),orphaned:($reviewer.processes.orphaned // [])},
-          reviewer:{verdict:$reviewer.verdict,approved:$reviewer.approved,sha:$reviewer.sha,edited_files:$reviewer.reviewerEditedFiles}}
+          reviewer:{verdict:$reviewer.verdict,approved:$reviewer.approved,sha:$reviewer.sha,edited_files:$reviewer.reviewerEditedFiles,
+            findings:[ $reviewer.findings[]? | {severity,current} ]}}
           | {issue,attempt,sha,status,criteria,cleanup,processes,reviewer}' /tmp/spec.json > /tmp/final-manifest.json; then
           STATUS="human-required"
         elif [ "$CONTROL_CLEARED" = "true" ] \

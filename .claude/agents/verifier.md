@@ -21,7 +21,7 @@ Procedure:
 {
   "verdict": "PASS | REQUEST_CHANGES | BLOCKED",
   "acceptance_criteria": [{"criterion": "...", "status": "met|unmet|unverifiable", "evidence": "..."}],
-  "findings": [{"severity": "BLOCKER|MAJOR|MINOR", "file": "...", "detail": "..."}],
+  "findings": [{"severity": "BLOCKER|MAJOR|MINOR", "current": true, "file": "...", "detail": "..."}],
   "required_changes": ["..."],
   "tests_observed": ["..."],
   "residual_risks": ["..."]

@@ -21,7 +21,10 @@ const valid = {
   ],
   cleanup: { passed: true, proof: 'fixture restored' },
   processes: { active: [], orphaned: [] },
-  reviewer: { verdict: 'PASS', sha: 'a'.repeat(40), approved: true, edited_files: false },
+  reviewer: {
+    verdict: 'PASS', sha: 'a'.repeat(40), approved: true, edited_files: false,
+    findings: [{ severity: 'MINOR', current: false }],
+  },
 };
 
 test('current complete evidence finalizes only to awaiting-human-verdict', () => {
@@ -66,6 +69,18 @@ test('evidence rejects cleanup/process leaks and absent current reviewer PASS', 
   for (const fragment of ['cleanup', 'active processes', 'orphan processes', 'reviewer verdict', 'reviewer SHA', 'reviewer edited']) {
     assert.ok(result.errors.some((error) => error.includes(fragment)), fragment);
   }
+});
+
+test('acceptance finalization rejects current blocking and malformed reviewer findings', () => {
+  for (const findings of [
+    [{ severity: 'BLOCKER', current: true }],
+    [{ severity: 'MAJOR', current: true }],
+    null,
+    [{}],
+    [{ severity: 'UNKNOWN', current: false }],
+    [{ severity: 'MINOR' }],
+    [{ severity: 'MINOR', current: 'false' }],
+  ]) assert.equal(validateEvidence(spec, { ...valid, reviewer: { ...valid.reviewer, findings } }, context).ok, false, JSON.stringify(findings));
 });
 
 test('evidence rejects duplicate and unknown criterion rows and never finalizes done', () => {

@@ -1,4 +1,5 @@
 import { EVIDENCE_CLASSES } from './spec.mjs';
+import { findingsPass } from './findings.mjs';
 
 export function liveEvidenceEventKey({ issue, sha, attempt, status }) {
   return `live-evidence:${issue}:${sha}:${attempt}:${status}`;
@@ -33,6 +34,7 @@ export function validateEvidence(spec, manifest, current) {
   if (manifest?.reviewer?.verdict !== 'PASS' || manifest?.reviewer?.approved !== true) errors.push('reviewer verdict is not approved PASS');
   if (manifest?.reviewer?.sha !== current.sha) errors.push('reviewer SHA is not current');
   if (manifest?.reviewer?.edited_files !== false) errors.push('reviewer edited files');
+  if (!findingsPass(manifest?.reviewer?.findings)) errors.push('reviewer findings are malformed or blocking');
   return { ok: errors.length === 0, errors };
 }
 
