@@ -8,6 +8,11 @@ import { launchDriveItem, listDriveItems, selectReferenceRoot } from '@/lib/clie
 import type { DashboardView, DriveInputItemView, FolderChoiceView } from '@/lib/types';
 
 const LOCAL_REFERENCE_ID = 'local_root_cabinet';
+const PRODUCTION_INPUT_SELECTION_KEY = 'klasr-drive-input-selection';
+const PRODUCTION_LAUNCH_KEY = 'klasr-drive-launch';
+type DrivePath = Array<{ id: string; name: string }>;
+type DriveSelection = { selected: string; path: DrivePath };
+type LaunchSnapshot = { state: 'running' | 'done'; baseline: { outcomes: number; failures: number }; target: number | null; startedAt: number };
 
 export function DriveWorkflow({ data }: { data: DashboardView | null }) {
   const router = useRouter();
@@ -15,9 +20,39 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
   const [launchState, setLaunchState] = useState<'idle' | 'running' | 'error' | 'done'>('idle');
   const [launchBaseline, setLaunchBaseline] = useState({ outcomes: 0, failures: 0 });
   const [launchTarget, setLaunchTarget] = useState<number | null>(null);
+  const [launchStartedAt, setLaunchStartedAt] = useState<number | null>(null);
   const [selectedInput, setSelectedInput] = useState(data?.inputItems?.find((item) => item.eligible)?.externalId ?? '');
+  const [restoredInputPath, setRestoredInputPath] = useState<DrivePath | null>(null);
   const [showReferencePicker, setShowReferencePicker] = useState(() => Boolean(data && data.mode !== 'local' && !data.referenceRoot));
   const productionReferencePicker = Boolean(data && data.mode !== 'local' && showReferencePicker);
+
+  useEffect(() => {
+    const selection = savedProductionInputSelection();
+    if (selection) {
+      setSelectedInput(selection.selected);
+      setRestoredInputPath(selection.path);
+    }
+    const launch = savedProductionLaunch();
+    if (!launch) return;
+    if (Date.now() - launch.startedAt >= 30_000) {
+      clearProductionLaunch();
+      setLaunchState('error');
+      return;
+    }
+    if (launch.state === 'done' && launch.target !== null && (data?.metrics.outcomes ?? 0) >= launch.target) {
+      clearProductionLaunch();
+      return;
+    }
+    if ((data?.analysisFailures ?? 0) > launch.baseline.failures) {
+      clearProductionLaunch();
+      setLaunchState('error');
+      return;
+    }
+    setLaunchBaseline(launch.baseline);
+    setLaunchTarget(launch.target);
+    setLaunchStartedAt(launch.startedAt);
+    setLaunchState(launch.state);
+  }, []);
 
   useEffect(() => {
     if (data && data.mode !== 'local' && !data.referenceRoot) {
@@ -28,18 +63,46 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
   useEffect(() => {
     if (launchState !== 'done') return;
     if (launchTarget !== null && (data?.metrics.outcomes ?? 0) >= launchTarget) {
+      clearProductionLaunch();
       setLaunchState('idle');
+      setLaunchStartedAt(null);
       return;
     }
-    if ((data?.analysisFailures ?? 0) > launchBaseline.failures) setLaunchState('error');
+    if ((data?.analysisFailures ?? 0) > launchBaseline.failures) {
+      clearProductionLaunch();
+      setLaunchState('error');
+      setLaunchStartedAt(null);
+    }
   }, [data, launchBaseline.failures, launchState, launchTarget]);
 
   useEffect(() => {
-    if (launchState !== 'done') return;
+    if (launchState !== 'running' && launchState !== 'done') return;
+    if (launchStartedAt === null) return;
+    const remaining = 30_000 - (Date.now() - launchStartedAt);
+    if (remaining <= 0) {
+      clearProductionLaunch();
+      setLaunchState('error');
+      setLaunchStartedAt(null);
+      return;
+    }
     const interval = window.setInterval(() => router.refresh(), 1_000);
-    const timeout = window.setTimeout(() => setLaunchState('error'), 30_000);
+    const timeout = window.setTimeout(() => {
+      clearProductionLaunch();
+      setLaunchState('error');
+      setLaunchStartedAt(null);
+    }, remaining);
     return () => { window.clearInterval(interval); window.clearTimeout(timeout); };
-  }, [launchState, router]);
+  }, [launchStartedAt, launchState, router]);
+
+  function selectInput(itemExternalId: string, path?: DrivePath) {
+    setSelectedInput(itemExternalId);
+    if (path) saveProductionInputSelection({ selected: itemExternalId, path });
+  }
+
+  function clearInputSelection() {
+    setSelectedInput('');
+    clearProductionInputSelection();
+  }
 
   async function chooseReference(folderExternalId: string) {
     setReferenceState('running');
@@ -53,32 +116,40 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
 
   async function launch() {
     if (!selectedInput) return;
+    await launchSelectedItem(selectedInput);
+  }
+
+  async function launchSelectedItem(itemExternalId: string) {
     const baseline = { outcomes: data?.metrics.outcomes ?? 0, failures: data?.analysisFailures ?? 0 };
+    const startedAt = Date.now();
     setLaunchBaseline(baseline);
+    setLaunchTarget(null);
+    setLaunchStartedAt(startedAt);
     setLaunchState('running');
+    saveProductionLaunch({ state: 'running', baseline, target: null, startedAt });
     try {
-      const result = await launchDriveItem(selectedInput);
-      setLaunchTarget(baseline.outcomes + result.enqueued);
-      setLaunchState('done');
+      const result = await launchDriveItem(itemExternalId);
+      const target = baseline.outcomes + result.enqueued;
+      setLaunchTarget(target);
+      if (result.enqueued > 0) {
+        setLaunchState('done');
+        saveProductionLaunch({ state: 'done', baseline, target, startedAt });
+      } else {
+        setLaunchState('idle');
+        setLaunchStartedAt(null);
+        clearProductionLaunch();
+      }
       router.refresh();
     } catch {
+      clearProductionLaunch();
       setLaunchState('error');
+      setLaunchStartedAt(null);
     }
   }
 
   async function launchItem(itemExternalId: string) {
-    setSelectedInput(itemExternalId);
-    const baseline = { outcomes: data?.metrics.outcomes ?? 0, failures: data?.analysisFailures ?? 0 };
-    setLaunchBaseline(baseline);
-    setLaunchState('running');
-    try {
-      const result = await launchDriveItem(itemExternalId);
-      setLaunchTarget(baseline.outcomes + result.enqueued);
-      setLaunchState('done');
-      router.refresh();
-    } catch {
-      setLaunchState('error');
-    }
+    selectInput(itemExternalId);
+    await launchSelectedItem(itemExternalId);
   }
 
   const folders = data?.folders ?? [];
@@ -134,7 +205,7 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
         {!data?.referenceRoot ? (
           <p className="mt-2 text-sm text-ink/60">Sélectionnez d&apos;abord un dossier de référence.</p>
         ) : data.mode !== 'local' ? (
-          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done'} onChoose={(item) => void launchItem(item.externalId)} />
+          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done'} selected={selectedInput} initialPath={restoredInputPath ?? undefined} onSelect={selectInput} onStaleSelection={clearInputSelection} onChoose={(item) => void launchItem(item.externalId)} />
         ) : inputItems.length === 0 ? (
           <p className="mt-2 text-sm text-ink/60">Aucun fichier disponible.</p>
         ) : (
@@ -178,13 +249,15 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
   );
 }
 
-function DriveBrowser({ mode, busy, onChoose }: { mode: 'folder' | 'input'; busy: boolean; onChoose: (item: DriveInputItemView) => void }) {
-  const [path, setPath] = useState<Array<{ id: string; name: string }>>([{ id: 'root', name: 'Mon Drive' }]);
+function DriveBrowser({ mode, busy, selected: selectedProp, initialPath, onSelect, onStaleSelection, onChoose }: { mode: 'folder' | 'input'; busy: boolean; selected?: string; initialPath?: DrivePath; onSelect?: (itemExternalId: string, path: DrivePath) => void; onStaleSelection?: () => void; onChoose: (item: DriveInputItemView) => void }) {
+  const [path, setPath] = useState<DrivePath>([{ id: 'root', name: 'Mon Drive' }]);
   const [items, setItems] = useState<DriveInputItemView[]>([]);
-  const [selected, setSelected] = useState('');
+  const [localSelected, setLocalSelected] = useState('');
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadedParent, setLoadedParent] = useState('');
   const parent = path[path.length - 1];
+  const selected = selectedProp ?? localSelected;
 
   function load(parentId: string, pageToken?: string, append = false) {
     setState('loading');
@@ -192,13 +265,22 @@ function DriveBrowser({ mode, busy, onChoose }: { mode: 'folder' | 'input'; busy
       .then((page) => {
         setItems((current) => append ? [...current, ...page.items] : page.items);
         setNextPageToken(page.nextPageToken);
-        setSelected('');
+        if (!onSelect) setLocalSelected('');
+        setLoadedParent(parentId);
         setState('ready');
       })
       .catch(() => setState('error'));
   }
 
+  useEffect(() => {
+    if (initialPath?.length) setPath(initialPath);
+  }, [initialPath]);
   useEffect(() => { load(parent.id); }, [parent.id]);
+  useEffect(() => {
+    if (state === 'ready' && loadedParent === parent.id && selected && onStaleSelection && !items.some((item) => item.externalId === selected)) {
+      onStaleSelection();
+    }
+  }, [items, loadedParent, onStaleSelection, parent.id, selected, state]);
   const chosen = items.find((item) => item.externalId === selected);
 
   return (
@@ -225,7 +307,7 @@ function DriveBrowser({ mode, busy, onChoose }: { mode: 'folder' | 'input'; busy
                 {item.type === 'folder' && <Folder className="mr-2 inline h-4 w-4 text-lavender-deep" />}{item.name}
                 {!item.supported && <span className="ml-2 rounded bg-peach px-2 py-0.5 font-sans text-xs">Non supporté</span>}
               </button>
-              {selectable && <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="radio" name={`drive-${mode}`} value={item.externalId} checked={selected === item.externalId} onChange={() => setSelected(item.externalId)} />Sélectionner</label>}
+              {selectable && <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="radio" name={`drive-${mode}`} value={item.externalId} checked={selected === item.externalId} onChange={() => onSelect ? onSelect(item.externalId, path) : setLocalSelected(item.externalId)} />Sélectionner</label>}
             </li>;
           })}
         </ul>
@@ -235,6 +317,75 @@ function DriveBrowser({ mode, busy, onChoose }: { mode: 'folder' | 'input'; busy
         {mode === 'folder' ? 'Choisir ce dossier' : <><Play className="mr-1.5 h-3.5 w-3.5" />Lancer l&apos;organisation</>}
       </Button>
     </div>
+  );
+}
+
+function savedProductionInputSelection(): DriveSelection | null {
+  const value = readSessionJson<unknown>(PRODUCTION_INPUT_SELECTION_KEY);
+  if (value === null) return null;
+  if (isDriveSelection(value)) return value;
+  clearProductionInputSelection();
+  return null;
+}
+
+function saveProductionInputSelection(selection: DriveSelection) {
+  writeSessionJson(PRODUCTION_INPUT_SELECTION_KEY, selection);
+}
+
+function clearProductionInputSelection() {
+  if (typeof window !== 'undefined') window.sessionStorage.removeItem(PRODUCTION_INPUT_SELECTION_KEY);
+}
+
+function savedProductionLaunch(): LaunchSnapshot | null {
+  const value = readSessionJson<unknown>(PRODUCTION_LAUNCH_KEY);
+  if (value === null) return null;
+  if (isLaunchSnapshot(value)) return value;
+  clearProductionLaunch();
+  return null;
+}
+
+function saveProductionLaunch(snapshot: LaunchSnapshot) {
+  writeSessionJson(PRODUCTION_LAUNCH_KEY, snapshot);
+}
+
+function clearProductionLaunch() {
+  if (typeof window !== 'undefined') window.sessionStorage.removeItem(PRODUCTION_LAUNCH_KEY);
+}
+
+function readSessionJson<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  const value = window.sessionStorage.getItem(key);
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    window.sessionStorage.removeItem(key);
+    return null;
+  }
+}
+
+function writeSessionJson(key: string, value: unknown) {
+  if (typeof window !== 'undefined') window.sessionStorage.setItem(key, JSON.stringify(value));
+}
+
+function isDriveSelection(value: unknown): value is DriveSelection {
+  return Boolean(
+    value && typeof value === 'object'
+    && typeof (value as DriveSelection).selected === 'string'
+    && Array.isArray((value as DriveSelection).path)
+    && (value as DriveSelection).path.length > 0
+    && (value as DriveSelection).path.every((entry) => entry && typeof entry.id === 'string' && typeof entry.name === 'string'),
+  );
+}
+
+function isLaunchSnapshot(value: unknown): value is LaunchSnapshot {
+  const snapshot = value as LaunchSnapshot;
+  return Boolean(
+    snapshot && typeof snapshot === 'object'
+    && (snapshot.state === 'running' || snapshot.state === 'done')
+    && snapshot.baseline && typeof snapshot.baseline.outcomes === 'number' && typeof snapshot.baseline.failures === 'number'
+    && (typeof snapshot.target === 'number' || snapshot.target === null)
+    && typeof snapshot.startedAt === 'number',
   );
 }
 
