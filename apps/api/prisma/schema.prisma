@@ -134,6 +134,10 @@ model ClassificationProposal {
   destinationPath String
   destinationFolderExternalId String?
   confidence      Float
+  filenameConfidence Float?
+  destinationConfidence Float?
+  reviewRequired Boolean @default(false)
+  reviewReason   String?
   source          ProposalSource
   modelUsed       String?
   llmCallsUsed    Int            @default(0) // eco-design instrumentation

@@ -30,6 +30,10 @@ export interface PipelineProposal {
   proposedName: string;
   destinationPath: string;
   confidence: number;
+  filenameConfidence?: number;
+  destinationConfidence?: number;
+  reviewRequired?: boolean;
+  reviewReason?: string;
   source: 'RULE' | 'LLM';
   /** Eco-design instrumentation: external LLM calls consumed. */
   llmCallsUsed: number;

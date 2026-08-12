@@ -8,7 +8,8 @@ reglementees. Le flux reel est volontairement explicite :
 3. heriter de ses sous-dossiers comme destinations possibles ;
 4. choisir un fichier Drive ou un dossier Drive existant a organiser ;
 5. streamer les octets Drive vers l'OCR, produire une proposition de nom et de
-   destination, puis jeter les octets ;
+   destination a partir d'un extrait representatif normalise, puis jeter les
+   octets et le texte OCR ;
 6. executer le renommage/deplacement uniquement apres `Valider`, `Corriger` ou
    `Retirer`.
 
@@ -101,6 +102,21 @@ deterministe : `Cabinet de demonstration` comme racine, une arborescence
 destination, un dossier separe `A classer`, des fichiers supportes et un fichier
 non supporte. Aucun token OAuth reel ni document reel n'est utilise.
 
+## OCR et qualite des suggestions
+
+L'OCR accepte PDF, PNG, JPEG et TIFF. Les PDF natifs utilisent d'abord la couche
+texte `pdfjs-dist`; seules les pages sans texte utile sont rasterisees puis lues
+par Tesseract (`fra+eng`). L'adaptateur borne l'entree a 20 MiB, analyse au plus
+8 pages par PDF et transmet au classement un contenu normalise et representatif
+(debut/milieu/fin), jamais un simple debut de document.
+
+Une extraction vide, trop courte, corrompue ou non supportee cree une proposition
+visible "a verifier" sans destination executable. Les propositions faibles ou
+ambigues sont exclues de `Tout valider` jusqu'a correction explicite du nom et
+du dossier. Les fournisseurs LLM doivent rendre un JSON borne : nom sur avec
+extension preservee, destination existante, confiances entre 0 et 1. Toute sortie
+inventee ou dangereuse est rejetee et retombe vers la revue manuelle.
+
 ## Configuration Google OAuth / Drive
 
 Pour tester Google Drive reel :
@@ -164,7 +180,8 @@ un rapport.
    `/Comptabilite/Banque`, `/Comptabilite/Electricite`, `/Social/Paie`.
 8. Dans `Fichiers a organiser`, choisir `Dossier - A classer`.
 9. Cliquer `Lancer l'organisation`.
-10. Verifier plusieurs propositions, les badges de confiance et `Tout valider`.
+10. Verifier plusieurs propositions, les badges de confiance, les cartes "a
+    verifier" et `Tout valider` qui ignore ces cartes faibles.
 11. Valider une proposition telle quelle.
 12. Corriger un nom de fichier.
 13. Corriger une destination avec le select de dossiers herites.
@@ -196,7 +213,8 @@ Si un workflow GitHub est modifie, executer aussi `actionlint`.
 - Le contenu documentaire et le texte OCR ne sont pas stockes dans PostgreSQL,
   MongoDB, les logs, les fixtures ou les preuves.
 - PostgreSQL conserve les metadonnees : organisation, racine de reference,
-  dossiers herites, documents, propositions, decisions et historique.
+  dossiers herites, documents, propositions, decisions, historique, confiances
+  et raisons non sensibles de revue.
 - MongoDB conserve uniquement la collection TTL `analyses`, avec metadonnees
   d'analyse redactees.
 - Aucun renommage ou deplacement n'est execute sans decision explicite.

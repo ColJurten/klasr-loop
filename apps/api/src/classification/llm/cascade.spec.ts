@@ -39,16 +39,35 @@ describe('classifyWithCascade (cheapest capable model first)', () => {
     expect(anthropic.calls).toBe(1);
   });
 
-  it('uses an uncounted deterministic fallback when no external key configured', async () => {
+  it('does not choose alphabetically when there is no destination evidence', async () => {
     const result = await classifyWithCascade([new StubProvider('local', null)], { ...params, folderPaths: ['/Zeta', '/Alpha'] });
-    expect(result).toEqual(expect.objectContaining({ destinationPath: '/Alpha', modelUsed: 'local-fallback', llmCallsUsed: 0 }));
+    expect(result).toBeNull();
   });
 
-  it('keeps a weak-positive path instead of choosing alphabetically', async () => {
+  it('keeps a weak-positive path instead of choosing alphabetically when unambiguous', async () => {
     const result = await classifyWithCascade([new StubProvider('local', null)], {
       documentText: 'facture', filename: 'document.pdf', folderPaths: ['/Alpha', '/Comptabilité/Factures/Archives'],
     });
     expect(result?.destinationPath).toBe('/Comptabilité/Factures/Archives');
+    expect(result?.reviewRequired).toBe(true);
+  });
+
+  it('returns null for ambiguous sibling destinations', async () => {
+    const result = await classifyWithCascade([new StubProvider('local', null)], {
+      documentText: 'facture assurance',
+      filename: 'document.pdf',
+      folderPaths: ['/Cabinet/Assurance Auto', '/Cabinet/Assurance Habitation'],
+    });
+    expect(result).toBeNull();
+  });
+
+  it('prefers a credible nested destination over its matching ancestor', async () => {
+    const result = await classifyWithCascade([new StubProvider('local', null)], {
+      documentText: 'Facture comptabilité électricité 2026',
+      filename: 'scan-facture-electricite.pdf',
+      folderPaths: ['/Comptabilité', '/Comptabilité/Électricité'],
+    });
+    expect(result?.destinationPath).toBe('/Comptabilité/Électricité');
   });
 
   it('returns null without a destination folder', async () => {
@@ -60,10 +79,23 @@ describe('LocalHeuristicProvider', () => {
   it('matches folder keywords, accent- and plural-insensitive', async () => {
     const result = await new LocalHeuristicProvider().classify({
       documentText: 'Relevé bancaire - Banque Populaire, mars 2026',
-      filename: 'releve_mars.pdf',
+      filename: 'scan_001.pdf',
       folderPaths: ['/Banque/Relevés', '/RH/Paie'],
     });
     expect(result?.destinationPath).toBe('/Banque/Relevés');
+    expect(result?.proposedName).toBe('scan_001.pdf');
+  });
+
+  it('does not count a sanitized original filename as document-derived filename evidence', async () => {
+    const result = await new LocalHeuristicProvider().classify({
+      documentText: 'facture',
+      filename: 'notes perso.pdf',
+      folderPaths: ['/Factures'],
+    });
+    expect(result?.proposedName).toBe('notes_perso.pdf');
+    expect(result?.filenameConfidence).toBe(0.35);
+    expect(result?.reviewRequired).toBe(true);
+    expect(result?.reviewReason).toBe('Nom à vérifier: signaux documentaires insuffisants');
   });
 
   it('declines low confidence so later providers remain reachable', async () => {
@@ -71,6 +103,33 @@ describe('LocalHeuristicProvider', () => {
       documentText: 'zzzz qqqq',
       filename: 'document-original.pdf',
       folderPaths: ['/Zeta', '/Alpha'],
+    });
+    expect(result).toBeNull();
+  });
+
+  it('does not treat an ancestor and matching child as ambiguous siblings', async () => {
+    const result = await new LocalHeuristicProvider().classify({
+      documentText: 'Facture société KLASR comptabilité électricité 2026-03-31',
+      filename: 'scan.pdf',
+      folderPaths: ['/Comptabilité', '/Comptabilité/Électricité'],
+    });
+    expect(result?.destinationPath).toBe('/Comptabilité/Électricité');
+  });
+
+  it('still returns null for truly ambiguous sibling destinations', async () => {
+    const result = await new LocalHeuristicProvider().classify({
+      documentText: 'Assurance cabinet',
+      filename: 'scan.pdf',
+      folderPaths: ['/Cabinet/Assurance Auto', '/Cabinet/Assurance Habitation'],
+    });
+    expect(result).toBeNull();
+  });
+
+  it('does not let an ancestor hide a close sibling ambiguity', async () => {
+    const result = await new LocalHeuristicProvider().classify({
+      documentText: 'Cabinet assurance auto habitation',
+      filename: 'scan.pdf',
+      folderPaths: ['/Cabinet', '/Cabinet/Assurance Auto', '/Cabinet/Assurance Habitation'],
     });
     expect(result).toBeNull();
   });

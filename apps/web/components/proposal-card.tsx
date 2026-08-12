@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, Check, CornerDownRight, FolderPlus, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, CornerDownRight, FolderPlus, RotateCcw, X } from 'lucide-react';
 import { Button } from './ui/button';
 import type { FolderChoiceView, ProposalView } from '@/lib/types';
 
@@ -46,6 +46,8 @@ export function ProposalCard({ proposal, folders = [], status, onConfirm, onReje
   const percent = Math.round(proposal.confidence * 100);
   const isBusy = status === 'confirming';
   const isDone = status === 'done';
+  const needsReview = proposal.reviewRequired || proposal.confidence < 0.7 || !proposal.destinationFolderExternalId;
+  const canValidateAsIs = Boolean(proposal.destinationFolderExternalId || proposal.destinationPath);
 
   const filenameError = validateFilename(finalName);
   const selectedFolder = folders.find((folder) => folder.externalId === destinationFolderExternalId);
@@ -77,7 +79,7 @@ export function ProposalCard({ proposal, folders = [], status, onConfirm, onReje
           </p>
           <p className="flex items-center gap-2 truncate text-sm text-ink/70">
             <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-ink/60" strokeWidth={1.5} />
-            <span className="truncate font-mono">{proposal.destinationPath}</span>
+            <span className="truncate font-mono">{proposal.destinationPath || 'Destination à corriger'}</span>
             {proposal.isNewFolder && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-peach px-2 py-0.5 text-xs text-ink">
                 <FolderPlus className="h-3 w-3" strokeWidth={1.5} />
@@ -94,6 +96,12 @@ export function ProposalCard({ proposal, folders = [], status, onConfirm, onReje
             <ConfidenceBadge confidence={proposal.confidence} />
             <span className="text-xs text-ink/60">{sourceLabel(proposal.source)}</span>
           </span>
+          {needsReview && (
+            <span className="inline-flex items-center gap-1 rounded-lg bg-peach px-2 py-1 text-xs text-ink">
+              <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.5} />
+              à vérifier
+            </span>
+          )}
           {isDone ? (
             <span className="inline-flex items-center gap-1 rounded-lg bg-sage px-3 py-1.5 text-sm font-medium text-ink">
               <Check className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -104,9 +112,11 @@ export function ProposalCard({ proposal, folders = [], status, onConfirm, onReje
               <Button
                 variant="validate"
                 onClick={() => handleUserConfirm()}
-                disabled={isBusy}
+                disabled={isBusy || !canValidateAsIs}
                 aria-label={
-                  status === 'error'
+                  !canValidateAsIs
+                    ? `Corriger avant validation de ${proposal.document.name}`
+                    : status === 'error'
                     ? `Réessayer le classement de ${proposal.document.name}`
                     : `Valider le classement de ${proposal.document.name}`
                 }
@@ -136,6 +146,14 @@ export function ProposalCard({ proposal, folders = [], status, onConfirm, onReje
           <p>Le classement a échoué. Le document reste à sa place.</p>
           <p className="mt-1 text-xs text-ink/60">
             Réessayez après correction ou conservez la proposition dans la file.
+          </p>
+        </div>
+      )}
+      {needsReview && (
+        <div className="mt-3 rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm text-ink">
+          <p>{proposal.reviewReason ?? 'Vérifiez le nom et choisissez une destination avant validation.'}</p>
+          <p className="mt-1 text-xs text-ink/60">
+            Cette proposition est exclue de Tout valider, mais peut être validée seule après vérification.
           </p>
         </div>
       )}

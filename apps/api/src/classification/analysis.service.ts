@@ -44,7 +44,7 @@ export class AnalysisService implements OnModuleInit {
     const document = await this.documents.findPending(job.organizationId, job.documentId);
     if (!document) return;
     const stream = await this.drive.download(job.organizationId, document.externalId);
-    const text = await this.ocr.extractText(stream, {
+    const extraction = await this.ocr.extractText(stream, {
       filename: document.name,
       mimeType: document.mimeType,
     });
@@ -67,21 +67,67 @@ export class AnalysisService implements OnModuleInit {
       documentId: document.id,
       filename: document.name,
       mimeType: document.mimeType,
-      text,
+      text: extraction.text,
       folderPaths,
       rules: pipelineRules,
     });
+    if (extraction.status !== 'ok') {
+      await this.proposals.createPending({
+        organizationId: job.organizationId,
+        documentId: document.id,
+        proposedName: safeFilename(document.name),
+        destinationPath: '',
+        confidence: 0,
+        filenameConfidence: 0.2,
+        destinationConfidence: 0,
+        reviewRequired: true,
+        reviewReason: extraction.reason ?? 'Extraction insuffisante: classement manuel requis',
+        source: 'LLM',
+        modelUsed: extraction.status,
+        llmCallsUsed: 0,
+      });
+      await this.documents.markProposed(job.organizationId, document.id);
+      await this.analyses.record({
+        organizationId: job.organizationId,
+        documentId: document.id,
+        modelUsed: extraction.status,
+        llmRaw: { source: 'OCR', status: extraction.status, method: extraction.method, pageCount: extraction.pageCount },
+      });
+      await this.metrics.increment(job.organizationId, { ocrRuns: 1, ruleMatches: 0, llmCalls: 0 });
+      return;
+    }
     const llmProposal =
       ruleProposal ??
       asLlmProposal(
         await classifyWithCascade(this.llmProviders, {
-          documentText: text,
+          documentText: extraction.text,
           filename: document.name,
           folderPaths,
         }),
       );
     if (!llmProposal) {
-      await this.documents.markManual(job.organizationId, document.id);
+      await this.proposals.createPending({
+        organizationId: job.organizationId,
+        documentId: document.id,
+        proposedName: safeFilename(document.name),
+        destinationPath: '',
+        confidence: 0,
+        filenameConfidence: 0.2,
+        destinationConfidence: 0,
+        reviewRequired: true,
+        reviewReason: 'Destination ambiguë ou non crédible: classement manuel requis',
+        source: 'LLM',
+        modelUsed: 'no-credible-destination',
+        llmCallsUsed: 0,
+      });
+      await this.documents.markProposed(job.organizationId, document.id);
+      await this.analyses.record({
+        organizationId: job.organizationId,
+        documentId: document.id,
+        modelUsed: 'no-credible-destination',
+        llmRaw: { source: 'OCR', status: extraction.status, method: extraction.method, pageCount: extraction.pageCount },
+      });
+      await this.metrics.increment(job.organizationId, { ocrRuns: 1, ruleMatches: 0, llmCalls: 0 });
       return;
     }
     await this.proposals.createPending({
@@ -91,6 +137,10 @@ export class AnalysisService implements OnModuleInit {
       destinationPath: llmProposal.destinationPath,
       destinationFolderExternalId: inheritedFolders.find((folder) => folder.path === llmProposal.destinationPath)?.externalId,
       confidence: llmProposal.confidence,
+      filenameConfidence: llmProposal.filenameConfidence,
+      destinationConfidence: llmProposal.destinationConfidence,
+      reviewRequired: llmProposal.reviewRequired,
+      reviewReason: llmProposal.reviewReason,
       source: llmProposal.source as ProposalSource,
       modelUsed: 'modelUsed' in llmProposal ? llmProposal.modelUsed : undefined,
       llmCallsUsed: llmProposal.llmCallsUsed,
@@ -116,9 +166,32 @@ function asLlmProposal(
   proposedName: string;
   destinationPath: string;
   confidence: number;
+  filenameConfidence?: number;
+  destinationConfidence?: number;
+  reviewRequired?: boolean;
+  reviewReason?: string;
   source: 'LLM';
   modelUsed: string;
   llmCallsUsed: number;
 } {
   return result ? { ...result, source: 'LLM' } : null;
+}
+
+function safeFilename(filename: string): string {
+  const name = filename
+    .trim()
+    .normalize('NFKC')
+    .replaceAll('/', '_')
+    .replaceAll('\\', '_')
+    .split('')
+    .map((char) => isControlCharacter(char) ? '_' : char)
+    .join('')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_');
+  return name && name !== '.' && name !== '..' && !name.includes('..') ? name : 'document';
+}
+
+function isControlCharacter(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return code < 32 || code === 127;
 }

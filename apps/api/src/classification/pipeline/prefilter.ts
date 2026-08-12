@@ -5,6 +5,7 @@
 import { PipelineInput, PipelineProposal, PipelineRule, PipelineRuleCondition } from './types';
 
 const RULE_CONFIDENCE = 0.95;
+const WEAK_RULE_CONFIDENCE = 0.6;
 
 function conditionMatches(input: PipelineInput, condition: PipelineRuleCondition): boolean {
   const haystacks: Record<PipelineRuleCondition['field'], string> = {
@@ -30,11 +31,17 @@ export function applyRules(input: PipelineInput): PipelineProposal | null {
   const ordered = [...input.rules].sort((a, b) => a.priority - b.priority);
   for (const rule of ordered) {
     if (ruleMatches(input, rule)) {
+      if (!input.folderPaths.includes(rule.destinationPath)) continue;
+      const strongContentRule = rule.conditions.some((condition) => condition.field === 'content');
       return {
         documentId: input.documentId,
         proposedName: rule.suggestedNameTemplate ?? input.filename,
         destinationPath: rule.destinationPath,
-        confidence: RULE_CONFIDENCE,
+        confidence: strongContentRule ? RULE_CONFIDENCE : WEAK_RULE_CONFIDENCE,
+        filenameConfidence: rule.suggestedNameTemplate ? 0.9 : 0.35,
+        destinationConfidence: strongContentRule ? RULE_CONFIDENCE : WEAK_RULE_CONFIDENCE,
+        reviewRequired: !strongContentRule || !rule.suggestedNameTemplate,
+        reviewReason: strongContentRule ? undefined : 'Règle basée sur le nom ou le format: vérifier avant validation',
         source: 'RULE',
         llmCallsUsed: 0,
       };

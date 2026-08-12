@@ -48,12 +48,75 @@ export class AnthropicProvider implements LlmProvider {
         .trim()
         .replace(/^```json/, '')
         .replace(/```$/, '');
-      const parsed = JSON.parse(raw) as LlmClassification;
-      // The model must not invent folders outside the tenant's arborescence.
-      if (!params.folderPaths.includes(parsed.destinationPath)) return null;
-      return parsed;
+      const parsed = JSON.parse(raw) as unknown;
+      return validClassification(parsed, params);
     } catch {
       return null;
     }
   }
+}
+
+function validClassification(
+  value: unknown,
+  params: { filename: string; folderPaths: string[] },
+): LlmClassification | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<LlmClassification>;
+  if (
+    typeof candidate.proposedName !== 'string' ||
+    typeof candidate.destinationPath !== 'string' ||
+    typeof candidate.confidence !== 'number'
+  ) return null;
+  if (!params.folderPaths.includes(candidate.destinationPath)) return null;
+  const proposedName = sanitizeFilename(candidate.proposedName);
+  if (!proposedName || extensionOf(proposedName) !== extensionOf(params.filename)) return null;
+  const confidence = bounded(candidate.confidence);
+  if (confidence === null) return null;
+  const filenameConfidence = optionalBounded(candidate.filenameConfidence);
+  const destinationConfidence = optionalBounded(candidate.destinationConfidence);
+  if (filenameConfidence === null || destinationConfidence === null) return null;
+  return {
+    proposedName,
+    destinationPath: candidate.destinationPath,
+    confidence,
+    filenameConfidence,
+    destinationConfidence,
+    reviewRequired: candidate.reviewRequired === true || confidence < 0.7,
+    reviewReason: typeof candidate.reviewReason === 'string' ? candidate.reviewReason.slice(0, 120) : undefined,
+  };
+}
+
+function bounded(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+}
+
+function optionalBounded(value: unknown): number | undefined | null {
+  if (value === undefined) return undefined;
+  return typeof value === 'number' ? bounded(value) : null;
+}
+
+function extensionOf(filename: string): string {
+  const index = filename.lastIndexOf('.');
+  return index > 0 ? filename.slice(index).toLowerCase() : '';
+}
+
+function sanitizeFilename(filename: string): string | null {
+  const name = filename
+    .trim()
+    .normalize('NFKC')
+    .replaceAll('/', '_')
+    .replaceAll('\\', '_')
+    .split('')
+    .map((char) => isControlCharacter(char) ? '_' : char)
+    .join('')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 160);
+  if (!name || name === '.' || name === '..' || name.includes('..')) return null;
+  return name;
+}
+
+function isControlCharacter(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return code < 32 || code === 127;
 }

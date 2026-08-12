@@ -69,7 +69,7 @@ export function ProposalQueue({
     if (bulkState === 'running') return;
     const pendingProposals = initialProposals.filter((proposal) => {
       const status = getStatus(proposal.id);
-      return status !== 'done' && status !== 'confirming';
+      return status !== 'done' && status !== 'confirming' && isBulkEligible(proposal);
     });
 
     if (pendingProposals.length === 0) return;
@@ -126,11 +126,16 @@ export function ProposalQueue({
           variant="validate"
           className="w-full px-6 py-2.5 text-base sm:w-auto"
           onClick={() => void handleConfirmAll()}
-          disabled={bulkState === 'running'}
+          disabled={bulkState === 'running' || visibleProposals.every((proposal) => !isBulkEligible(proposal))}
         >
           {bulkLabel}
         </Button>
       </div>
+      {visibleProposals.some((proposal) => !isBulkEligible(proposal)) && (
+        <p role="status" className="rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
+          Les propositions à faible confiance sont exclues de Tout valider et restent validables une par une.
+        </p>
+      )}
       {bulkState === 'partial' && (
         <p role="status" className="rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
           {doneCount} classement{doneCount > 1 ? 's' : ''} réussi{doneCount > 1 ? 's' : ''},{' '}
@@ -157,4 +162,8 @@ export function ProposalQueue({
       </p>
     </section>
   );
+}
+
+function isBulkEligible(proposal: ProposalView): boolean {
+  return !proposal.reviewRequired && proposal.confidence >= 0.7 && Boolean(proposal.destinationFolderExternalId);
 }

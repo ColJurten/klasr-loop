@@ -2,7 +2,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-07-30 (real MVP vertical slice)
+> Last updated: 2026-08-12 (OCR suggestion quality)
 
 ## In progress
 
@@ -23,6 +23,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 8 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 
 - [x] 2026-08-06 — Agent loop v3 (#13) : spec v2 et hiérarchie de preuves, manifeste/finaliseur lié issue-tentative-SHA, états/lineage/supersession, rôle `acceptance-validator` en lecture seule du code produit, gate CI pnpm toujours présent avec intégration/E2E/acceptation Google conditionnelle et artefacts, CODEOWNERS, sync Projects v2 fail-safe, documentation et tests node:test. Aucun changement produit ni second orchestrateur.
 
@@ -58,3 +60,4 @@
 - Starter code demonstrates: layered architecture (controller/service/repository), hexagonal port for Drive execution, multi-tenant data access design, TDD on the confirm flow, eco-design instrumentation (llmCallsUsed, UsageMetric).
 - #1 Auth demonstrates: OAuth-based auth (NextAuth Google/Microsoft) with server-side session augmentation, automatic multi-tenant onboarding (organization minted or reused from a verified OAuth email, never client input), a fail-closed + constant-time internal-service guard (defense in depth for a service-to-service endpoint with no other verification), and NextAuth middleware protecting the **Next.js dashboard pages** (`/dashboard/**`) — with unit tests covering the onboarding happy/reuse/race/defensive paths and every guard failure mode. **Precise about what's NOT covered**: the API itself (`apps/api`) has no request-level authentication yet — every controller still trusts `organizationId` from the URL/body with nothing checking who's asking. That gap is tracked as issue #2, not closed by #1.
 - One-shot MVP 2026-07-30 demonstrates: C1 (workspace pnpm reproductible), C2 (interface Next.js responsive et accessible de validation/correction), C3 (chemin de confirmation conservé via `DriveExecutor` côté API, sans mutation avant validation), C4/C5 (livraison guidée par SPEC et besoins jury), C6 (contraintes ADR respectées, aucun nouveau datastore/runtime/service), C7/C8 (modèles PostgreSQL et collection Mongo `analyses` inchangés), C9 (tests Jest/Vitest/node:test + build + lancement local), C10/C11 (commandes racine et gates qualité exécutables localement).
+- OCR suggestion quality 2026-08-12 demonstrates: C2 (états accessibles de revue faible confiance), C3 (pipeline OCR → règles → cascade LLM → proposition), C6 (bornes ressources et invariants Drive/RGPD), C7/C8 (migration PostgreSQL metadata-only + Mongo `analyses` sans contenu), C9 (régressions Jest/Vitest ciblées).

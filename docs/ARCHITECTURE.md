@@ -28,8 +28,8 @@
                             │ Prisma           │ driver MongoDB
                     ┌───────▼───────┐  ┌───────▼───────────────────┐
                     │  PostgreSQL   │  │  MongoDB (1 collection)   │
-                    │  12 entités   │  │  `analyses` : OCR + LLM   │
-                    │  + file jobs  │  │  bruts, schéma variable,  │
+                    │  12 entités   │  │  `analyses` : métadonnées │
+                    │  + file jobs  │  │  OCR/LLM redactées,       │
                     │  (pg-boss)    │  │  index TTL (purge RGPD)   │
                     └───────────────┘  └───────────────────────────┘
 
@@ -62,6 +62,13 @@ Google/OCR uniquement : Next.js, NestJS HTTP, PostgreSQL, MongoDB, Prisma,
 repositories, services et pg-boss restent réels. Il refuse de démarrer en
 production, comme `KLASR_INLINE_WORKER=true`.
 
+Le pipeline OCR/document-understanding garde les octets en mémoire bornée
+pendant l'analyse, privilégie la couche texte PDF native, OCR seulement les pages
+qui en ont besoin, normalise le texte puis ne transmet qu'un extrait
+représentatif au classement. Les sorties vides, corrompues, ambiguës ou faibles
+créent une proposition de revue non bulk-applicable avec raisons et confiances
+non sensibles ; aucun texte OCR, extrait documentaire ou octet n'est persisté.
+
 ## 2. ADR — décisions et justifications (à défendre devant le jury)
 
 ### ADR-001 — Un seul langage : TypeScript (suppression de Python/FastAPI)
@@ -83,15 +90,15 @@ C3/C6 au lieu d'exister à côté.
 ### ADR-002 — PostgreSQL source de vérité + MongoDB volontairement minimal
 **Contexte.** « Pourquoi plusieurs bases ? » — question légitime.
 **Décision.** PostgreSQL porte tout le modèle métier (12 entités, Prisma). MongoDB est
-réduit à UNE collection `analyses` (texte OCR extrait, réponses LLM brutes, schéma
-variable selon le fournisseur) avec index TTL.
+réduit à UNE collection `analyses` (métadonnées d'analyse OCR/LLM redactées, schéma
+variable selon le fournisseur, sans texte documentaire) avec index TTL.
 **Justification.**
 - La compétence 8 du REAC est explicite : *« Développer des composants d'accès aux
   données SQL **et NoSQL** »*. Sans NoSQL, cette compétence n'est pas démontrable.
 - Le choix est honnête et assumé comme tel devant le jury : « MongoDB existe dans ce
   projet pour couvrir la compétence NoSQL du référentiel, sur un cas d'usage réel où
-  le document store est pertinent (payloads d'analyse à schéma variable, purgés par
-  TTL — exigence RGPD et éco-conception) ».
+  le document store est pertinent : métadonnées d'analyse à schéma variable, purgées
+  par TTL, sans contenu documentaire — exigence RGPD et éco-conception ».
 - Surface minimale : un repository, une collection, zéro relation.
 **Alternative rejetée.** JSONB dans PostgreSQL : techniquement suffisant, mais la
 démonstration de la compétence NoSQL devient discutable devant un jury.

@@ -10,7 +10,7 @@ export type ProposalWithDocument = Prisma.ClassificationProposalGetPayload<{
 export class ProposalsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  listPending(organizationId: string): Promise<ProposalWithDocument[]> {
+  async listPending(organizationId: string): Promise<ProposalWithDocument[]> {
     return this.prisma.classificationProposal.findMany({
       where: { organizationId, status: 'PENDING' },
       orderBy: { createdAt: 'desc' },
@@ -18,7 +18,7 @@ export class ProposalsRepository {
     });
   }
 
-  findPending(organizationId: string, proposalId: string): Promise<ProposalWithDocument | null> {
+  async findPending(organizationId: string, proposalId: string): Promise<ProposalWithDocument | null> {
     return this.prisma.classificationProposal.findFirst({
       where: { id: proposalId, organizationId, status: 'PENDING' },
       include: { document: true },
@@ -52,18 +52,22 @@ export class ProposalsRepository {
     });
   }
 
-  createPending(params: {
+  async createPending(params: {
     organizationId: string;
     documentId: string;
     proposedName: string;
     destinationPath: string;
     destinationFolderExternalId?: string;
     confidence: number;
+    filenameConfidence?: number;
+    destinationConfidence?: number;
+    reviewRequired?: boolean;
+    reviewReason?: string;
     source: 'RULE' | 'LLM';
     modelUsed?: string;
     llmCallsUsed: number;
   }): Promise<ProposalWithDocument> {
-    return this.prisma.classificationProposal.create({
+    const proposal = await this.prisma.classificationProposal.create({
       data: {
         organizationId: params.organizationId,
         documentId: params.documentId,
@@ -71,12 +75,17 @@ export class ProposalsRepository {
         destinationPath: params.destinationPath,
         destinationFolderExternalId: params.destinationFolderExternalId,
         confidence: params.confidence,
+        filenameConfidence: params.filenameConfidence,
+        destinationConfidence: params.destinationConfidence,
+        reviewRequired: params.reviewRequired ?? false,
+        reviewReason: params.reviewReason,
         source: params.source,
         modelUsed: params.modelUsed,
         llmCallsUsed: params.llmCallsUsed,
       },
       include: { document: true },
     });
+    return proposal;
   }
 
   async listHistory(organizationId: string, take = 20) {
