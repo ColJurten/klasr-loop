@@ -1,43 +1,13 @@
 ---
 name: issue-spec
-description: The klasr-agent-spec:v1 task specification format — how to read, write, edit idempotently, and validate it. Use whenever creating or consuming an agent task specification.
+description: The klasr-agent-spec:v2 format and deterministic evidence contract.
 ---
-# Task specification (klasr-agent-spec:v1)
+# Task specification (`klasr-agent-spec:v2`)
 
-Every agent-managed task has ONE canonical GitHub issue whose body embeds the
-machine-readable spec between stable markers, clearly separated from the
-untrusted free-form discussion around it:
+Embed one YAML mapping between `<!-- klasr-agent-spec:v2` and `-->`. Keep the human discussion untouched and validate with `node scripts/agent/validate-spec.mjs <body-file>`. v1 remains readable only for existing live issues; all new specs use v2.
 
-```
-<!-- klasr-agent-spec:v1
-version: 1
-task_id: 123                      # the canonical issue number
-title: Short imperative title
-problem: What is wrong or missing, observably
-desired_outcome: The observable end result
-acceptance_criteria:              # each one objectively checkable
-  - Confirming a proposal decrements the pending counter without reload
-constraints:                      # invariants that must survive (CLAUDE.md)
-  - Organization scoping preserved on every query
-non_goals:                        # explicit scope boundary
-  - No dashboard redesign
-affected_areas:                   # workspaces/paths
-  - apps/web
-risk_level: low | medium | high
-security_review_required: false   # true for auth/OAuth/Drive/scoping/stores/logging/workflows
-test_plan:
-  - Vitest component test on the counter behavior
-dependencies: []
--->
-```
+Required legacy fields are `version`, `task_id`, `title`, `problem`, `desired_outcome`, `constraints`, `non_goals`, `affected_areas`, `risk_level`, `security_review_required`, `test_plan`, and `dependencies`. Each `acceptance_criteria` row requires a unique `id`, observable `behavior`, minimum `evidence_class` (`unit < integration < browser < live-provider`), and deterministic `assertion`.
 
-Rules:
-- Editing is IDEMPOTENT: replace only the block between the markers; never touch
-  the human discussion around it.
-- Validate with `node scripts/agent/validate-spec.mjs <body-file>` (exit 0 = valid).
-  The validator rejects missing fields, vague acceptance criteria (<8 chars),
-  unknown risk levels, and non-boolean security decisions.
-- The worker refuses to start an implementer without a valid spec — never work
-  around that.
-- Real test suites to name in test_plan: Jest (`apps/api`), Vitest (`apps/web`),
-  node:test (`scripts/agent`).
+Also require `user_journeys`, `failure_states`, `forbidden_shortcuts`, `cleanup_plan`, `completion_policy` (final state exactly `awaiting-human-verdict`, current SHA and reviewer verdict required), and `human` owner with a pending verdict. A live-provider criterion requires a non-production `provider_fixture` and mandatory cleanup proof. NATURAL_PATH provider UI specs must forbid expected-result seeding, browser database/queue polling, `page.reload()`, direct decision APIs, cached global queue control flow, stale runtime/evidence reuse, and provider-auth-only acceptance.
+
+Source inspection and builder prose are never evidence. Evidence rows must match the issue, current attempt and SHA, meet or exceed the required class, pass cleanup/process checks, and include a current read-only reviewer PASS. Bots never formally approve or merge.

@@ -1,0 +1,38 @@
+name: project-sync
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    if: startsWith(github.event.label.name, 'agent:')
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.actor.outputs.allowed }}
+    steps:
+      - id: actor
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+        run: |
+          node -e 'const allowed=(process.env.SUPERVISOR_ACTORS||"").split(",").map(v=>v.trim().toLowerCase()).filter(Boolean).includes(process.env.ACTOR.toLowerCase());require("fs").appendFileSync(process.env.GITHUB_OUTPUT,"allowed="+allowed+"\n")'
+
+  sync:
+    needs: guard
+    if: needs.guard.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 20 }
+      - name: Safe Projects v2 sync
+        env:
+          KLASR_PROJECT_TOKEN: ${{ secrets.KLASR_PROJECT_TOKEN }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          AGENT_STATUS: ${{ github.event.label.name }}
+          KLASR_PROJECT_ID: ${{ vars.KLASR_PROJECT_ID }}
+        run: node scripts/agent/sync-project.mjs

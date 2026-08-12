@@ -10,9 +10,10 @@ on:
     types: [completed]
 
 permissions:
-  contents: write # repository_dispatch
+  contents: write # repository_dispatch (Actions reruns are performed only by the trusted VPS publisher)
   issues: write # fingerprinted protected-branch issues
   actions: read # failed-job logs
+  pull-requests: read # resolve the current agent PR
 
 concurrency:
   group: klasr-ci-recovery-${{ github.event.workflow_run.head_branch }}
@@ -20,25 +21,75 @@ concurrency:
 
 jobs:
   route:
-    if: github.event.workflow_run.conclusion != 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout trusted default branch only
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: scripts/agent
-      - uses: actions/setup-node@v4
+          sparse-checkout: |
+            scripts/agent
+            package.json
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: { version: 10.15.1 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 20 }
-      - run: npm ci --prefix scripts/agent
+      - run: pnpm install --frozen-lockfile --filter @klasr/agent-orchestration
+      - name: Resolve current PR head, failed jobs, live status, and Agent Control lifecycle
+        id: repair
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate --slurp > /tmp/open-prs.json
+          pr=$(node scripts/agent/resolve-ci-pr.mjs "$REPO" "$BRANCH" "$HEAD_SHA" /tmp/open-prs.json || true)
+          issue=$(jq -r '.issue // empty' <<< "$pr")
+          cycle=0
+          agent_attempt=1
+          if [ -n "$issue" ]; then
+            gh api "repos/$REPO/issues/$issue/comments?per_page=100" --paginate --slurp > /tmp/control-comments.json
+            node scripts/agent/lib/trusted-comments.mjs /tmp/control-comments.json klasr-agent-state body > /tmp/control.md
+            read -r cycle agent_attempt < <(node -e 'import("./scripts/agent/lib/control.mjs").then(async m=>{const {readFileSync}=await import("node:fs");const c=m.parseControl(readFileSync("/tmp/control.md","utf8"));console.log(c?c.cycle:0,c?c.lifecycle.attempt:1)})')
+          else
+            : > /tmp/control.md
+          fi
+          read -r cycle agent_attempt < <(node -e 'const [cycle,attempt]=process.argv.slice(1).map(Number);if(!Number.isInteger(cycle)||cycle<0||!Number.isInteger(attempt)||attempt<1)throw Error("invalid control lineage");console.log(cycle,attempt)' "$cycle" "$agent_attempt")
+          {
+            echo "current_pr_head_sha=$(jq -r '.head_sha // empty' <<< "$pr")"
+            echo "current_pr_number=$(jq -r '.number // empty' <<< "$pr")"
+            echo "current_issue=$issue"
+            echo "failed_job=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure")][0].name // "unknown"')"
+            echo "failed_jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '[.jobs[] | select(.conclusion=="failure") | .name] | join(",")')"
+            echo "live_status_state=$(gh api "repos/$REPO/commits/${{ github.event.workflow_run.head_sha }}/statuses" --jq '[.[] | select(.context=="klasr/live-google")][0].state // "missing"')"
+            echo "cycle=$cycle"
+            echo "agent_attempt=$agent_attempt"
+          } >> "$GITHUB_OUTPUT"
       - name: Normalize event and decide
         id: decide
         env:
           SUPERVISOR_ACTORS: ${{ vars.SUPERVISOR_ACTORS }}
           REPO_OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+          CURRENT_PR_HEAD_SHA: ${{ steps.repair.outputs.current_pr_head_sha }}
+          CURRENT_PR_NUMBER: ${{ steps.repair.outputs.current_pr_number }}
+          CURRENT_ISSUE: ${{ steps.repair.outputs.current_issue }}
+          FAILED_JOB: ${{ steps.repair.outputs.failed_job }}
+          FAILED_JOBS: ${{ steps.repair.outputs.failed_jobs }}
+          LIVE_STATUS_STATE: ${{ steps.repair.outputs.live_status_state }}
+          REPAIR_CYCLE: ${{ steps.repair.outputs.cycle }}
+          CURRENT_AGENT_ATTEMPT: ${{ steps.repair.outputs.agent_attempt }}
         run: node scripts/agent/normalize-event.mjs "workflow_run" "$GITHUB_EVENT_PATH"
 
-      - name: Dispatch repair cycle (agent PR failure)
+      - name: Dispatch current-head review or bounded repair
         if: steps.decide.outputs.action == 'dispatch'
         env:
           GH_TOKEN: ${{ github.token }}

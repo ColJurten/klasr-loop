@@ -22,7 +22,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        `docker compose up -d --wait && env DATABASE_URL=${databaseUrl} pnpm --filter @klasr/api prisma:deploy && pnpm --filter @klasr/api build && env NODE_ENV=test PORT=4301 KLASR_INLINE_WORKER=true ${sharedEnv} pnpm --filter @klasr/api exec node dist/main.js`,
+        `docker compose up -d --wait && node ../../scripts/retry-command.mjs 30000 250 env DATABASE_URL=${databaseUrl} pnpm --filter @klasr/api prisma:deploy && pnpm --filter @klasr/api build && env NODE_ENV=test PORT=4301 KLASR_INLINE_WORKER=true ${sharedEnv} pnpm --filter @klasr/api exec node dist/main.js`,
       url: `${apiUrl}/health`,
       reuseExistingServer: false,
       timeout: 120_000,

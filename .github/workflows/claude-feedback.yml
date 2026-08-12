@@ -27,24 +27,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout trusted default branch only
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: scripts/agent
+          sparse-checkout: |
+            scripts/agent
+            package.json
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
       - name: Detect agent runtime on the default branch
         id: runtime
         run: |
-          if [ -f scripts/agent/package.json ] && [ -f scripts/agent/package-lock.json ] && [ -f scripts/agent/normalize-event.mjs ]; then
+          if [ -f scripts/agent/package.json ] && [ -f pnpm-lock.yaml ] && [ -f scripts/agent/normalize-event.mjs ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::notice::scripts/agent is not yet present on the default branch; skipping feedback filtering until the bootstrap PR is merged."
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: steps.runtime.outputs.available == 'true'
         with: { node-version: 20 }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: steps.runtime.outputs.available == 'true'
+        with: { version: 10.15.1 }
       - if: steps.runtime.outputs.available == 'true'
-        run: npm ci --prefix scripts/agent
+        run: pnpm install --frozen-lockfile --filter @klasr/agent-orchestration
       - name: Normalize event and decide
         id: decide
         if: steps.runtime.outputs.available == 'true'

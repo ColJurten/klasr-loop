@@ -2,81 +2,128 @@ name: ci
 
 on:
   pull_request:
-    branches: [develop, main]
   push:
-    branches: [develop, main]
+    branches: [main]
+
+permissions:
+  contents: read
+  statuses: read
+  checks: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  changes:
+  quality:
     runs-on: ubuntu-latest
-    outputs:
-      api: ${{ steps.filter.outputs.api }}
-      web: ${{ steps.filter.outputs.web }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            api:
-              - 'apps/api/**'
-            web:
-              - 'apps/web/**'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: { version: 10.15.1 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Workflow validation
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # v1.7.7
+      - name: Hygiene
+        run: |
+          git diff --check
+          test -z "$(git ls-files '*.log' '.env' '.agent/evidence/*.json')"
 
-  api:
-    needs: changes
-    if: needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main'
+  integration:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: apps/api } }
     services:
       postgres:
         image: postgres:16-alpine
-        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: klasr_test }
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: klasr }
         ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm, cache-dependency-path: apps/api/package-lock.json }
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run test -- --coverage
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: { version: 10.15.1 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @klasr/api prisma:deploy
         env:
-          DATABASE_URL: postgresql://postgres:test@localhost:5432/klasr_test
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
-        with: { name: api-dist, path: apps/api/dist, retention-days: 7 }
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/klasr
+      - run: pnpm test:integration
+      - run: pnpm test:integration
 
-  web:
-    needs: changes
-    if: needs.changes.outputs.web == 'true' || github.ref == 'refs/heads/main'
+  e2e:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: apps/web } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm, cache-dependency-path: apps/web/package-lock.json }
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run test
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
-        with: { name: web-build, path: apps/web/.next, retention-days: 7 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: { version: 10.15.1 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @klasr/web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: |
+            .tmp/hermes/drive-reference-organization-flow/local-desktop-dashboard.sanitized.png
+            .tmp/hermes/drive-reference-organization-flow/local-mobile-390-dashboard.sanitized.png
+          if-no-files-found: ignore
+          retention-days: 14
 
+  live-google-status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+      - name: Require trusted live evidence for the current internal PR head
+        env:
+          ENABLED: ${{ vars.KLASR_LIVE_GOOGLE_ENABLED }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$IS_PR" != true ] || [ "$IS_FORK" = true ]; then exit 0; fi
+          if [ "$ENABLED" != true ]; then
+            echo "::error::KLASR_LIVE_GOOGLE_ENABLED must be true for internal pull requests"
+            exit 1
+          fi
+          node --input-type=module - <<'NODE'
+          import { hasSuccessfulLiveGoogleStatus } from './scripts/agent/lib/live-google-status.mjs';
 
-  # Quality gate (SonarQube) — uncomment once SONAR_TOKEN / SONAR_HOST_URL secrets exist
-  # sonarqube:
-  #   needs: [api, web]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with: { fetch-depth: 0 }
-  #     - uses: SonarSource/sonarqube-scan-action@v4
-  #       env:
-  #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-  #         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.REPOSITORY}/commits/${process.env.HEAD_SHA}/status`, {
+            headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${process.env.GH_TOKEN}`, 'x-github-api-version': '2022-11-28' },
+          });
+          if (!response.ok) throw new Error(`GitHub statuses API returned ${response.status}`);
+          if (!hasSuccessfulLiveGoogleStatus(await response.json(), process.env.HEAD_SHA)) {
+            throw new Error('Current klasr/live-google status is missing, stale, pending, or failed');
+          }
+          NODE
+
+  gate:
+    if: always()
+    needs: [quality, integration, e2e, live-google-status]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require deterministic jobs and any enabled live acceptance
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          case ",$RESULTS," in
+            *,failure,*|*,cancelled,*) exit 1 ;;
+          esac
+          test "${{ needs.quality.result }}" = success
+          test "${{ needs.integration.result }}" = success
+          test "${{ needs.e2e.result }}" = success
+          test "${{ needs.live-google-status.result }}" = success

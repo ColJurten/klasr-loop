@@ -5,7 +5,7 @@
   "scripts": {
     "lint": "pnpm --recursive --if-present run lint",
     "typecheck": "pnpm --recursive --if-present run typecheck",
-    "test": "pnpm --recursive --if-present run test",
+    "test": "pnpm --recursive --if-present run test && node --test scripts/test/*.test.mjs",
     "build": "pnpm --recursive --if-present run build",
     "test:integration": "pnpm --filter @klasr/api exec node ../../scripts/local-mvp-integration.mjs",
     "test:e2e": "pnpm --filter @klasr/web exec playwright test",

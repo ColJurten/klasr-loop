@@ -1,7 +1,21 @@
-# Klasr Agent Loop v2 — implemented specification
+# Klasr Agent Loop v3 — spécification implémentée
+
+## Mise à niveau v3 : preuve courante avant verdict humain
+
+La boucle v2 reste l'unique orchestrateur déterministe : normalisation, contrôle, déduplication, plafond de cycles et dispatch sont étendus, pas dupliqués. Les nouvelles specs utilisent `klasr-agent-spec:v2` ; le format v1 reste accepté uniquement pour les issues historiques. Chaque critère v2 possède un identifiant unique, un comportement observable, une assertion et une classe minimale (`unit < integration < browser < live-provider`). Les parcours, états d'échec, fixture fournisseur non-production, raccourcis interdits, nettoyage et propriétaire humain sont explicites.
+
+Le manifeste de preuve est lié à l'issue, à la tentative et au SHA courant. Le finaliseur rejette les critères absents/échoués, la classe insuffisante, les preuves périmées ou remplacées, le nettoyage incomplet, les processus actifs/orphelins et une revue absente ou non courante. Il ne produit que `awaiting-human-verdict`, jamais `done`.
+
+Agent Control conserve aussi les décisions du verifier et du security-reviewer avec leur tentative et leur SHA exacts. Toute nouvelle tentative les réinitialise. L'acceptance-validator ne peut atteindre `awaiting-human-verdict` qu'après un PASS verifier courant et, selon la spec, un PASS sécurité courant ou `NOT_REQUIRED`; un ancien schéma de contrôle est refusé.
+
+Le chemin v3 est `queued → local-validation → code-review → live-acceptance → awaiting-human-verdict`, avec `changes-requested`, `blocked` et `human-required`. Une tentative périmée ne peut pas muter l'état courant. `acceptance-validator` est le seul nouveau rôle de raisonnement : lecture seule sur le code produit, il audite le parcours NATURAL_PATH et écrit uniquement son verdict machine ; CI reste l'exécuteur des tests et l'implementer existant répare les échecs produit déterministes.
+
+`ci / gate` est toujours présent. Il agrège lint, typecheck, tests, build, boucle agent, intégration répétée, E2E desktop/mobile, hygiène, actionlint et artefacts. Pour une PR interne avec `KLASR_LIVE_GOOGLE_ENABLED=true`, un job GitHub-hosted et sans secret exige le statut externe `klasr/live-google` au SHA exact de la tête ; une PR de fork reste sans secret et n'exécute aucun code sur le VPS. `CODEOWNERS` réserve la revue finale à un humain : preuve au dernier push/SHA, conversations résolues, aucune approbation bot, aucun auto-merge. La synchronisation Projects v2 utilise uniquement des identifiants issus des variables du dépôt et devient un no-op sûr si la configuration ou la permission manque ; Agent Control reste la source de vérité.
+
+Le runner root/VPS exécute exactement `KLASR_EVIDENCE_SHA="$(git rev-parse HEAD)" KLASR_EVIDENCE_ISSUE=<issue> KLASR_EVIDENCE_ATTEMPT=<tentative> pnpm test:live-google-sa && node scripts/publish-live-google-status.mjs`. Le publisher accepte uniquement le manifeste assaini, publie succès ou échec pour le SHA courant approuvé, et `--dry-run` n'effectue aucun accès réseau. Pour une branche d'implémentation nommée manuellement, le runner de confiance peut fournir `EXPECTED_BRANCH`; le publisher exige toujours que cette branche exacte soit la PR ouverte contenant le SHA du manifeste et que son corps ferme la même issue avec un mot-clé GitHub (`Closes #13`, par exemple). Les branches créées par l'agent restent liées au numéro d'issue par convention. Les variables d'authentification restent exclusivement configurées dans l'environnement du VPS, sans valeur intégrée à cette commande ; les credentials Google ne sont jamais transmis à Actions.
 
 > This document describes the system AS IMPLEMENTED in this repository — not a
-> future design. Orchestration code: `scripts/agent/` (tested by `npm test`
+> future design. Orchestration code: `scripts/agent/` (tested by `pnpm test`
 > there). Workflows: `.github/workflows/claude-*.yml` + `_claude-run.yml`.
 
 ## 1. Audit summary (what v1 was, why it changed)
@@ -46,9 +60,9 @@ that exception, so no PAT exists anywhere in the design.
 
 ## 3. Task lifecycle
 
-States (labels `agent:<state>`): needs-spec → spec-ready → queued → running →
-reviewing → awaiting-supervisor → feedback-received → running … plus blocked,
-human-required, ready, done. Legal transitions live in
+States (labels `agent:<state>`): needs-spec → spec-ready → queued →
+local-validation → code-review → live-acceptance → awaiting-human-verdict,
+plus changes-requested, blocked et human-required. Legal transitions live in
 `scripts/agent/lib/state-machine.mjs`; nothing infers state from natural
 language. The single **Agent Control** comment on the canonical issue holds a
 bounded JSON record (`<!-- klasr-agent-state … -->`, last 30 event keys) and is
@@ -66,15 +80,15 @@ security-relevant transition.
 | `issues` opened/edited/reopened | `agent-task` label, spec missing/invalid | dispatch `agent.intake` (spec-writer) |
 | `issues` labeled `agent:queued` | supervisor actor + valid spec | dispatch `agent.implement` |
 | `issues` labeled `agent:queued` | invalid spec | ignored + escalation reason (no run) |
-| `issue_comment` created | allowlisted `/agent spec\|run\|revise\|approve\|block\|status` | dispatch intake / implement / supervisor_feedback |
+| `issue_comment` created | allowlisted `/agent spec\|run\|revise\|block\|status` | dispatch intake / implement / supervisor_feedback ; `/agent approve` est ignoré |
 | `issue_comment` created | no command, or non-supervisor, or self-marker | ignored |
 | `pull_request` synchronize | human push to agent branch | dispatch `agent.verify` |
 | `pull_request` synchronize | bot/self push | ignored (verify is dispatched explicitly by the worker) |
-| `pull_request_review` submitted | supervisor, agent PR, same-repo | dispatch `agent.supervisor_feedback` |
+| `pull_request_review` changes requested/commented | supervisor, agent PR, same-repo | dispatch `agent.supervisor_feedback`; native approval remains human-authoritative |
 | `pull_request_review_comment` created | supervisor, agent PR | dispatch `agent.supervisor_feedback` |
 | commit comment (via API/dry-run payload) | supervisor + `/agent` command | normalized to `agent.supervisor_feedback` (worker resolves the PR containing the commit). GitHub removed `commit_comment` from the Actions trigger list, so no live workflow subscribes to it — supervisors use PR-conversation commands instead |
 | `workflow_run` (ci) failure | head is an agent branch/PR | dispatch `agent.ci_failure` (bounded repair; no new issue while the PR is active) |
-| `workflow_run` (ci) failure | head is `main`/`develop` | deterministic fingerprinted issue create-or-update — no Claude session |
+| `workflow_run` (ci) failure | head is `main` | deterministic fingerprinted issue create-or-update — no Claude session |
 | `workflow_run` (ci) success | — | no action |
 | any fork PR event | — | rejected before dispatch |
 | `repository_dispatch` agent.* | internal, deduped by event key | worker stage |
@@ -96,12 +110,16 @@ branch-protection review requirements, and no workflow merges anything.
 
 ## 6. Security controls
 
+Evidence artifacts use an explicit allowlist of sanitized manifest, log, and screenshot paths. Work directories are never uploaded wholesale because they may contain source bytes, OCR text, provider data, or credentials. Live-run screenshots remain local proof for final human review; the trusted live-run operator owns deleting them after that review. They are not provider/source bytes and are never represented as such in the sanitized manifest.
+
 - **Actor trust**: `SUPERVISOR_ACTORS` (comma-separated logins) parsed
   fail-closed — unset ⇒ repository owner only; unset AND ownerless context ⇒
   nobody. Bots are never trusted by type; external supervisor bots must be
   listed explicitly (`EXTRA_BOT_ACTORS` marks additional self identities to
   IGNORE, not to trust).
-- **Commands**: `/agent <spec|run|revise|approve|block|status>` line-anchored;
+- **Commands**: `/agent <spec|run|revise|approve|block|status>` line-anchored ;
+  `/agent approve` et les événements de revue `APPROVED` sont explicitement
+  ignorés par l'automatisation. La revue GitHub native reste l'autorité humaine.
   anything else in a comment is inert.
 - **Recursion prevention**: bot-actor check + hidden markers
   (`klasr-agent-state`, `klasr-agent-status`, `klasr-fingerprint`) + stable
@@ -147,6 +165,7 @@ Verifier out-of-scope findings land in `residual_risks` (human decides).
 ## 8. Required repository configuration
 
 **Actions variables** (Settings → Secrets and variables → Actions → Variables)
+- `KLASR_LIVE_GOOGLE_ENABLED=true` — obligatoire pour imposer la preuve live-provider sur les PR internes ; son absence désactive volontairement cette barrière.
 - `SUPERVISOR_ACTORS` — e.g. `ColJurten`. Unset ⇒ owner-only (fail-closed).
 - `MAX_AGENT_CYCLES` — optional, default `5`.
 - `EXTRA_BOT_ACTORS` — optional, extra self identities to ignore (e.g. the App's `[bot]` login).
@@ -165,7 +184,7 @@ Verifier out-of-scope findings land in `residual_risks` (human decides).
 **Labels** (created on the fly by the worker with color `7F77DD`, or pre-create):
 `agent-task`, `ci-failure`, and `agent:<state>` for the states in §3.
 
-**Branch protection** (unchanged expectations): `main` and `develop` protected,
+**Branch protection** (unchanged expectations): `main` protected,
 required checks `ci / api`, `ci / web`; agent branches use prefixes `feature/`
 and `fix/` named `feature/<issue>-<slug>` (worker default:
 `feature/<issue>-agent-task`).
@@ -195,7 +214,7 @@ Sandbox rate limits prevented resolving the pins in this PR.
 
 ## 9. Verification performed
 
-- `scripts/agent`: `npm test` — 48/48 node:test assertions covering
+- `scripts/agent`: `pnpm test` — node:test assertions covering
   normalization for all 15 fixture classes, allowlisting (incl. missing-config
   fail-closed), command parsing, spec validation, legal/illegal transitions,
   dedupe, cycle math, fingerprint stability, dispatch payload shape,

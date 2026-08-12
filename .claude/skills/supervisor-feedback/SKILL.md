@@ -13,8 +13,8 @@ Classification first, action second:
 - **Change request** → map to the spec's acceptance criteria; implement on the
   SAME branch/PR; reply one sentence per addressed thread with the commit ref.
 - **Question** → answer concisely in the thread; no code change.
-- **Approval** (`/agent approve` or an approving review) → no code change; the
-  worker moves state; thank briefly only if a reply is expected.
+- **Approval** (`/agent approve` or an approving review) → ignored by automation;
+  only the native GitHub review remains the human authority.
 - **Observation / non-actionable** → acknowledge at most once; never build
   speculative work out of it.
 

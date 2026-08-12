@@ -48,11 +48,27 @@ test('supervisor command on PR conversation -> supervisor_feedback', () => {
   assert.equal(d.refs.surface, 'pr-conversation');
 });
 
+test('/agent approve is ignored because approval must be a native human PR review', () => {
+  const payload = load('04-pr-conversation-comment.json');
+  payload.comment.body = '/agent approve';
+  const d = normalizeEvent('issue_comment', payload, env);
+  assert.equal(d.action, 'ignore');
+  assert.match(d.reason, /native GitHub PR review/i);
+});
+
 test('submitted supervisor review -> supervisor_feedback with review id', () => {
   const d = normalizeEvent('pull_request_review', load('05-pr-review-submitted.json'), env);
   assert.equal(d.dispatchType, 'agent.supervisor_feedback');
   assert.equal(d.refs.review_id, 77001);
   assert.equal(d.task, 42); // canonical issue parsed from branch name
+});
+
+test('native approved review remains authoritative and never dispatches editing', () => {
+  const payload = load('05-pr-review-submitted.json');
+  payload.review.state = 'approved';
+  const d = normalizeEvent('pull_request_review', payload, env);
+  assert.equal(d.action, 'ignore');
+  assert.match(d.reason, /awaiting-human-verdict/);
 });
 
 test('inline review comment -> supervisor_feedback with comment + path', () => {
@@ -70,6 +86,7 @@ test('commit comment with command -> supervisor_feedback needing task resolution
 test('human push to agent branch (synchronize) -> agent.verify', () => {
   const d = normalizeEvent('pull_request', load('08-pr-synchronize-human.json'), env);
   assert.equal(d.dispatchType, 'agent.verify');
+  assert.equal(d.refs.head_sha, 'abc1234def');
 });
 
 test('agent own push (synchronize by bot) is NOT re-dispatched', () => {
@@ -79,15 +96,47 @@ test('agent own push (synchronize by bot) is NOT re-dispatched', () => {
   assert.equal(d.action, 'ignore');
 });
 
-test('CI success -> no action', () => {
-  const d = normalizeEvent('workflow_run', load('09-ci-success.json'), env);
-  assert.equal(d.action, 'ignore');
+test('current agent CI success -> read-only verification', () => {
+  const payload = load('10-ci-failure-agent.json');
+  payload.workflow_run.conclusion = 'success';
+  const d = normalizeEvent('workflow_run', payload, { ...env, currentPrHeadSha: 'abc1234def', currentPrNumber: 45, currentIssue: 42 });
+  assert.equal(d.dispatchType, 'agent.verify');
+  assert.equal(d.task, 42);
+});
+
+test('noncanonical CI success dispatches the resolved closing issue, never the PR number', () => {
+  const payload = load('10-ci-failure-agent.json');
+  payload.workflow_run.conclusion = 'success';
+  payload.workflow_run.head_branch = 'feature/agentic-workflow-v3';
+  payload.workflow_run.pull_requests[0].number = 14;
+  payload.workflow_run.pull_requests[0].head.ref = 'feature/agentic-workflow-v3';
+  const d = normalizeEvent('workflow_run', payload, { ...env, currentPrHeadSha: 'abc1234def', currentPrNumber: 14, currentIssue: 13 });
+  assert.equal(d.dispatchType, 'agent.verify');
+  assert.equal(d.task, 13);
+  assert.equal(d.refs.pull_request, 14);
+});
+
+test('CI recovery ignores missing or disagreeing trusted PR resolution', () => {
+  const payload = load('10-ci-failure-agent.json');
+  payload.workflow_run.conclusion = 'success';
+  for (const extra of [{}, { currentPrHeadSha: 'abc1234def', currentPrNumber: 99, currentIssue: 42 }]) {
+    const d = normalizeEvent('workflow_run', payload, { ...env, ...extra });
+    assert.equal(d.action, 'ignore');
+  }
 });
 
 test('CI failure on agent PR -> agent.ci_failure with run identifiers', () => {
-  const d = normalizeEvent('workflow_run', load('10-ci-failure-agent.json'), env);
+  const d = normalizeEvent('workflow_run', load('10-ci-failure-agent.json'), { ...env, repo: 'acme/klasr', currentPrHeadSha: 'abc1234def', currentPrNumber: 45, currentIssue: 42, failedJob: 'quality', cycle: 2 });
   assert.equal(d.dispatchType, 'agent.ci_failure');
   assert.equal(d.refs.run_id, 556);
+  assert.equal(d.task, 42);
+  assert.match(d.key, /^repair:acme\/klasr:42:abc1234def:556:quality:1:2$/);
+});
+
+test('CI failure on a stale PR head is ignored', () => {
+  const d = normalizeEvent('workflow_run', load('10-ci-failure-agent.json'), { ...env, currentPrHeadSha: 'newer' });
+  assert.equal(d.action, 'ignore');
+  assert.match(d.reason, /stale/i);
 });
 
 test('CI failure on protected branch -> deterministic issue path (no Claude)', () => {
