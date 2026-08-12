@@ -117,8 +117,8 @@ try {
   evidence.launchCompletion = 'PASS';
   const confirmedCard = proposalCardFor(page, supplied[0].name);
   const rejectedCard = proposalCardFor(page, supplied[1].name);
-  await expect(confirmedCard.getByLabel(/Confiance 20 %/)).toBeVisible();
-  await expect(rejectedCard.getByLabel(/Confiance \d+ %/)).toBeVisible();
+  await expectReviewRequiredProposal(confirmedCard);
+  await expectReviewRequiredProposal(rejectedCard);
   await expect(confirmedCard).toContainText(supplied[0].name);
   await expect(rejectedCard).toContainText(supplied[1].name);
   evidence.realDriveDownloadOcr = 'PASS';
@@ -333,5 +333,10 @@ async function api(route, init = {}) { const response = await fetch(`${apiBase}$
 async function chooseBrowserItem(page, name, action, expectAnalysis = false) { const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
 async function waitForProposalCards(page, count) { await expect(page.locator('[data-testid^="proposal-"]')).toHaveCount(count, { timeout: 180_000 }); }
 function proposalCardFor(page, documentName) { return page.locator('[data-testid^="proposal-"]').filter({ hasText: documentName }); }
+async function expectReviewRequiredProposal(card) {
+  await expect(card.getByLabel(/^Confiance (?:100|[1-9]?\d) %, source (?:IA|règle)$/)).toBeVisible();
+  await expect(card.getByText('à vérifier', { exact: true })).toBeVisible();
+  await expect(card.getByText(/exclue de Tout valider/)).toBeVisible();
+}
 async function displayedDestination(card) { return (await card.locator('p span.font-mono').last().textContent()).trim(); }
 async function copyCookies(from, to) { await to.addCookies(await from.cookies()); }
