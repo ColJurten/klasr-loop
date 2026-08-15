@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const fixtureNames = ['CDA_Oct25_18mois_Calendrier.pdf', 'doc3.pdf'];
+const recoveryVersion = '1';
 
 if (process.argv.includes('--lifecycle-check')) {
   await lifecycleCheck();
@@ -19,22 +20,29 @@ if (process.argv.includes('--decision-selection-check')) {
   const items = fixtureNames.map((name, index) => ({ id: String(index), name, mimeType: 'application/pdf' }));
   const supplied = selectFixtures(items);
   const fixtureSnapshots = supplied.map((item, index) => ({ ...item, parents: ['root'], trashed: false, bytes: Buffer.from(`%PDF-${index}\n%%EOF`) }));
-  const replacement = syntheticInvoicePdf('self-check');
+  const replacements = [{ id: supplied[0].id, bytes: syntheticInvoicePdf('self-check') }, { id: supplied[1].id, bytes: manualReviewPdf() }];
   const restored = fixtureSnapshots.map((snapshot) => ({ ...snapshot, parents: [...snapshot.parents], bytes: Buffer.from(snapshot.bytes) }));
   assert(supplied.length === 2 && fixtureSnapshots.length === 2, 'Exactly two existing fixtures must be snapshotted');
-  assert(isPdf(replacement), 'Generated replacement must be a strict PDF');
-  assert(!sameBytes(fixtureSnapshots[0].bytes, replacement), 'Replacement fixture must differ from its original bytes');
-  assert(restorationVerified(fixtureSnapshots, restored, supplied[0].id, replacement), 'Exact byte restoration design must be non-vacuous');
-  assertThrows(() => assert(restorationVerified(fixtureSnapshots, restored.map((snapshot, index) => index ? snapshot : { ...snapshot, bytes: replacement }), supplied[0].id, replacement), 'Mismatched restored bytes'), 'Mismatched restored bytes must fail verification');
-  assertThrows(() => assert(restorationVerified(fixtureSnapshots, restored.map((snapshot, index) => index ? snapshot : { ...snapshot, parents: ['elsewhere'] }), supplied[0].id, replacement), 'Mismatched restored metadata'), 'Mismatched restored metadata must fail verification');
+  assert(replacements.every(({ bytes }) => isPdf(bytes)), 'Generated replacements must be PDF-marked');
+  assert(!sameBytes(replacements[0].bytes, replacements[1].bytes), 'Invoice and manual replacements must be distinct');
+  assert(restorationVerified(fixtureSnapshots, restored, replacements), 'Exact byte restoration design must be non-vacuous');
+  assert(restorationVerified(fixtureSnapshots, restored, [replacements[0], { id: supplied[1].id, bytes: undefined }]), 'Missing observed replacement must not invalidate a successful restoration');
+  for (const [index, replacement] of replacements.entries()) {
+    assertThrows(() => assert(restorationVerified(fixtureSnapshots, restored.map((snapshot, snapshotIndex) => snapshotIndex === index ? { ...snapshot, bytes: replacement.bytes } : snapshot), replacements), 'Mismatched restored bytes'), 'Mismatched restored bytes must fail verification');
+    assertThrows(() => assert(restorationVerified(fixtureSnapshots, restored.map((snapshot, snapshotIndex) => snapshotIndex === index ? { ...snapshot, parents: ['elsewhere'] } : snapshot), replacements), 'Mismatched restored metadata'), 'Mismatched restored metadata must fail verification');
+  }
   assert(existingFixturePdf(Buffer.from('%PDF-1.4\r\n%%EOF\r\n')) && existingFixturePdf(Buffer.from('%PDF-1.4\n%%EOF\n\n')), 'Existing PDF fixtures must accept common trailers');
   assert(!existingFixturePdf(new Uint8Array([1])) && !existingFixturePdf(Buffer.alloc(0)) && !existingFixturePdf(Buffer.from('x%PDF-')), 'Existing PDF fixtures must fail closed');
   assertThrows(() => selectFixtures(items.slice(0, 1)), 'Missing fixtures must fail');
   assertThrows(() => selectFixtures([...items, { ...items[0], id: 'duplicate' }]), 'Ambiguous fixtures must fail');
   assertThrows(() => selectFixtures([{ ...items[0], mimeType: 'image/png' }, items[1]]), 'Non-PDF fixtures must fail');
-  assertThrows(() => restorationVerified([], [], supplied[0].id, replacement), 'Empty restoration proof must fail');
-  assertThrows(() => restorationVerified(fixtureSnapshots, fixtureSnapshots.slice(0, 1), supplied[0].id, replacement), 'Partial restoration proof must fail');
-  assertThrows(() => restorationVerified(fixtureSnapshots, fixtureSnapshots, supplied[0].id, fixtureSnapshots[0].bytes), 'Unchanged replacement proof must fail');
+  assertThrows(() => restorationVerified([], [], replacements), 'Empty restoration proof must fail');
+  assertThrows(() => restorationVerified(fixtureSnapshots, fixtureSnapshots.slice(0, 1), replacements), 'Partial restoration proof must fail');
+  for (const index of [0, 1]) assertThrows(() => restorationVerified(fixtureSnapshots, restored, replacements.map((replacement, replacementIndex) => replacementIndex === index ? { ...replacement, bytes: fixtureSnapshots[index].bytes } : replacement)), 'Unchanged replacement proof must fail');
+  const marker = { appProperties: { klasrRecoveryRevision: 'revision_1', klasrRecoveryVersion: recoveryVersion, klasrRecoveryScope: 'invoice' } };
+  assert(recoveryMarker(marker, 'invoice') === 'revision_1' && recoveryMarker({}, 'invoice') === undefined, 'Recovery marker validation failed');
+  assertThrows(() => recoveryMarker({ appProperties: { klasrRecoveryRevision: 'revision_1' } }, 'invoice'), 'Partial recovery markers must fail closed');
+  assertThrows(() => recoveryMarker(marker, 'manual'), 'Fixture recovery scope mismatch must fail closed');
   const selected = chooseDecisionFixtures([
     { id: 'manual', manualReview: true, confirmEnabled: false, destination: '' },
     { id: 'wrong', manualReview: false, confirmEnabled: true, destination: '/quotes' },
@@ -90,6 +98,7 @@ const email = 'google-staging-acceptance@klasr.test';
 const runName = `klasr-sa-${Date.now()}`;
 const createdIds = [];
 const fixtureSnapshots = [];
+const observedReplacements = new Map();
 const children = [];
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const evidence = {
@@ -104,16 +113,51 @@ let browser;
 let organizationId;
 let runCompleted = false;
 let holdingWasPresent = false;
-let replacementAttempted = false;
-let replacementVerified = false;
+const replacementAttempted = new Set();
+const replacementVerified = new Set();
 const cleanup = { fixtureRestored: false, createdItemsRemoved: false, tenantCleaned: false, appsStopped: false, noOrphans: false };
+let emergencyCleanupFlight;
+let restorationFlight;
+let emergencyExitStarted = false;
+let normalCleanupDone = false;
+
+async function emergencyExit(code) {
+  if (emergencyExitStarted) return;
+  emergencyExitStarted = true;
+  emergencyCleanupFlight ??= (async () => {
+    if (browser) await browser.close().catch(() => undefined);
+    const restoration = await Promise.allSettled([restoreFixtures()]);
+    const removed = await Promise.allSettled([...createdIds].reverse().map((id) => trash(id)));
+    const stopped = await Promise.allSettled([stopApps(children)]);
+    assert(restoration[0].status === 'fulfilled' && removed.every(({ status }) => status === 'fulfilled') && stopped[0].status === 'fulfilled', 'Emergency recovery or cleanup failed');
+  })();
+  const outcome = await Promise.race([
+    emergencyCleanupFlight.then(() => 'restored', () => 'rejected'),
+    delay(90_000, 'timeout'),
+  ]);
+  if (outcome !== 'restored') process.stderr.write(`emergency cleanup incomplete: ${outcome}\n`);
+  process.exit(outcome === 'restored' ? code : 1);
+}
+async function fatalExit(error) {
+  const message = /^Google Drive request failed \(\d+, [A-Za-z0-9_-]+\)$/.test(error?.message) ? error.message : error?.name ?? 'Error';
+  process.stderr.write(`root failure: ${message}\n`);
+  if (normalCleanupDone) { process.exitCode = 1; return; }
+  await emergencyExit(1);
+}
+process.on('SIGINT', () => void emergencyExit(130));
+process.on('SIGTERM', () => void emergencyExit(143));
+process.on('SIGHUP', () => void emergencyExit(129));
+process.on('uncaughtException', (error) => void fatalExit(error));
+process.on('unhandledRejection', (error) => void fatalExit(error));
 
 try {
   credentialPath = required('KLASR_GOOGLE_SERVICE_ACCOUNT_FILE');
   sharedRootId = required('KLASR_GOOGLE_DRIVE_ROOT_ID');
   accessToken = await serviceAccountToken();
   evidence.serviceAccountAuth = 'PASS';
+  await recoverMarkedFixtures();
   const rootItems = await listChildren(sharedRootId);
+  const supplied = selectFixtures(rootItems);
   const reference = exact(rootItems, 'stg_tree', 'application/vnd.google-apps.folder');
   holdingWasPresent = (await listChildren(reference.id)).some((item) => item.name === 'À traiter manuellement');
   const destinations = Object.fromEntries(await Promise.all(['invoices', 'meetings', 'quotes'].map(async (name) => {
@@ -124,17 +168,29 @@ try {
 
   const inputFolder = await createFolder(runName, sharedRootId);
   createdIds.push(inputFolder.id);
-  const supplied = selectFixtures(rootItems);
-  const [invoice, legacyFixture] = supplied;
+  // fixtureNames order is contractual: invoice drives OCR/confirm; manual drives extraction failure/reject/correct.
+  const [invoiceFixture, manualFixture] = supplied;
   for (const item of supplied) fixtureSnapshots.push({ ...await metadata(item.id), bytes: await downloadBytes(item.id) });
   assert(fixtureSnapshots.length === 2 && fixtureSnapshots.every(({ bytes }) => existingFixturePdf(bytes)), 'Exactly two existing PDF fixtures must be snapshotted');
-  for (const snapshot of fixtureSnapshots) await restoreMetadata(snapshot.id, { ...snapshot, parents: [inputFolder.id] });
   const replacementBytes = syntheticInvoicePdf(runName);
-  assert(isPdf(replacementBytes), 'Generated replacement must be a strict PDF');
-  replacementAttempted = true;
-  await replaceBytes(invoice.id, replacementBytes);
-  assert(!sameBytes(fixtureSnapshots[0].bytes, await downloadBytes(invoice.id)), 'Temporary fixture replacement did not change provider bytes');
-  replacementVerified = true;
+  const manualBytes = manualReviewPdf();
+  assert(isPdf(replacementBytes) && isPdf(manualBytes), 'Generated replacements must be PDF-marked');
+  const invoiceRevision = await pinOriginalRevision(invoiceFixture);
+  await markRecovery(invoiceFixture.id, invoiceRevision, 'invoice');
+  await restoreMetadata(invoiceFixture.id, { ...fixtureSnapshots[0], parents: [inputFolder.id] });
+  replacementAttempted.add(invoiceFixture.id);
+  await replaceBytes(invoiceFixture.id, replacementBytes);
+  observedReplacements.set(invoiceFixture.id, await downloadBytes(invoiceFixture.id));
+  assert(!sameBytes(fixtureSnapshots[0].bytes, observedReplacements.get(invoiceFixture.id)), 'Temporary fixture replacement did not change provider bytes');
+  replacementVerified.add(invoiceFixture.id);
+  const manualRevision = await pinOriginalRevision(manualFixture);
+  await markRecovery(manualFixture.id, manualRevision, 'manual');
+  await restoreMetadata(manualFixture.id, { ...fixtureSnapshots[1], parents: [inputFolder.id] });
+  replacementAttempted.add(manualFixture.id);
+  await replaceBytes(manualFixture.id, manualBytes);
+  observedReplacements.set(manualFixture.id, await downloadBytes(manualFixture.id));
+  assert(!sameBytes(fixtureSnapshots[1].bytes, observedReplacements.get(manualFixture.id)), 'Temporary manual fixture replacement did not change provider bytes');
+  replacementVerified.add(manualFixture.id);
   await ensureApps();
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -171,7 +227,7 @@ try {
     });
   }
   const { confirm: confirmed, reject: rejected } = chooseDecisionFixtures(proposals);
-  assert(confirmed.fixture.id === invoice.id && rejected.fixture.id === legacyFixture.id, 'Decision fixtures did not preserve generated-confirm and legacy-reject roles');
+  assert(confirmed.fixture.id === invoiceFixture.id && rejected.fixture.id === manualFixture.id, 'Decision fixtures did not preserve generated-confirm and manual-reject roles');
   const confirmedCard = confirmed.card;
   const rejectedCard = rejected.card;
   await expectReviewRequiredProposal(proposals.find(({ manualReview }) => manualReview).card);
@@ -229,15 +285,15 @@ try {
   assert(relaunch.enqueued === 0, 'terminal documents were re-enqueued');
 
 
-  await restoreFixtures();
+  await restoreFixtures(false);
   await resetTenantData(organizationId);
   assert(await prisma.classificationRule.count({ where: { organizationId } }) === 0, 'Correction run must have zero rules');
   await page.goto(`${webBase}/dashboard`);
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
-  await chooseBrowserItem(page, legacyFixture.name, "Lancer l'organisation", true);
+  await chooseBrowserItem(page, manualFixture.name, "Lancer l'organisation", true);
   await waitForProposalCards(page, 1);
-  const correctionFixture = legacyFixture;
+  const correctionFixture = manualFixture;
   const directCard = proposalCardFor(page, correctionFixture.name);
   await directCard.getByRole('button', { name: 'Corriger', exact: true }).click();
   const correctedName = `Document_Corrige${path.extname(correctionFixture.name)}`;
@@ -270,6 +326,7 @@ try {
   const manifest = sanitizedManifest(evidence, cleanup, lineage, runCompleted);
   assertManifest(manifest);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  normalCleanupDone = true;
 }
 
 if (Object.entries(evidence).some(([key, value]) => key !== 'identity' && typeof value === 'string' && value !== 'PASS')) process.exitCode = 1;
@@ -328,25 +385,93 @@ async function serviceAccountToken() {
 
 async function drive(url, init = {}) { const response = await fetch(`https://www.googleapis.com${url}`, { ...init, headers: { Authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) } }); if (!response.ok) { let reason = 'unknown'; try { const payload = await response.json(); reason = payload?.error?.errors?.[0]?.reason ?? 'unknown'; } catch { /* status remains sufficient */ } throw new Error(`Google Drive request failed (${response.status}, ${reason})`); } return response.status === 204 ? null : response.json(); }
 async function listChildren(parentId) { const q = new URLSearchParams({ q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed=false`, pageSize: '1000', fields: 'files(id,name,mimeType,parents)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' }); return (await drive(`/drive/v3/files?${q}`)).files ?? []; }
-async function metadata(id) { return drive(`/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,parents,trashed&supportsAllDrives=true`); }
+async function metadata(id) { return drive(`/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,parents,trashed,headRevisionId,appProperties,driveId&supportsAllDrives=true`); }
 async function createFolder(name, parentId) { return drive('/drive/v3/files?supportsAllDrives=true&fields=id,name,parents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }) }); }
 async function downloadBytes(id) { const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } }); assert(response.ok, `Google Drive media request failed (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
+async function downloadRevision(id, revisionId) { const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId)}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } }); assert(response.ok, `Google Drive revision media request failed (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
 async function replaceBytes(id, bytes) { return drive(`/upload/drive/v3/files/${encodeURIComponent(id)}?uploadType=media&supportsAllDrives=true&fields=id,name,mimeType,parents`, { method: 'PATCH', headers: { 'content-type': 'application/pdf' }, body: bytes }); }
 async function trash(id) { await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); }
 async function createdGone() { if (!accessToken) return createdIds.length === 0; for (const id of createdIds) { try { const item = await metadata(id); if (!item.trashed) return false; } catch { /* deleted is clean */ } } return true; }
 async function restoreMetadata(id, target) { const current = await metadata(id); const query = new URLSearchParams({ supportsAllDrives: 'true', fields: 'id,name,mimeType,parents,trashed' }); const add = target.parents.filter((parent) => !current.parents.includes(parent)); const remove = current.parents.filter((parent) => !target.parents.includes(parent)); if (add.length) query.set('addParents', add.join(',')); if (remove.length) query.set('removeParents', remove.join(',')); return drive(`/drive/v3/files/${encodeURIComponent(id)}?${query}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: target.name, trashed: target.trashed }) }); }
-async function restoreFixtures() {
-  const results = await Promise.allSettled(fixtureSnapshots.map(async (snapshot) => {
-    let byteError;
-    try { await replaceBytes(snapshot.id, snapshot.bytes); } catch (error) { byteError = error; }
-    try { await restoreMetadata(snapshot.id, snapshot); } catch (error) { throw byteError ?? error; }
-    if (byteError) throw byteError;
-  }));
-  assert(results.every(({ status }) => status === 'fulfilled'), 'Fixture restoration failed');
-  const restored = await Promise.all(fixtureSnapshots.map(async (snapshot) => ({ ...await metadata(snapshot.id), bytes: await downloadBytes(snapshot.id) })));
-  assert(restorationVerified(fixtureSnapshots, restored, fixtureSnapshots[0].id, syntheticInvoicePdf(runName)), 'Fixture restoration verification failed');
+function recoveryMarker(item, expectedScope) {
+  const marker = item.appProperties ?? {};
+  const present = ['klasrRecoveryRevision', 'klasrRecoveryVersion', 'klasrRecoveryScope'].filter((key) => marker[key] !== undefined);
+  if (!present.length) return;
+  assert(present.length === 3 && marker.klasrRecoveryVersion === recoveryVersion && marker.klasrRecoveryScope === expectedScope && /^[A-Za-z0-9_-]+$/.test(marker.klasrRecoveryRevision), 'Invalid Drive recovery marker');
+  return marker.klasrRecoveryRevision;
 }
-async function cleanupVerified() { if (!(await createdGone()) || fixtureSnapshots.length !== 2 || !replacementAttempted || !replacementVerified) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes)) return false; } return true; }
+async function pinOriginalRevision(item) {
+  const current = await metadata(item.id);
+  assert(current.name === item.name && current.mimeType === 'application/pdf' && current.headRevisionId, 'Original binary revision is unavailable or mismatched');
+  const revision = await drive(`/drive/v3/files/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(current.headRevisionId)}?fields=id,keepForever`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepForever: true }) });
+  assert(revision.id === current.headRevisionId && revision.keepForever === true, 'Original binary revision was not pinned');
+  return revision.id;
+}
+async function markRecovery(id, revisionId, scope) {
+  await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true&fields=id,appProperties`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appProperties: { klasrRecoveryRevision: revisionId, klasrRecoveryVersion: recoveryVersion, klasrRecoveryScope: scope } }) });
+  assert(recoveryMarker(await metadata(id), scope) === revisionId, 'Drive recovery marker readback failed');
+}
+async function finishRecovery(id, revisionId, scope) {
+  await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true&fields=id,appProperties`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appProperties: { klasrRecoveryRevision: null, klasrRecoveryVersion: null, klasrRecoveryScope: null } }) });
+  assert(!recoveryMarker(await metadata(id), scope), 'Drive recovery marker clear readback failed');
+  await drive(`/drive/v3/files/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId)}?fields=id,keepForever`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepForever: false }) });
+}
+async function restoreFromRevision(item, revisionId, target, scope, finish = true) {
+  const revision = await drive(`/drive/v3/files/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revisionId)}?fields=id,keepForever`);
+  assert(revision.id === revisionId && revision.keepForever === true, 'Pinned recovery revision is missing or mismatched');
+  const originalBytes = await downloadRevision(item.id, revisionId);
+  if (target.bytes) assert(sameBytes(originalBytes, target.bytes), 'Pinned recovery revision does not match fixture snapshot');
+  await replaceBytes(item.id, originalBytes);
+  await restoreMetadata(item.id, target);
+  const restored = await metadata(item.id);
+  assert(restored.name === target.name && restored.mimeType === target.mimeType && restored.trashed === target.trashed && sameParents(restored.parents, target.parents) && sameBytes(await downloadBytes(item.id), originalBytes), 'Drive revision restoration readback failed');
+  if (finish) await finishRecovery(item.id, revisionId, scope);
+}
+async function recoveryCandidates(scope, driveId) {
+  const q = new URLSearchParams({ q: `appProperties has { key='klasrRecoveryScope' and value='${scope}' }`, ...(driveId ? { corpora: 'drive', driveId } : { corpora: 'allDrives' }), pageSize: '1000', fields: 'files(id,name,mimeType,parents,trashed,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
+  return (await drive(`/drive/v3/files?${q}`)).files ?? [];
+}
+async function markedCandidates(driveId) {
+  const q = new URLSearchParams({ q: "appProperties has { key='klasrRecoveryRevision' }", ...(driveId ? { corpora: 'drive', driveId } : { corpora: 'allDrives' }), pageSize: '1000', fields: 'files(id,name,mimeType,parents,trashed,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
+  return (await drive(`/drive/v3/files?${q}`)).files ?? [];
+}
+async function recoverMarkedFixtures() {
+  accessToken = await serviceAccountToken();
+  const { driveId } = await metadata(sharedRootId);
+  const marked = await markedCandidates(driveId);
+  for (const item of marked) assert(['invoice', 'manual'].includes(item.appProperties?.klasrRecoveryScope) && recoveryMarker(item, item.appProperties.klasrRecoveryScope), 'Malformed or unexpected Drive recovery marker');
+  for (const [index, scope] of ['invoice', 'manual'].entries()) {
+    const candidates = await recoveryCandidates(scope, driveId);
+    const expected = marked.filter((item) => item.appProperties.klasrRecoveryScope === scope);
+    assert(candidates.length <= 1, 'Ambiguous Drive recovery marker');
+    assert(candidates.length === expected.length && candidates.every((candidate) => expected.some(({ id }) => id === candidate.id)), 'Recovery marker discovery is inconsistent');
+    if (!candidates.length) continue;
+    const item = candidates[0];
+    const revisionId = recoveryMarker(item, scope);
+    assert(revisionId, 'Exact Drive recovery marker is missing');
+    await restoreFromRevision(item, revisionId, { name: fixtureNames[index], mimeType: 'application/pdf', parents: [sharedRootId], trashed: false }, scope);
+  }
+}
+async function fixtureMatches(snapshot) { const current = await metadata(snapshot.id); return current.name === snapshot.name && current.mimeType === snapshot.mimeType && current.trashed === snapshot.trashed && sameParents(current.parents, snapshot.parents) && sameBytes(await downloadBytes(snapshot.id), snapshot.bytes); }
+async function restoreFixtures(finish = true) {
+  if (restorationFlight) return restorationFlight;
+  if (!fixtureSnapshots.length) return { touched: 0 };
+  restorationFlight = (async () => {
+    accessToken = await serviceAccountToken();
+    const results = await Promise.allSettled(fixtureSnapshots.map(async (snapshot, index) => {
+      const revisionId = recoveryMarker(await metadata(snapshot.id), index === 0 ? 'invoice' : 'manual');
+      if (!revisionId) { assert(await fixtureMatches(snapshot), 'Unmarked fixture is not untouched or restored'); return; }
+      await restoreFromRevision(snapshot, revisionId, snapshot, index === 0 ? 'invoice' : 'manual', finish);
+    }));
+    assert(results.every(({ status }) => status === 'fulfilled'), 'Fixture restoration failed');
+    const restored = await Promise.all(fixtureSnapshots.map(async (snapshot) => ({ ...await metadata(snapshot.id), bytes: await downloadBytes(snapshot.id) })));
+    assert(restorationVerified(fixtureSnapshots, restored, fixtureSnapshots.map((snapshot) => ({ id: snapshot.id, bytes: observedReplacements.get(snapshot.id) }))), 'Fixture restoration verification failed');
+    return { touched: fixtureSnapshots.length };
+  })();
+  try { return await restorationFlight; }
+  finally { restorationFlight = undefined; }
+}
+async function cleanupVerified() { if (!fixtureSnapshots.length) return false; accessToken = await serviceAccountToken(); if (!(await createdGone()) || fixtureSnapshots.length !== 2 || replacementAttempted.size !== 2 || replacementVerified.size !== 2) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.mimeType !== snapshot.mimeType || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes) || recoveryMarker(current, snapshot.id === fixtureSnapshots[0].id ? 'invoice' : 'manual')) return false; } return true; }
 function sameParents(actual = [], expected = []) { return actual.length === expected.length && actual.every((parent) => expected.includes(parent)); }
 function sameBytes(actual, expected) { return createHash('sha256').update(actual).digest().equals(createHash('sha256').update(expected).digest()); }
 
@@ -359,15 +484,15 @@ function syntheticInvoicePdf(reference) {
   const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(pdf);
 }
+function manualReviewPdf() { return Buffer.from('%PDF-1.4\n%%EOF\n'); }
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
 function selectFixtures(items) {
   return fixtureNames.map((name) => exact(items, name, 'application/pdf'));
 }
-function restorationVerified(snapshots, restored, changedId, replacementBytes) {
+function restorationVerified(snapshots, restored, replacements) {
   assert(snapshots.length === 2 && restored.length === 2, 'Expected two fixture restoration snapshots');
-  const changed = snapshots.find((snapshot) => snapshot.id === changedId);
-  assert(changed && !sameBytes(changed.bytes, replacementBytes), 'Changed fixture proof is missing');
+  assert(replacements.length === 2 && snapshots.every((snapshot) => replacements.some((replacement) => replacement.id === snapshot.id && (replacement.bytes === undefined || !sameBytes(snapshot.bytes, replacement.bytes)))), 'Changed fixture proof is missing');
   return snapshots.every((snapshot) => {
     const current = restored.find((item) => item.id === snapshot.id);
     return current && current.name === snapshot.name && current.mimeType === snapshot.mimeType && current.trashed === snapshot.trashed

@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { closingIssueReference, pullRequestMatchesIssue, resolveCiPullRequest, resolveLivePullRequest } from '../lib/pull-request.mjs';
 
 const root = new URL('../../../', import.meta.url);
-const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+const head = readFileSync(new URL('.git/HEAD', root), 'utf8').trim();
+const sha = head.startsWith('ref: ') ? readFileSync(new URL(`.git/${head.slice(5)}`, root), 'utf8').trim() : head;
+
+function functionBody(source, name) {
+  const start = source.search(new RegExp(`(?:async )?function ${name}\\([^)]*\\) \\{`));
+  assert.notEqual(start, -1, `Missing ${name}`);
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}' && --depth === 0) return source.slice(open + 1, index);
+  }
+  assert.fail(`Unclosed ${name}`);
+}
 
 test('publisher source contains no literal repository SHA', () => {
   const source = readFileSync(new URL('../../publish-live-google-status.mjs', import.meta.url), 'utf8');
@@ -97,9 +110,84 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
   assert.match(source, /uploadType=media/);
   assert.match(source, /fixtureSnapshots\.length === 2/);
   assert.match(source, /downloadBytes\(snapshot\.id\)/);
+  assert.match(source, /replaceBytes\(manualFixture\.id, manualBytes\)/);
   const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--decision-selection-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, 'live runner fixture restoration and decision selection check PASS\n');
+});
+
+test('live runner keeps crash recovery inside Drive revisions without local byte backups', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const startupRecovery = source.indexOf('await recoverMarkedFixtures();');
+  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixtures(rootItems)', startupRecovery));
+  const discovery = functionBody(source, 'recoveryCandidates');
+  assert.match(discovery, /appProperties has \{ key='klasrRecoveryScope' and value='/);
+  for (const candidate of [discovery, functionBody(source, 'markedCandidates')]) {
+    for (const value of ["corpora: 'drive'", "corpora: 'allDrives'", 'driveId', "supportsAllDrives: 'true'", "includeItemsFromAllDrives: 'true'"]) assert.match(candidate, new RegExp(value));
+    assert.doesNotMatch(candidate, /q: [^,]*(?:parents|name|trashed)/);
+  }
+  assert.doesNotMatch(discovery, /q: `[^`]*(?:parents|name|trashed)/);
+  const recover = functionBody(source, 'recoverMarkedFixtures');
+  assert.match(recover, /accessToken = await serviceAccountToken\(\)/);
+  assert.doesNotMatch(recover, /assert\(driveId/);
+  assert.match(recover, /assert\(candidates\.length <= 1/);
+  assert.match(recover, /Malformed or unexpected Drive recovery marker/);
+  assert.match(recover, /candidates\.length === expected\.length[\s\S]*Recovery marker discovery is inconsistent/);
+  assert.match(recover, /assert\(revisionId, 'Exact Drive recovery marker is missing'\)/);
+  assert.match(recover, /parents: \[sharedRootId\], trashed: false/);
+  assert.match(recover, /await restoreFromRevision\(item, revisionId, \{ name: fixtureNames\[index\]/);
+  assert.match(source, /await pinOriginalRevision\(invoiceFixture\)[\s\S]*await markRecovery\(invoiceFixture\.id,[\s\S]*await replaceBytes\(invoiceFixture\.id/);
+  assert.match(source, /await pinOriginalRevision\(manualFixture\)[\s\S]*await markRecovery\(manualFixture\.id,[\s\S]*await replaceBytes\(manualFixture\.id/);
+  assert.match(source, /revisions\/[\s\S]*alt=media/);
+  assert.match(source, /appProperties/);
+  assert.doesNotMatch(source, /backup(?:Path|File)|writeFileSync\([^)]*(?:bytes|content|snapshot)/i);
+  assert.match(functionBody(source, 'restoreFixtures'), /if \(!revisionId\) \{ assert\(await fixtureMatches\(snapshot\)/);
+  const restore = functionBody(source, 'restoreFromRevision');
+  assert.match(restore, /const originalBytes = await downloadRevision\(item\.id, revisionId\)/);
+  assert.doesNotMatch(restore, /const originalBytes = await downloadBytes\(item\.id\)/);
+  const readback = restore.indexOf("'Drive revision restoration readback failed'");
+  assert(readback !== -1 && readback < restore.indexOf('finishRecovery('));
+  assert.match(restore.slice(0, readback), /sameBytes\(originalBytes, target\.bytes\)/);
+  const finish = functionBody(source, 'finishRecovery');
+  const clearReadback = "assert(!recoveryMarker(await metadata(id), scope), 'Drive recovery marker clear readback failed')";
+  assert(finish.indexOf('klasrRecoveryRevision: null') < finish.indexOf(clearReadback) && finish.indexOf(clearReadback) < finish.indexOf('keepForever: false'));
+  assert.match(functionBody(source, 'pinOriginalRevision'), /body: JSON\.stringify\(\{ keepForever: true \}\)[\s\S]*assert\(revision\.id === current\.headRevisionId && revision\.keepForever === true/);
+  assert.match(functionBody(source, 'markRecovery'), /await drive\([\s\S]*assert\(recoveryMarker\(await metadata\(id\), scope\) === revisionId/);
+  const midRunRestore = source.indexOf('await restoreFixtures(false);');
+  assert(midRunRestore !== -1 && midRunRestore < source.indexOf('const correctionFixture'));
+});
+
+test('live runner routes signals and fatal errors through bounded single-flight recovery with fresh tokens', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  for (const event of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) assert.match(source, new RegExp(`process\\.on\\('${event}'`));
+  assert.match(source, /let emergencyCleanupFlight/);
+  assert.match(source, /let restorationFlight/);
+  const emergency = functionBody(source, 'emergencyExit');
+  assert.match(emergency, /Promise\.allSettled\(\[restoreFixtures\(\)\]\)/);
+  assert.match(emergency, /createdIds/);
+  assert.match(emergency, /Promise\.race/);
+  assert.match(emergency, /delay\(90_000, 'timeout'\)/);
+  assert.match(emergency, /process\.stderr\.write/);
+  assert.match(emergency, /process\.exit\(outcome === 'restored' \? code : 1\)/);
+  assert.match(emergency, /assert\(restoration\[0\]\.status === 'fulfilled'/);
+  assert.doesNotMatch(emergency, /fixtureSnapshots|observedReplacements|downloadBytes|originalBytes/);
+  const fatal = functionBody(source, 'fatalExit');
+  assert.match(fatal, /if \(normalCleanupDone\) \{ process\.exitCode = 1; return; \}/);
+  assert.match(fatal, /root failure:/);
+  assert.doesNotMatch(fatal, /fixtureSnapshots|observedReplacements|downloadBytes|originalBytes|JSON\.stringify/);
+  const restore = functionBody(source, 'restoreFixtures');
+  assert.match(restore, /if \(restorationFlight\) return restorationFlight/);
+  assert.match(restore, /await restoreFromRevision\(snapshot, revisionId/);
+  assert.match(restore, /finally \{ restorationFlight = undefined; \}/);
+  assert.match(restore, /assert\(results\.every\(\(\{ status \}\) => status === 'fulfilled'\)/);
+  assert.match(restore, /assert\(restorationVerified\(fixtureSnapshots, restored/);
+  assert.match(restore, /accessToken = await serviceAccountToken\(\)/);
+  const cleanupVerified = functionBody(source, 'cleanupVerified');
+  assert.match(cleanupVerified, /if \(!fixtureSnapshots\.length\) return false/);
+  assert.match(cleanupVerified, /accessToken = await serviceAccountToken\(\)/);
+  assert.match(cleanupVerified, /recoveryMarker\(current, /);
+  assert.match(functionBody(source, 'recoverMarkedFixtures'), /accessToken = await serviceAccountToken\(\)/);
+  assert.match(functionBody(source, 'restorationVerified'), /replacement\.bytes === undefined \|\| !sameBytes\(snapshot\.bytes, replacement\.bytes\)/);
 });
 
 test('publisher dry-run emits only a sanitized success status and performs no network', () => {
