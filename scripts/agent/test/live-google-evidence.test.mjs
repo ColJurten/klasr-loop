@@ -86,10 +86,20 @@ test('live runner lifecycle check closes owned process groups and ports', () => 
   assert.equal(run.stdout, 'live runner lifecycle check PASS\n');
 });
 
-test('live runner chooses decision fixtures by UI evidence instead of fixture order', () => {
+test('live runner proves quota-safe fixture restoration and chooses decisions from UI evidence', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /files\.create|uploadType=multipart|multipart\/related|function uploadFile/);
+  assert.doesNotMatch(source, /\/upload\/drive\/v3\/files\?/);
+  assert.match(source, /function createFolder/);
+  assert.match(source, /parents: \[inputFolder\.id\]/);
+  assert.match(source, /chooseBrowserItem\(page, runName, "Lancer l'organisation"/);
+  assert.match(source, /itemExternalId: inputFolder\.id/);
+  assert.match(source, /uploadType=media/);
+  assert.match(source, /fixtureSnapshots\.length === 2/);
+  assert.match(source, /downloadBytes\(snapshot\.id\)/);
   const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--decision-selection-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.stdout, 'live runner decision selection check PASS\n');
+  assert.equal(run.stdout, 'live runner fixture restoration and decision selection check PASS\n');
 });
 
 test('publisher dry-run emits only a sanitized success status and performs no network', () => {

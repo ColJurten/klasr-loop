@@ -26,7 +26,7 @@
 
 ## Done
 
-- [x] 2026-08-15 — Maintenance corrective CI PR #17 (`improve-ocr`) : fixtures locaux PNG/PDF valides, quatre documents révisables dont l'extraction non supportée fail-closed, parcours dashboard desktop/mobile sans rechargement forcé, et nettoyage des métadonnées de test. Vérifications intégration/E2E et gates globaux vertes ; statut externe exact-head `klasr/live-google` toujours requis.
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 (`improve-ocr`) : fixtures locaux PNG/PDF valides, quatre documents révisables dont l'extraction non supportée fail-closed, parcours dashboard desktop/mobile sans rechargement forcé, et nettoyage des métadonnées de test. Le runner Google réutilise désormais deux PDF staging existants dans un dossier source temporaire, restaure en mémoire leurs octets et métadonnées, et ne crée aucun fichier Drive propriétaire d'octets. Vérifications intégration/E2E et gates globaux vertes ; statut externe exact-head `klasr/live-google` toujours requis.
 
 - [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 
