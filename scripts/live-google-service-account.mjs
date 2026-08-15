@@ -14,9 +14,20 @@ if (process.argv.includes('--lifecycle-check')) {
 }
 
 if (process.argv.includes('--decision-selection-check')) {
+  const roles = fixtureRoles(
+    [{ id: 'legacy', name: 'legacy.pdf', mimeType: 'application/pdf' }],
+    { id: 'generated', name: 'invoice.pdf', mimeType: 'application/pdf', bytes: syntheticInvoicePdf('self-check') },
+  );
+  assert(roles.supplied.map(({ id }) => id).join(',') === 'generated,legacy', 'Fixture roles must pair a generated invoice with one legacy manual-review PDF');
+  assert(roles.fixtureSnapshots.map(({ id }) => id).join(',') === 'legacy', 'Only the legacy fixture may be restored');
+  assert(roles.createdIds.map(({ id }) => id).join(',') === 'generated', 'The generated invoice must be tracked for removal');
+  assert(isPdf(roles.supplied[0].bytes), 'Generated invoice must contain valid PDF bytes');
+  assertThrows(() => fixtureRoles(roles.supplied, roles.supplied[0]), 'Ambiguous legacy fixture roles must fail');
+  assertThrows(() => fixtureRoles(roles.fixtureSnapshots, { ...roles.supplied[0], mimeType: 'image/png' }), 'Non-PDF generated fixtures must fail');
   const selected = chooseDecisionFixtures([
-    { id: 'manual', manualReview: true, confirmEnabled: false, validDestination: false },
-    { id: 'valid', manualReview: false, confirmEnabled: true, validDestination: true },
+    { id: 'manual', manualReview: true, confirmEnabled: false, destination: '' },
+    { id: 'wrong', manualReview: false, confirmEnabled: true, destination: '/quotes' },
+    { id: 'valid', manualReview: false, confirmEnabled: true, destination: '/invoices' },
   ]);
   assert(selected.confirm.id === 'valid' && selected.reject.id === 'manual', 'Decision fixture selection is not provider-agnostic');
   process.stdout.write('live runner decision selection check PASS\n');
@@ -50,7 +61,6 @@ if (process.argv.includes('--evidence-self-check')) {
 
 const requireApi = createRequire(path.join(root, 'apps/api/package.json'));
 const requireWeb = createRequire(path.join(root, 'apps/web/package.json'));
-const { createCanvas } = requireApi('@napi-rs/canvas');
 const { PrismaClient } = requireApi('@prisma/client');
 const { chromium, expect } = requireWeb('@playwright/test');
 
@@ -102,20 +112,17 @@ try {
 
   const inputFolder = await createFolder(runName, sharedRootId);
   createdIds.push(inputFolder.id);
-  const existingFixtures = fixtureNames.map((name) => rootItems.find((item) => item.name === name && item.mimeType === 'application/pdf'));
-  const supplied = existingFixtures.every(Boolean)
-    ? existingFixtures
-    : await Promise.all(['confirm', 'reject'].map(async (key) => {
-      const item = await uploadPng(`${runName}-${key}.png`, sharedRootId, renderPng(`KLASR GENERATED ${key.toUpperCase()}`));
-      createdIds.push(item.id);
-      return item;
-    }));
-  for (const item of supplied) {
+  const legacyFixture = fixtureNames.map((name) => rootItems.find((item) => item.name === name && item.mimeType === 'application/pdf')).find(Boolean);
+  assert(legacyFixture, 'Expected at least one genuine legacy PDF fixture');
+  const invoice = await uploadFile(`${runName}-invoice.pdf`, inputFolder.id, 'application/pdf', syntheticInvoicePdf(runName));
+  createdIds.push(invoice.id);
+  const roles = fixtureRoles([legacyFixture], invoice);
+  const supplied = roles.supplied;
+  for (const item of roles.fixtureSnapshots) {
     const snapshot = await metadata(item.id);
     fixtureSnapshots.push(snapshot);
     await restoreMetadata(snapshot.id, { ...snapshot, parents: [inputFolder.id] });
   }
-  const extension = path.extname(supplied[0].name);
   await ensureApps();
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -149,10 +156,10 @@ try {
       manualReview: await card.getByText('à vérifier', { exact: true }).isVisible()
         && await card.getByText(/exclue de Tout valider/).isVisible(),
       confirmEnabled: await confirmButton.isEnabled(),
-      validDestination: Object.values(destinations).some((item) => `/${item.name}` === destination),
     });
   }
   const { confirm: confirmed, reject: rejected } = chooseDecisionFixtures(proposals);
+  assert(confirmed.fixture.id === invoice.id && rejected.fixture.id === legacyFixture.id, 'Decision fixtures did not preserve generated-confirm and legacy-reject roles');
   const confirmedCard = confirmed.card;
   const rejectedCard = rejected.card;
   await expectReviewRequiredProposal(proposals.find(({ manualReview }) => manualReview).card);
@@ -216,21 +223,22 @@ try {
   await page.goto(`${webBase}/dashboard`);
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
-  await chooseBrowserItem(page, supplied[0].name, "Lancer l'organisation", true);
+  await chooseBrowserItem(page, legacyFixture.name, "Lancer l'organisation", true);
   await waitForProposalCards(page, 1);
-  const directCard = proposalCardFor(page, supplied[0].name);
+  const correctionFixture = legacyFixture;
+  const directCard = proposalCardFor(page, correctionFixture.name);
   await directCard.getByRole('button', { name: 'Corriger', exact: true }).click();
-  const correctedName = `Calendrier_CDA_Corrige${extension}`;
+  const correctedName = `Calendrier_CDA_Corrige${path.extname(correctionFixture.name)}`;
   await directCard.getByLabel('Nom final').fill(correctedName);
   await directCard.getByLabel('Dossier de destination').selectOption(destinations.meetings.id);
   await directCard.getByRole('button', { name: 'Confirmer la correction' }).click();
   await expect(directCard).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Historique' })).toBeVisible();
-  const correctedMeta = await metadata(supplied[0].id);
+  const correctedMeta = await metadata(correctionFixture.id);
   assert(correctedMeta.name === correctedName && sameParents(correctedMeta.parents, [destinations.meetings.id]), 'direct correction metadata mismatch');
   evidence.realDriveCorrectMutation = 'PASS';
   assert(await prisma.document.count({ where: { organizationId, status: 'CLASSIFIED' } }) === 1, 'UI correction did not persist classified state');
-  const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: supplied[0].id }) });
+  const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: correctionFixture.id }) });
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
   evidence.terminalNoReenqueue = 'PASS';
   runCompleted = true;
@@ -289,6 +297,7 @@ function assertManifest(manifest) {
 }
 function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) throw new Error('Live app URLs must use loopback'); return value.replace(/\/$/, ''); }
 function assert(condition, message) { if (!condition) throw new Error(message); }
+function assertThrows(action, message) { try { action(); } catch { return; } throw new Error(message); }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }
 
 async function serviceAccountToken() {
@@ -309,7 +318,7 @@ async function drive(url, init = {}) { const response = await fetch(`https://www
 async function listChildren(parentId) { const q = new URLSearchParams({ q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed=false`, pageSize: '1000', fields: 'files(id,name,mimeType,parents)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' }); return (await drive(`/drive/v3/files?${q}`)).files ?? []; }
 async function metadata(id) { return drive(`/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,parents,trashed&supportsAllDrives=true`); }
 async function createFolder(name, parentId) { return drive('/drive/v3/files?supportsAllDrives=true&fields=id,name,parents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }) }); }
-async function uploadPng(name, parentId, bytes) { const boundary = `klasr-${Date.now()}`; const head = Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [parentId] })}\r\n--${boundary}\r\nContent-Type: image/png\r\n\r\n`); const tail = Buffer.from(`\r\n--${boundary}--`); return drive('/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,parents', { method: 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: Buffer.concat([head, bytes, tail]) }); }
+async function uploadFile(name, parentId, mimeType, bytes) { const boundary = `klasr-${Date.now()}`; const head = Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [parentId] })}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`); const tail = Buffer.from(`\r\n--${boundary}--`); return drive('/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,parents', { method: 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: Buffer.concat([head, bytes, tail]) }); }
 async function trash(id) { await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); }
 async function createdGone() { if (!accessToken) return createdIds.length === 0; for (const id of createdIds) { try { const item = await metadata(id); if (!item.trashed) return false; } catch { /* deleted is clean */ } } return true; }
 async function restoreMetadata(id, target) { const current = await metadata(id); const query = new URLSearchParams({ supportsAllDrives: 'true', fields: 'id,name,mimeType,parents,trashed' }); const add = target.parents.filter((parent) => !current.parents.includes(parent)); const remove = current.parents.filter((parent) => !target.parents.includes(parent)); if (add.length) query.set('addParents', add.join(',')); if (remove.length) query.set('removeParents', remove.join(',')); return drive(`/drive/v3/files/${encodeURIComponent(id)}?${query}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: target.name, trashed: target.trashed }) }); }
@@ -317,7 +326,21 @@ async function restoreFixtures() { const results = await Promise.allSettled(fixt
 async function cleanupVerified() { if (!(await createdGone())) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents)) return false; } return true; }
 function sameParents(actual = [], expected = []) { return actual.length === expected.length && actual.every((parent) => expected.includes(parent)); }
 
-function renderPng(text) { const canvas = createCanvas(1600, 900); const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 1600, 900); ctx.fillStyle = 'black'; ctx.font = 'bold 54px sans-serif'; text.split(' ').reduce((lines, word) => { const last = lines.at(-1); if (ctx.measureText(`${last} ${word}`).width < 1400) lines[lines.length - 1] = `${last} ${word}`; else lines.push(word); return lines; }, ['']).forEach((line, index) => ctx.fillText(line, 100, 180 + index * 100)); return canvas.toBuffer('image/png'); }
+function syntheticInvoicePdf(reference) {
+  const text = ['INVOICE', 'Northwind Office Supplies', 'Bill to: Klasr Consulting', `Invoice number: ${reference}`, 'Invoice date: 2026-08-15', 'Professional services: EUR 1,200.00', 'VAT 20%: EUR 240.00', 'TOTAL DUE: EUR 1,440.00', 'Payment terms: 30 days'];
+  const stream = `BT /F1 24 Tf 72 760 Td ${text.map((line, index) => `${index ? '0 -52 Td ' : ''}(${line.replace(/[()\\]/g, '\\$&')}) Tj`).join(' ')} ET`;
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>', `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+  let pdf = '%PDF-1.4\n'; const offsets = [0];
+  objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf);
+}
+function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
+function fixtureRoles(legacy, generated) {
+  assert(legacy.length === 1 && legacy[0].mimeType === 'application/pdf', 'Expected exactly one legacy PDF fixture');
+  assert(generated.mimeType === 'application/pdf', 'Generated invoice must be a PDF');
+  return { supplied: [generated, legacy[0]], fixtureSnapshots: legacy, createdIds: [generated] };
+}
 
 async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
@@ -372,10 +395,10 @@ async function waitForProposalCards(page, count) { await expect(page.locator('[d
 function proposalCardFor(page, documentName) { return page.locator('[data-testid^="proposal-"]').filter({ hasText: documentName }); }
 function chooseDecisionFixtures(proposals) {
   assert(proposals.some(({ manualReview }) => manualReview), 'Expected at least one genuinely manual-review proposal excluded from Tout valider');
-  const confirm = proposals.find(({ confirmEnabled, validDestination }) => confirmEnabled && validDestination);
-  assert(confirm, 'Expected an enabled proposal with a valid destination for confirmation');
-  const reject = proposals.find((proposal) => proposal !== confirm);
-  assert(reject, 'Expected a separate proposal for rejection');
+  const confirm = proposals.find(({ manualReview, confirmEnabled, destination }) => !manualReview && confirmEnabled && destination === '/invoices');
+  assert(confirm, 'Expected an enabled non-manual proposal for /invoices confirmation');
+  const reject = proposals.find(({ manualReview }) => manualReview);
+  assert(reject !== confirm, 'Expected a separate manual-review proposal for rejection');
   return { confirm, reject };
 }
 async function expectConfidenceBadge(card) {
