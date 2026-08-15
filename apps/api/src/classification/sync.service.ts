@@ -12,8 +12,9 @@ interface MetadataLister {
   listChildren?(organizationId: string, parentId: string, pageToken?: string): Promise<DriveMetadataPage>;
 }
 
-const SUPPORTED = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/tiff']);
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
+const MAX_ANALYSIS_BYTES = 20 * 1024 * 1024;
+function isDownloadable(item: DriveMetadataItem): boolean { return !item.mimeType.startsWith('application/vnd.google-apps.') && item.sizeBytes <= MAX_ANALYSIS_BYTES; }
 
 export interface DriveInputItemView {
   externalId: string;
@@ -73,7 +74,7 @@ export class SyncService {
       .map((item) => {
         const folder = isFolder(item);
         const insideHoldingTree = isInSubtree(metadata, item, holding);
-        const supported = folder || SUPPORTED.has(item.mimeType);
+        const supported = folder || isDownloadable(item);
         return {
           externalId: item.id,
           name: item.name,
@@ -103,7 +104,7 @@ export class SyncService {
     return {
       items: page.items.map((item) => {
         const folder = isFolder(item);
-        const supported = folder || SUPPORTED.has(item.mimeType);
+        const supported = folder || isDownloadable(item);
         const excluded = item.id === reference?.externalId || holding.has(item.id);
         return {
           externalId: item.id, name: item.name, mimeType: item.mimeType, type: folder ? 'folder' as const : 'file' as const,
@@ -131,7 +132,7 @@ export class SyncService {
     let enqueued = 0;
     let manual = 0;
     for (const item of selectedFiles) {
-      const supported = SUPPORTED.has(item.mimeType);
+      const supported = isDownloadable(item);
       const document = await this.repository.upsertDocumentMetadata(organizationId, {
         externalId: item.id,
         name: item.name,

@@ -1,0 +1,12 @@
+analyse_document:
+  description: Convert extracted content into structured facts and allowed signal labels
+  expected_output: Return only a raw JSON object with no prose or Markdown fences, shaped exactly as {"subject": string|null, "documentType": string|null, "dates": string[], "topics": string[], "purpose": string|null, "parties": string[], "identifiers": string[], "amount"?: string|null, "signals": signal[]}. Every date must be an ISO 8601 calendar date in YYYY-MM-DD form. Every signal must be one of "document_type", "document_date", "issuer", "invoice_number", "parties", "amount", "topics", or "matched_folder_path".
+  agent: analyse_document
+suggest_filename:
+  description: Propose a filesystem-safe evidence-grounded filename preserving the extension
+  expected_output: Return only a raw JSON object with no prose or Markdown fences, shaped exactly as {"value": string, "confidence": number from 0 through 1, "signals": signal[], "reviewRequired": boolean, "failureReason": failure|null}. Every signal must be one of "document_type", "document_date", "issuer", "invoice_number", "parties", "amount", "topics", or "matched_folder_path". Failure must be one of "extraction_failed", "empty_content", "sparse_content", "invalid_model_output", "insufficient_evidence", "ambiguous_destination", "no_destination_match", "unsafe_filename", or "out_of_tree".
+  agent: suggest_filename
+suggest_destination:
+  description: Select an exact path from the supplied nested folder tree or return no match
+  expected_output: Return only a raw JSON object with no prose or Markdown fences, shaped exactly as {"path": string|null, "confidence": number from 0 through 1, "signals": signal[], "reviewRequired": boolean, "failureReason": failure|null}. Every signal must be one of "document_type", "document_date", "issuer", "invoice_number", "parties", "amount", "topics", or "matched_folder_path". Failure must be one of "extraction_failed", "empty_content", "sparse_content", "invalid_model_output", "insufficient_evidence", "ambiguous_destination", "no_destination_match", "unsafe_filename", or "out_of_tree".
+  agent: suggest_destination

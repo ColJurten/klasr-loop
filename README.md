@@ -1,5 +1,19 @@
 # Klasr
 
+## Analyse documentaire DSA
+
+Le pipeline API sépare extraction, analyse structurée, décision de nom et décision de destination. Il fonctionne hors ligne avec `KLASR_LLM_PROVIDER=local`. Pour un endpoint compatible OpenAI, renseigner `KLASR_LLM_PROVIDER`, `KLASR_LLM_MODEL`, `KLASR_LLM_BASE_URL` et `KLASR_LLM_API_KEY`; les modèles par agent peuvent être surchargés par les variables `KLASR_AGENT_*_MODEL`. `ANTHROPIC_API_KEY` reste un repli de compatibilité temporaire, pas le contrat du pipeline.
+
+```bash
+pnpm install
+pnpm dsa:filename --file apps/api/test/fixtures/synthetic-invoice.txt
+pnpm dsa:destination --file apps/api/test/fixtures/synthetic-invoice.txt --dir /Comptabilite/Factures --dir /Juridique/Contrats
+```
+
+La CLI n'affiche ni texte extrait ni clé. PDF, PNG, JPEG, TIFF et texte sont pris en charge. Les formats Office entrent dans le flux mais demandent une revue manuelle; leur extraction nécessitera une dépendance TypeScript approuvée et, si le périmètre l'exige, un ADR.
+
+L’écran de réglages charge ses listes de modèles depuis `KLASR_ANTHROPIC_MODELS`, `KLASR_OPENAI_MODELS`, `KLASR_MISTRAL_MODELS` et `KLASR_COMPATIBLE_MODELS` (valeurs séparées par des virgules). Il valide le format d’une clé puis l’oublie immédiatement; les traitements utilisent exclusivement les variables d’environnement de l’API.
+
 Klasr est un micro-SaaS de classement documentaire pour cabinets et professions
 reglementees. Le flux reel est volontairement explicite :
 
@@ -107,7 +121,7 @@ non supporte. Aucun token OAuth reel ni document reel n'est utilise.
 L'OCR accepte PDF, PNG, JPEG et TIFF. Les PDF natifs utilisent d'abord la couche
 texte `pdfjs-dist`; seules les pages sans texte utile sont rasterisees puis lues
 par Tesseract (`fra+eng`). L'adaptateur borne l'entree a 20 MiB, analyse au plus
-8 pages par PDF et transmet au classement un contenu normalise et representatif
+20 pages par PDF et transmet au classement un contenu normalise et representatif
 (debut/milieu/fin), jamais un simple debut de document.
 
 Une extraction vide, trop courte, corrompue ou non supportee cree une proposition
@@ -149,8 +163,8 @@ référence. Un dossier peut être choisi partout et ses descendants supportés 
 parcourus récursivement. La racine de référence elle-même, le dossier
 `À traiter manuellement` et tous ses descendants sont exclus. Les documents déjà
 `PROPOSED`, `CLASSIFIED` ou `MANUAL` ne sont pas ré-enfilés. Les formats non
-supportés, notamment XLSX, restent visibles avec « Non supporté » et ne sont pas
-envoyés à l'OCR.
+supportés, notamment XLSX, restent visibles et révisables avec « Non supporté » :
+ils ne sont ni masqués ni envoyés à l'OCR, et aboutissent à une revue manuelle.
 
 La preuve Google exige qu'un humain ouvre `/login` et réalise lui-même le
 consentement. Il contrôle ensuite, sans copier de jeton ni de contenu : navigation

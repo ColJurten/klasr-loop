@@ -13,6 +13,16 @@ if (process.argv.includes('--lifecycle-check')) {
   process.exit(0);
 }
 
+if (process.argv.includes('--decision-selection-check')) {
+  const selected = chooseDecisionFixtures([
+    { id: 'manual', manualReview: true, confirmEnabled: false, validDestination: false },
+    { id: 'valid', manualReview: false, confirmEnabled: true, validDestination: true },
+  ]);
+  assert(selected.confirm.id === 'valid' && selected.reject.id === 'manual', 'Decision fixture selection is not provider-agnostic');
+  process.stdout.write('live runner decision selection check PASS\n');
+  process.exit(0);
+}
+
 const syntheticLineage = { sha: '0'.repeat(40), issue: 1, attempt: 1 };
 const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineage : parseLineage(process.env);
 
@@ -23,7 +33,17 @@ const manifestPath = path.join(evidenceDir, 'manifest.sanitized.json');
 mkdirSync(screenshotDir, { recursive: true });
 
 if (process.argv.includes('--evidence-self-check')) {
-  assertManifest(sanitizedManifest({ serviceAccountAuth: 'PASS' }, { fixtureRestored: true, createdItemsRemoved: true, tenantCleaned: true, appsStopped: true, noOrphans: true }, lineage));
+  const raw = {
+    serviceAccountAuth: 'PASS', realDriveListing: 'PASS', realDriveDownloadOcr: 'PASS', realProposalReview: 'PASS',
+    realDriveConfirmMutation: 'PASS', realDriveCorrectMutation: 'PASS', realDriveRejectMutation: 'PASS', terminalNoReenqueue: 'PASS',
+    desktopBrowser: 'PASS', mobile390Browser: 'PASS', launchCompletion: 'PASS', freshProviderMetadata: 'PASS',
+  };
+  const proof = { fixtureRestored: true, createdItemsRemoved: true, tenantCleaned: true, appsStopped: true, noOrphans: true };
+  const complete = sanitizedManifest(raw, proof, lineage, true);
+  const incomplete = sanitizedManifest(raw, proof, lineage, false);
+  assertManifest(complete);
+  assertManifest(incomplete);
+  assert(complete.status === 'PASS' && incomplete.status === 'FAIL', 'Evidence self-check must fail incomplete runs');
   process.stdout.write('live evidence schema check PASS\n');
   process.exit(0);
 }
@@ -62,6 +82,7 @@ const evidence = {
 let accessToken;
 let browser;
 let organizationId;
+let runCompleted = false;
 let holdingWasPresent = false;
 const cleanup = { fixtureRestored: false, createdItemsRemoved: false, tenantCleaned: false, appsStopped: false, noOrphans: false };
 
@@ -115,12 +136,26 @@ try {
   await expect(page.getByText('Analyse en cours', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: "Lancer l'organisation" })).toBeEnabled();
   evidence.launchCompletion = 'PASS';
-  const confirmedCard = proposalCardFor(page, supplied[0].name);
-  const rejectedCard = proposalCardFor(page, supplied[1].name);
-  await expectReviewRequiredProposal(confirmedCard);
-  await expectReviewRequiredProposal(rejectedCard);
-  await expect(confirmedCard).toContainText(supplied[0].name);
-  await expect(rejectedCard).toContainText(supplied[1].name);
+  const proposals = [];
+  for (const fixture of supplied) {
+    const card = proposalCardFor(page, fixture.name);
+    await expectConfidenceBadge(card);
+    await expect(card).toContainText(fixture.name);
+    const proposedName = await displayedProposedName(card);
+    const destination = await displayedDestination(card);
+    const confirmButton = card.getByRole('button', { name: /(?:Valider le classement|Corriger avant validation)/ });
+    proposals.push({
+      fixture, card, proposedName, destination,
+      manualReview: await card.getByText('à vérifier', { exact: true }).isVisible()
+        && await card.getByText(/exclue de Tout valider/).isVisible(),
+      confirmEnabled: await confirmButton.isEnabled(),
+      validDestination: Object.values(destinations).some((item) => `/${item.name}` === destination),
+    });
+  }
+  const { confirm: confirmed, reject: rejected } = chooseDecisionFixtures(proposals);
+  const confirmedCard = confirmed.card;
+  const rejectedCard = rejected.card;
+  await expectReviewRequiredProposal(proposals.find(({ manualReview }) => manualReview).card);
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-review.png'), fullPage: true });
@@ -135,26 +170,26 @@ try {
   evidence.mobile390Browser = 'PASS';
   await mobile.close();
 
-  const confirmPath = await displayedDestination(confirmedCard);
+  const confirmPath = confirmed.destination;
   await confirmedCard.getByRole('button', { name: /Valider le classement/ }).click();
   await expect(confirmedCard).toHaveCount(0);
   await rejectedCard.getByRole('button', { name: 'Retirer' }).click();
   await expect(rejectedCard).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Historique' })).toBeVisible();
 
-  const confirmedMeta = await metadata(supplied[0].id);
+  const confirmedMeta = await metadata(confirmed.fixture.id);
   const confirmDestination = Object.values(destinations).find((item) => `/${item.name}` === confirmPath);
   assert(
-    confirmDestination && confirmedMeta.name === supplied[0].name && sameParents(confirmedMeta.parents, [confirmDestination.id]),
-    `confirm metadata mismatch: ${JSON.stringify({ confirmPath, actualName: confirmedMeta.name, expectedName: supplied[0].name, actualParents: confirmedMeta.parents, expectedParent: confirmDestination?.id })}`,
+    confirmDestination && confirmedMeta.name === confirmed.proposedName && sameParents(confirmedMeta.parents, [confirmDestination.id]),
+    `confirm metadata mismatch: ${JSON.stringify({ confirmPath, actualName: confirmedMeta.name, expectedName: confirmed.proposedName, actualParents: confirmedMeta.parents, expectedParent: confirmDestination?.id })}`,
   );
   evidence.realDriveConfirmMutation = 'PASS';
-  const rejectedMeta = await metadata(supplied[1].id);
+  const rejectedMeta = await metadata(rejected.fixture.id);
   const holding = exact(await listChildren(reference.id), 'À traiter manuellement', 'application/vnd.google-apps.folder');
   if (!holdingWasPresent) createdIds.push(holding.id);
   assert(
-    rejectedMeta.name === supplied[1].name && sameParents(rejectedMeta.parents, [holding.id]),
-    `reject metadata mismatch: ${JSON.stringify({ actualName: rejectedMeta.name, expectedName: supplied[1].name, actualParents: rejectedMeta.parents, expectedParent: holding.id })}`,
+    rejectedMeta.name === rejected.fixture.name && sameParents(rejectedMeta.parents, [holding.id]),
+    `reject metadata mismatch: ${JSON.stringify({ actualName: rejectedMeta.name, expectedName: rejected.fixture.name, actualParents: rejectedMeta.parents, expectedParent: holding.id })}`,
   );
   evidence.realDriveRejectMutation = 'PASS';
   evidence.freshProviderMetadata = 'PASS';
@@ -173,7 +208,7 @@ try {
     method: 'POST', body: JSON.stringify({ itemExternalId: inputFolder.id }),
   });
   assert(relaunch.enqueued === 0, 'terminal documents were re-enqueued');
-  evidence.terminalNoReenqueue = 'PASS';
+
 
   await restoreFixtures();
   await resetTenantData(organizationId);
@@ -184,7 +219,7 @@ try {
   await chooseBrowserItem(page, supplied[0].name, "Lancer l'organisation", true);
   await waitForProposalCards(page, 1);
   const directCard = proposalCardFor(page, supplied[0].name);
-  await directCard.getByRole('button', { name: 'Corriger' }).click();
+  await directCard.getByRole('button', { name: 'Corriger', exact: true }).click();
   const correctedName = `Calendrier_CDA_Corrige${extension}`;
   await directCard.getByLabel('Nom final').fill(correctedName);
   await directCard.getByLabel('Dossier de destination').selectOption(destinations.meetings.id);
@@ -197,6 +232,8 @@ try {
   assert(await prisma.document.count({ where: { organizationId, status: 'CLASSIFIED' } }) === 1, 'UI correction did not persist classified state');
   const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: supplied[0].id }) });
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
+  evidence.terminalNoReenqueue = 'PASS';
+  runCompleted = true;
 } finally {
   if (browser) await browser.close().catch(() => undefined);
   cleanup.fixtureRestored = await restoreFixtures().then(() => true, () => false);
@@ -210,7 +247,7 @@ try {
   if (!cleanup.appsStopped) process.exitCode = 1;
   await prisma.$disconnect().catch(() => { process.exitCode = 1; });
   accessToken = undefined;
-  const manifest = sanitizedManifest(evidence, cleanup, lineage);
+  const manifest = sanitizedManifest(evidence, cleanup, lineage, runCompleted);
   assertManifest(manifest);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 }
@@ -218,7 +255,7 @@ try {
 if (Object.entries(evidence).some(([key, value]) => key !== 'identity' && typeof value === 'string' && value !== 'PASS')) process.exitCode = 1;
 
 function required(name) { const value = process.env[name]; if (!value) throw new Error(`Missing ${name}`); return value; }
-function sanitizedManifest(raw, proof, manifestLineage) {
+function sanitizedManifest(raw, proof, manifestLineage, completed) {
   const results = {
     service_account_auth: raw.serviceAccountAuth === 'PASS', drive_listing: raw.realDriveListing === 'PASS',
     drive_download_ocr: raw.realDriveDownloadOcr === 'PASS', proposal_review: raw.realProposalReview === 'PASS',
@@ -229,7 +266,7 @@ function sanitizedManifest(raw, proof, manifestLineage) {
   };
   const cleanupResult = { fixture_restored: proof.fixtureRestored, created_items_removed: proof.createdItemsRemoved, tenant_cleaned: proof.tenantCleaned };
   const processes = { apps_stopped: proof.appsStopped, no_orphans: proof.noOrphans };
-  const passed = [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
+  const passed = completed && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
   return {
     version: 1,
     identity: 'Google service account non-production acceptance',
@@ -333,10 +370,21 @@ async function api(route, init = {}) { const response = await fetch(`${apiBase}$
 async function chooseBrowserItem(page, name, action, expectAnalysis = false) { const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
 async function waitForProposalCards(page, count) { await expect(page.locator('[data-testid^="proposal-"]')).toHaveCount(count, { timeout: 180_000 }); }
 function proposalCardFor(page, documentName) { return page.locator('[data-testid^="proposal-"]').filter({ hasText: documentName }); }
-async function expectReviewRequiredProposal(card) {
+function chooseDecisionFixtures(proposals) {
+  assert(proposals.some(({ manualReview }) => manualReview), 'Expected at least one genuinely manual-review proposal excluded from Tout valider');
+  const confirm = proposals.find(({ confirmEnabled, validDestination }) => confirmEnabled && validDestination);
+  assert(confirm, 'Expected an enabled proposal with a valid destination for confirmation');
+  const reject = proposals.find((proposal) => proposal !== confirm);
+  assert(reject, 'Expected a separate proposal for rejection');
+  return { confirm, reject };
+}
+async function expectConfidenceBadge(card) {
   await expect(card.getByLabel(/^Confiance (?:100|[1-9]?\d) %, source (?:IA|règle)$/)).toBeVisible();
+}
+async function expectReviewRequiredProposal(card) {
   await expect(card.getByText('à vérifier', { exact: true })).toBeVisible();
   await expect(card.getByText(/exclue de Tout valider/)).toBeVisible();
 }
+async function displayedProposedName(card) { return (await card.getByText(/^→ /).textContent()).replace(/^→\s*/, '').trim(); }
 async function displayedDestination(card) { return (await card.locator('p span.font-mono').last().textContent()).trim(); }
 async function copyCookies(from, to) { await to.addCookies(await from.cookies()); }

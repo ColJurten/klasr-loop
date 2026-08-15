@@ -1,5 +1,13 @@
 # Klasr — Architecture cible (pilotée par le REAC CDA, RNCP 37873)
 
+## ADR — Séparation du pipeline de compréhension documentaire (2026-08-15)
+
+Le chemin OCR est découpé en extraction typée, analyse structurée, décision de nom et décision de destination. Agents et tâches sont déclarés en YAML; chaque sortie traverse un schéma zod. Le fournisseur LLM est configurable et le mode local déterministe garantit des tests sans appel externe.
+
+L'audit distingue cinq causes : formats/plafonds et normalisation côté extraction; texte brut et double décision côté contexte; chemins aplatis côté arborescence; validation combinée sans motif typé côté parsing; orchestration et persistance mêlées côté architecture. Les destinations utilisent une arborescence typée et toute réponse hors arborescence échoue fermée.
+
+Les octets restent en mémoire entre le téléchargement Drive et l'extraction. Aucun texte, prompt ou résultat brut n'est persisté. Office produit l'avertissement `office_extractor_unavailable`; un extracteur TypeScript approuvé fera l'objet d'une décision ultérieure. REAC : C1, C2, C3, C4/C5, C6, C7/C8, C9, C10/C11.
+
 > Principe directeur : **chaque technologie du stack doit être justifiée soit par une
 > compétence du REAC, soit par une exigence produit. Tout le reste est supprimé.**
 > Ce document est l'annexe d'architecture du dossier de projet ; chaque décision est

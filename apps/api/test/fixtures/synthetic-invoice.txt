@@ -1,0 +1,4 @@
+Facture F-42
+Date : 2026-08-15
+Fournisseur : Acme Exemple
+Total : 120,00 EUR

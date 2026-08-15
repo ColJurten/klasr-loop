@@ -86,6 +86,12 @@ test('live runner lifecycle check closes owned process groups and ports', () => 
   assert.equal(run.stdout, 'live runner lifecycle check PASS\n');
 });
 
+test('live runner chooses decision fixtures by UI evidence instead of fixture order', () => {
+  const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--decision-selection-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, 'live runner decision selection check PASS\n');
+});
+
 test('publisher dry-run emits only a sanitized success status and performs no network', () => {
   const manifest = JSON.stringify({
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2,

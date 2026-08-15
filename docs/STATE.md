@@ -1,5 +1,7 @@
 # Klasr — Loop State
 
+> 2026-08-15 : extraction, analyse, nommage et destination séparés sous `apps/api/src/analysis`; Office reste en revue manuelle. Les mutations Drive demeurent exclusivement postérieures à une validation explicite dans `ClassificationService`.
+
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
 > Last updated: 2026-08-12 (OCR suggestion quality)
@@ -24,7 +26,7 @@
 
 ## Done
 
-- [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 8 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
+- [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 
 - [x] 2026-08-06 — Agent loop v3 (#13) : spec v2 et hiérarchie de preuves, manifeste/finaliseur lié issue-tentative-SHA, états/lineage/supersession, rôle `acceptance-validator` en lecture seule du code produit, gate CI pnpm toujours présent avec intégration/E2E/acceptation Google conditionnelle et artefacts, CODEOWNERS, sync Projects v2 fail-safe, documentation et tests node:test. Aucun changement produit ni second orchestrateur.
 

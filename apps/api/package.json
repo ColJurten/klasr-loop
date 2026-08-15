@@ -13,6 +13,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "worker:dev": "nest start --entryFile worker",
+    "dsa:filename": "pnpm build && node dist/analysis/cli.js filename",
+    "dsa:destination": "pnpm build && node dist/analysis/cli.js destination",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -30,7 +32,8 @@
     "pg-boss": "12.26.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "tesseract.js": "7.0.0"
+    "tesseract.js": "7.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.2",
