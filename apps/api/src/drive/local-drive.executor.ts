@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createCanvas } from '@napi-rs/canvas';
 import { DriveExecutor, MoveRenameCommand } from '../classification/drive-executor.port';
 import { DriveMetadataItem } from './google-drive.executor';
 
@@ -42,7 +43,12 @@ export class LocalDriveExecutor implements DriveExecutor {
   }
 
   async download(_organizationId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>> {
-    const bytes = new TextEncoder().encode(LOCAL_TEXTS.get(documentExternalId) ?? '');
+    const text = LOCAL_TEXTS.get(documentExternalId) ?? '';
+    const bytes = documentExternalId === 'local_file_note_paie'
+      ? renderPng(text)
+      : documentExternalId === 'local_file_facture_elec' || documentExternalId === 'local_file_releve_banque'
+        ? renderPdf(text)
+        : new TextEncoder().encode(text);
     return new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(bytes);
@@ -89,4 +95,32 @@ export class LocalDriveExecutor implements DriveExecutor {
     this.stateByOrganization.set(organizationId, fresh);
     return fresh;
   }
+}
+
+function renderPng(text: string): Buffer {
+  const canvas = createCanvas(1200, 240);
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'white';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = 'black';
+  context.font = '40px sans-serif';
+  context.fillText(text, 40, 130);
+  return canvas.toBuffer('image/png');
+}
+
+function renderPdf(text: string): Buffer {
+  const stream = `BT /F1 18 Tf 50 700 Td (${text.replace(/[\\()]/g, '\\$&')}) Tj ET`;
+  const objects = [
+    '1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj',
+    '2 0 obj <</Type/Pages/Kids[3 0 R]/Count 1>> endobj',
+    '3 0 obj <</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>> endobj',
+    `4 0 obj <</Length ${Buffer.byteLength(stream, 'latin1')}>> stream\n${stream}\nendstream\nendobj`,
+    '5 0 obj <</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>> endobj',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) { offsets.push(Buffer.byteLength(pdf, 'latin1')); pdf += `${object}\n`; }
+  const xref = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer <</Size 6/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
 }

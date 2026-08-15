@@ -26,6 +26,8 @@
 
 ## Done
 
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 (`improve-ocr`) : fixtures locaux PNG/PDF valides, quatre documents révisables dont l'extraction non supportée fail-closed, parcours dashboard desktop/mobile sans rechargement forcé, et nettoyage des métadonnées de test. Vérifications intégration/E2E et gates globaux vertes ; statut externe exact-head `klasr/live-google` toujours requis.
+
 - [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 
 - [x] 2026-08-06 — Agent loop v3 (#13) : spec v2 et hiérarchie de preuves, manifeste/finaliseur lié issue-tentative-SHA, états/lineage/supersession, rôle `acceptance-validator` en lecture seule du code produit, gate CI pnpm toujours présent avec intégration/E2E/acceptation Google conditionnelle et artefacts, CODEOWNERS, sync Projects v2 fail-safe, documentation et tests node:test. Aucun changement produit ni second orchestrateur.
@@ -58,6 +60,7 @@
 
 ## REAC coverage notes (feeds KLASR_CONTEXT.md / jury dossier)
 
+- Maintenance corrective CI PR #17 démontre : C4 (preuves automatisées ciblées et navigateur), C7 (intégration PostgreSQL/pg-boss et décisions terminales), C8 (métadonnées Mongo TTL sans contenu, contrôlées et nettoyées).
 - Loop setup demonstrates: CI/CD design, quality gates, Git workflow industrialization.
 - Starter code demonstrates: layered architecture (controller/service/repository), hexagonal port for Drive execution, multi-tenant data access design, TDD on the confirm flow, eco-design instrumentation (llmCallsUsed, UsageMetric).
 - #1 Auth demonstrates: OAuth-based auth (NextAuth Google/Microsoft) with server-side session augmentation, automatic multi-tenant onboarding (organization minted or reused from a verified OAuth email, never client input), a fail-closed + constant-time internal-service guard (defense in depth for a service-to-service endpoint with no other verification), and NextAuth middleware protecting the **Next.js dashboard pages** (`/dashboard/**`) — with unit tests covering the onboarding happy/reuse/race/defensive paths and every guard failure mode. **Precise about what's NOT covered**: the API itself (`apps/api`) has no request-level authentication yet — every controller still trusts `organizationId` from the URL/body with nothing checking who's asking. That gap is tracked as issue #2, not closed by #1.

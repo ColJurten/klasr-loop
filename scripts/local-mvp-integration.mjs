@@ -84,13 +84,14 @@ try {
   });
   if (!syncResponse.ok) throw new Error(`HTTP launch failed: ${syncResponse.status}`);
   const sync = await syncResponse.json();
-  if (sync.enqueued !== 3 || sync.manual !== 1) throw new Error(`Expected three enqueued jobs and one manual file, got ${JSON.stringify(sync)}`);
+  if (sync.enqueued !== 4 || sync.manual !== 0) throw new Error(`Expected four reviewable jobs, got ${JSON.stringify(sync)}`);
 
-  const proposals = await waitForProposals(organizationId, 3);
+  const proposals = await waitForProposals(organizationId, 4);
   const facture = proposals.find((proposal) => proposal.document.externalId === 'local_file_facture_elec');
   const banque = proposals.find((proposal) => proposal.document.externalId === 'local_file_releve_banque');
   const paie = proposals.find((proposal) => proposal.document.externalId === 'local_file_note_paie');
-  if (!facture || !banque || !paie) {
+  const archive = proposals.find((proposal) => proposal.document.externalId === 'local_file_unsupported');
+  if (!facture || !banque || !paie || !archive) {
     throw new Error(`Missing expected proposals: ${proposals.map((proposal) => proposal.document.externalId).join(',')}`);
   }
 
@@ -120,9 +121,14 @@ try {
     { method: 'POST', headers: { 'x-internal-secret': internalSecret } },
   );
   if (!rejectResponse.ok) throw new Error(`HTTP reject failed: ${rejectResponse.status}`);
+  const archiveRejectResponse = await fetch(
+    `${apiBase}/organizations/${organizationId}/proposals/${archive.id}/reject`,
+    { method: 'POST', headers: { 'x-internal-secret': internalSecret } },
+  );
+  if (!archiveRejectResponse.ok) throw new Error(`HTTP archive reject failed: ${archiveRejectResponse.status}`);
 
   const history = await prisma.actionHistory.findMany({ where: { organizationId } });
-  if (history.length !== 3 || !history.some((item) => item.action === 'REJECT')) {
+  if (history.length !== 4 || history.filter((item) => item.action === 'REJECT').length !== 2) {
     throw new Error('Decisions did not persist action history');
   }
   const rejected = await prisma.document.findUniqueOrThrow({
@@ -155,13 +161,13 @@ try {
   console.log('integration ok: reference tree -> selected Drive launch -> pg-boss analysis -> Mongo/PostgreSQL assertions -> confirm/correct/reject');
 } finally {
   stopApi();
+  await resetLocalData();
   await mongo.close().catch(() => undefined);
   await prisma.$disconnect();
 }
 
 async function resetLocalData() {
   await mongo.connect();
-  await mongo.db('klasr').collection('analyses').deleteMany({ organizationId: 'local_mvp_org' });
   const membership = await prisma.membership.findFirst({
     where: { user: { email } },
     select: { organizationId: true, userId: true },
@@ -172,6 +178,8 @@ async function resetLocalData() {
   }
   const organizationId = membership.organizationId;
   const rules = await prisma.classificationRule.findMany({ where: { organizationId }, select: { id: true } });
+  await mongo.db('klasr').collection('analyses').deleteMany({ organizationId });
+  await prisma.$executeRaw`DELETE FROM pgboss.job WHERE name = 'analysis' AND data->>'organizationId' = ${organizationId}`;
   await prisma.actionHistory.deleteMany({ where: { organizationId } });
   await prisma.classificationProposal.deleteMany({ where: { organizationId } });
   await prisma.document.deleteMany({ where: { organizationId } });
@@ -267,13 +275,14 @@ async function assertDatabases(organizationId, documentIds) {
     prisma.classificationProposal.findMany({ where: { organizationId } }),
     prisma.usageMetric.findMany({ where: { organizationId } }),
   ]);
-  if (documents.filter((document) => document.status === 'PROPOSED').length !== 3) {
+  if (documents.filter((document) => document.status === 'PROPOSED').length !== 4) {
     throw new Error('PostgreSQL document metadata was not updated by analysis');
   }
-  if (proposals.length !== 3 || proposals.some((proposal) => proposal.source !== 'RULE' || !proposal.destinationFolderExternalId)) {
+  const reviewProposal = proposals.find((proposal) => !proposal.destinationFolderExternalId);
+  if (proposals.length !== 4 || proposals.filter((proposal) => proposal.source === 'RULE' && proposal.destinationFolderExternalId).length !== 3 || !reviewProposal?.reviewRequired) {
     throw new Error('PostgreSQL proposal was not created by classification');
   }
-  if (!metrics.some((metric) => metric.documentsIn === 4 && metric.ocrRuns === 3 && metric.ruleMatches === 3)) {
+  if (!metrics.some((metric) => metric.documentsIn === 4 && metric.ocrRuns === 4 && metric.ruleMatches === 3)) {
     throw new Error('Usage metrics were not incremented by the pipeline');
   }
   const collection = mongo.db('klasr').collection('analyses');
@@ -282,7 +291,7 @@ async function assertDatabases(organizationId, documentIds) {
     throw new Error('Mongo analyses TTL index missing');
   }
   const analyses = await collection.find({ organizationId, documentId: { $in: documentIds } }).toArray();
-  if (analyses.length !== 3 || analyses.some((analysis) => 'ocrExcerpt' in analysis)) {
+  if (analyses.length !== 4 || analyses.some((analysis) => 'ocrExcerpt' in analysis)) {
     throw new Error('Mongo analysis metadata was not written by the pipeline');
   }
   const persisted = JSON.stringify([documents, proposals, analyses]);
