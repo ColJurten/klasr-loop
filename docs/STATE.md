@@ -26,7 +26,7 @@
 
 ## Done
 
-- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX8 (`improve-ocr`) : fixtures locaux PNG/PDF valides et parcours dashboard desktop/mobile sans rechargement forcé. Le runner Google récupère les marqueurs depuis Shared Drive ou un dossier My Drive partagé, restaure octets/métadonnées depuis la révision épinglée, vérifie puis efface le marqueur avant de libérer l'épingle ; restauration, nettoyage d'urgence et échec ordinaire sont coordonnés et fail-closed. Gardes sémantiques ciblées renforcées contre les régressions destructrices. Preuves locales statiques/unitaires seulement ; aucun appel fournisseur, navigateur ou credential, et statut exact-head `klasr/live-google` reste requis.
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX9 (`improve-ocr`) : récupération Google limitée aux deux requêtes exactes de scope `invoice` et `manual`, sans requête de marqueur par clé seule ; chaque scope reste ambiguïté-fail-closed et son unique candidat est validé par version, scope et révision avant restauration. Preuves locales statiques/unitaires seulement ; aucun appel fournisseur, navigateur ou credential, et statut exact-head `klasr/live-google` reste requis.
 
 - [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 

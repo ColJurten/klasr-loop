@@ -431,20 +431,12 @@ async function recoveryCandidates(scope, driveId) {
   const q = new URLSearchParams({ q: `appProperties has { key='klasrRecoveryScope' and value='${scope}' }`, ...(driveId ? { corpora: 'drive', driveId } : { corpora: 'allDrives' }), pageSize: '1000', fields: 'files(id,name,mimeType,parents,trashed,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
   return (await drive(`/drive/v3/files?${q}`)).files ?? [];
 }
-async function markedCandidates(driveId) {
-  const q = new URLSearchParams({ q: "appProperties has { key='klasrRecoveryRevision' }", ...(driveId ? { corpora: 'drive', driveId } : { corpora: 'allDrives' }), pageSize: '1000', fields: 'files(id,name,mimeType,parents,trashed,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
-  return (await drive(`/drive/v3/files?${q}`)).files ?? [];
-}
 async function recoverMarkedFixtures() {
   accessToken = await serviceAccountToken();
   const { driveId } = await metadata(sharedRootId);
-  const marked = await markedCandidates(driveId);
-  for (const item of marked) assert(['invoice', 'manual'].includes(item.appProperties?.klasrRecoveryScope) && recoveryMarker(item, item.appProperties.klasrRecoveryScope), 'Malformed or unexpected Drive recovery marker');
   for (const [index, scope] of ['invoice', 'manual'].entries()) {
     const candidates = await recoveryCandidates(scope, driveId);
-    const expected = marked.filter((item) => item.appProperties.klasrRecoveryScope === scope);
     assert(candidates.length <= 1, 'Ambiguous Drive recovery marker');
-    assert(candidates.length === expected.length && candidates.every((candidate) => expected.some(({ id }) => id === candidate.id)), 'Recovery marker discovery is inconsistent');
     if (!candidates.length) continue;
     const item = candidates[0];
     const revisionId = recoveryMarker(item, scope);

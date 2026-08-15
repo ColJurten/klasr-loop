@@ -122,18 +122,17 @@ test('live runner keeps crash recovery inside Drive revisions without local byte
   assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixtures(rootItems)', startupRecovery));
   const discovery = functionBody(source, 'recoveryCandidates');
   assert.match(discovery, /appProperties has \{ key='klasrRecoveryScope' and value='/);
-  for (const candidate of [discovery, functionBody(source, 'markedCandidates')]) {
-    for (const value of ["corpora: 'drive'", "corpora: 'allDrives'", 'driveId', "supportsAllDrives: 'true'", "includeItemsFromAllDrives: 'true'"]) assert.match(candidate, new RegExp(value));
-    assert.doesNotMatch(candidate, /q: [^,]*(?:parents|name|trashed)/);
-  }
+  assert.doesNotMatch(source, /function markedCandidates|markedCandidates\(/);
+  assert.doesNotMatch(source, /appProperties has \{ key='klasrRecoveryRevision' \}/);
+  for (const value of ["corpora: 'drive'", "corpora: 'allDrives'", 'driveId', "supportsAllDrives: 'true'", "includeItemsFromAllDrives: 'true'"]) assert.match(discovery, new RegExp(value));
+  assert.doesNotMatch(discovery, /q: [^,]*(?:parents|name|trashed)/);
   assert.doesNotMatch(discovery, /q: `[^`]*(?:parents|name|trashed)/);
   const recover = functionBody(source, 'recoverMarkedFixtures');
   assert.match(recover, /accessToken = await serviceAccountToken\(\)/);
   assert.doesNotMatch(recover, /assert\(driveId/);
-  assert.match(recover, /assert\(candidates\.length <= 1/);
-  assert.match(recover, /Malformed or unexpected Drive recovery marker/);
-  assert.match(recover, /candidates\.length === expected\.length[\s\S]*Recovery marker discovery is inconsistent/);
-  assert.match(recover, /assert\(revisionId, 'Exact Drive recovery marker is missing'\)/);
+  assert.match(recover, /\['invoice', 'manual'\][\s\S]*recoveryCandidates\(scope, driveId\)/);
+  assert.match(recover, /assert\(candidates\.length <= 1, 'Ambiguous Drive recovery marker'\)/);
+  assert.match(recover, /const revisionId = recoveryMarker\(item, scope\)[\s\S]*assert\(revisionId, 'Exact Drive recovery marker is missing'\)[\s\S]*await restoreFromRevision\(item, revisionId/);
   assert.match(recover, /parents: \[sharedRootId\], trashed: false/);
   assert.match(recover, /await restoreFromRevision\(item, revisionId, \{ name: fixtureNames\[index\]/);
   assert.match(source, /await pinOriginalRevision\(invoiceFixture\)[\s\S]*await markRecovery\(invoiceFixture\.id,[\s\S]*await replaceBytes\(invoiceFixture\.id/);
