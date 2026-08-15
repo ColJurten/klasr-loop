@@ -135,8 +135,8 @@ test('live runner keeps crash recovery inside Drive revisions without local byte
   assert.match(recover, /const revisionId = recoveryMarker\(item, scope\)[\s\S]*assert\(revisionId, 'Exact Drive recovery marker is missing'\)[\s\S]*await restoreFromRevision\(item, revisionId/);
   assert.match(recover, /parents: \[sharedRootId\], trashed: false/);
   assert.match(recover, /await restoreFromRevision\(item, revisionId, \{ name: fixtureNames\[index\]/);
-  assert.match(source, /await pinOriginalRevision\(invoiceFixture\)[\s\S]*await markRecovery\(invoiceFixture\.id,[\s\S]*await replaceBytes\(invoiceFixture\.id/);
-  assert.match(source, /await pinOriginalRevision\(manualFixture\)[\s\S]*await markRecovery\(manualFixture\.id,[\s\S]*await replaceBytes\(manualFixture\.id/);
+  assert.match(source, /await pinOriginalRevision\(invoiceFixture, fixtureSnapshots\[0\]\.bytes\)[\s\S]*await markRecovery\(invoiceFixture\.id,[\s\S]*await replaceBytes\(invoiceFixture\.id/);
+  assert.match(source, /await pinOriginalRevision\(manualFixture, fixtureSnapshots\[1\]\.bytes\)[\s\S]*await markRecovery\(manualFixture\.id,[\s\S]*await replaceBytes\(manualFixture\.id/);
   assert.match(source, /revisions\/[\s\S]*alt=media/);
   assert.match(source, /appProperties/);
   assert.doesNotMatch(source, /backup(?:Path|File)|writeFileSync\([^)]*(?:bytes|content|snapshot)/i);
@@ -149,11 +149,37 @@ test('live runner keeps crash recovery inside Drive revisions without local byte
   assert.match(restore.slice(0, readback), /sameBytes\(originalBytes, target\.bytes\)/);
   const finish = functionBody(source, 'finishRecovery');
   const clearReadback = "assert(!recoveryMarker(await metadata(id), scope), 'Drive recovery marker clear readback failed')";
-  assert(finish.indexOf('klasrRecoveryRevision: null') < finish.indexOf(clearReadback) && finish.indexOf(clearReadback) < finish.indexOf('keepForever: false'));
-  assert.match(functionBody(source, 'pinOriginalRevision'), /body: JSON\.stringify\(\{ keepForever: true \}\)[\s\S]*assert\(revision\.id === current\.headRevisionId && revision\.keepForever === true/);
+  assert.doesNotMatch(source, /keepForever:\s*false/);
+  assert.doesNotMatch(source, /revisions[^\n]*method:\s*'DELETE'/);
+  assert(finish.indexOf('klasrRecoveryRevision: null') < finish.indexOf(clearReadback));
+  const pin = functionBody(source, 'pinOriginalRevision');
+  assert.match(pin, /listRevisions\(item\.id\)/);
+  const revisionList = functionBody(source, 'listRevisions');
+  assert.match(revisionList, /files\/\$\{encodeURIComponent\(id\)\}\/revisions\?\$\{query\}/);
+  assert.match(revisionList, /fields: 'nextPageToken,revisions\(id,keepForever\)'/);
+  assert.match(pin, /filter\(\(revision\) => revision\.keepForever === true\)/);
+  assert.match(pin, /for \(const candidate of pinned\)[\s\S]*downloadRevision\(item\.id, candidate\.id\)[\s\S]*sameBytes\(candidateBytes, snapshotBytes\)[\s\S]*selectMatchingPinnedRevision\(candidates\)[\s\S]*return reusable\.id/);
+  assert.match(functionBody(source, 'selectMatchingPinnedRevision'), /filter\(\(\{ matchesSnapshot \}\) => matchesSnapshot\)[\s\S]*sort\(\(left, right\) => left\.id\.localeCompare\(right\.id\)\)\[0\]/);
+  const fallback = pin.indexOf('body: JSON.stringify({ keepForever: true })');
+  assert(pin.indexOf('return reusable.id') < fallback);
+  assert.match(pin.slice(fallback), /assert\(revision\.id === current\.headRevisionId && revision\.keepForever === true[\s\S]*drive\([\s\S]*assert\(verified\.id === revision\.id && verified\.keepForever === true/);
+  assert.match(source, /pinOriginalRevision\(invoiceFixture, fixtureSnapshots\[0\]\.bytes\)/);
+  assert.match(source, /pinOriginalRevision\(manualFixture, fixtureSnapshots\[1\]\.bytes\)/);
   assert.match(functionBody(source, 'markRecovery'), /await drive\([\s\S]*assert\(recoveryMarker\(await metadata\(id\), scope\) === revisionId/);
   const midRunRestore = source.indexOf('await restoreFixtures(false);');
   assert(midRunRestore !== -1 && midRunRestore < source.indexOf('const correctionFixture'));
+});
+
+test('live runner binds a sanitized FAIL manifest to exit code 1 before finalization ends', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('} finally {');
+  const end = source.indexOf('\n}\n\nif (Object.entries', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const finalization = source.slice(start, end);
+  const manifest = finalization.indexOf('const manifest = sanitizedManifest(');
+  const exitBinding = finalization.indexOf("if (manifest.status !== 'PASS') process.exitCode = 1;");
+  assert(manifest !== -1 && manifest < exitBinding && exitBinding < finalization.length);
 });
 
 test('live runner routes signals and fatal errors through bounded single-flight recovery with fresh tokens', () => {

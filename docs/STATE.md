@@ -26,6 +26,10 @@
 
 ## Done
 
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX11 (`improve-ocr`) : FIX10 supersédé par la réutilisation stable de la plus petite révision originale épinglée dont les octets correspondent exactement au snapshot ; sinon épinglage vérifié de la tête exacte, puis restauration exacte et effacement relu du seul marqueur, sans suppression de révision. Preuves statiques/unitaires locales uniquement, sans fournisseur, navigateur ni credential.
+
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX10 (`improve-ocr`) : suppression de la révision Drive épinglée par DELETE uniquement après restauration exacte et effacement relu du marqueur ; tout manifeste final FAIL impose désormais un code de sortie 1. Preuves locales statiques/unitaires uniquement, sans fournisseur, navigateur ni credential.
+
 - [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX9 (`improve-ocr`) : récupération Google limitée aux deux requêtes exactes de scope `invoice` et `manual`, sans requête de marqueur par clé seule ; chaque scope reste ambiguïté-fail-closed et son unique candidat est validé par version, scope et révision avant restauration. Preuves locales statiques/unitaires seulement ; aucun appel fournisseur, navigateur ou credential, et statut exact-head `klasr/live-google` reste requis.
 
 - [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.

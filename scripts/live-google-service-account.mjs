@@ -43,6 +43,8 @@ if (process.argv.includes('--decision-selection-check')) {
   assert(recoveryMarker(marker, 'invoice') === 'revision_1' && recoveryMarker({}, 'invoice') === undefined, 'Recovery marker validation failed');
   assertThrows(() => recoveryMarker({ appProperties: { klasrRecoveryRevision: 'revision_1' } }, 'invoice'), 'Partial recovery markers must fail closed');
   assertThrows(() => recoveryMarker(marker, 'manual'), 'Fixture recovery scope mismatch must fail closed');
+  assert(selectMatchingPinnedRevision([{ id: 'z', matchesSnapshot: true }, { id: 'a', matchesSnapshot: true }]).id === 'a', 'Multiple matching pins must reuse the stable lowest ID');
+  assert(selectMatchingPinnedRevision([{ id: 'a', matchesSnapshot: false }]) === undefined, 'A nonmatching pin must fall through to head pinning');
   const selected = chooseDecisionFixtures([
     { id: 'manual', manualReview: true, confirmEnabled: false, destination: '' },
     { id: 'wrong', manualReview: false, confirmEnabled: true, destination: '/quotes' },
@@ -175,7 +177,7 @@ try {
   const replacementBytes = syntheticInvoicePdf(runName);
   const manualBytes = manualReviewPdf();
   assert(isPdf(replacementBytes) && isPdf(manualBytes), 'Generated replacements must be PDF-marked');
-  const invoiceRevision = await pinOriginalRevision(invoiceFixture);
+  const invoiceRevision = await pinOriginalRevision(invoiceFixture, fixtureSnapshots[0].bytes);
   await markRecovery(invoiceFixture.id, invoiceRevision, 'invoice');
   await restoreMetadata(invoiceFixture.id, { ...fixtureSnapshots[0], parents: [inputFolder.id] });
   replacementAttempted.add(invoiceFixture.id);
@@ -183,7 +185,7 @@ try {
   observedReplacements.set(invoiceFixture.id, await downloadBytes(invoiceFixture.id));
   assert(!sameBytes(fixtureSnapshots[0].bytes, observedReplacements.get(invoiceFixture.id)), 'Temporary fixture replacement did not change provider bytes');
   replacementVerified.add(invoiceFixture.id);
-  const manualRevision = await pinOriginalRevision(manualFixture);
+  const manualRevision = await pinOriginalRevision(manualFixture, fixtureSnapshots[1].bytes);
   await markRecovery(manualFixture.id, manualRevision, 'manual');
   await restoreMetadata(manualFixture.id, { ...fixtureSnapshots[1], parents: [inputFolder.id] });
   replacementAttempted.add(manualFixture.id);
@@ -327,6 +329,7 @@ try {
   assertManifest(manifest);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   normalCleanupDone = true;
+  if (manifest.status !== 'PASS') process.exitCode = 1;
 }
 
 if (Object.entries(evidence).some(([key, value]) => key !== 'identity' && typeof value === 'string' && value !== 'PASS')) process.exitCode = 1;
@@ -389,6 +392,7 @@ async function metadata(id) { return drive(`/drive/v3/files/${encodeURIComponent
 async function createFolder(name, parentId) { return drive('/drive/v3/files?supportsAllDrives=true&fields=id,name,parents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }) }); }
 async function downloadBytes(id) { const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } }); assert(response.ok, `Google Drive media request failed (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
 async function downloadRevision(id, revisionId) { const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId)}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } }); assert(response.ok, `Google Drive revision media request failed (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
+async function listRevisions(id) { const revisions = []; let pageToken; do { const query = new URLSearchParams({ pageSize: '1000', fields: 'nextPageToken,revisions(id,keepForever)', ...(pageToken ? { pageToken } : {}) }); const page = await drive(`/drive/v3/files/${encodeURIComponent(id)}/revisions?${query}`); revisions.push(...(page.revisions ?? [])); pageToken = page.nextPageToken; } while (pageToken); return revisions; }
 async function replaceBytes(id, bytes) { return drive(`/upload/drive/v3/files/${encodeURIComponent(id)}?uploadType=media&supportsAllDrives=true&fields=id,name,mimeType,parents`, { method: 'PATCH', headers: { 'content-type': 'application/pdf' }, body: bytes }); }
 async function trash(id) { await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); }
 async function createdGone() { if (!accessToken) return createdIds.length === 0; for (const id of createdIds) { try { const item = await metadata(id); if (!item.trashed) return false; } catch { /* deleted is clean */ } } return true; }
@@ -400,21 +404,31 @@ function recoveryMarker(item, expectedScope) {
   assert(present.length === 3 && marker.klasrRecoveryVersion === recoveryVersion && marker.klasrRecoveryScope === expectedScope && /^[A-Za-z0-9_-]+$/.test(marker.klasrRecoveryRevision), 'Invalid Drive recovery marker');
   return marker.klasrRecoveryRevision;
 }
-async function pinOriginalRevision(item) {
+async function pinOriginalRevision(item, snapshotBytes) {
   const current = await metadata(item.id);
   assert(current.name === item.name && current.mimeType === 'application/pdf' && current.headRevisionId, 'Original binary revision is unavailable or mismatched');
+  assert(sameBytes(await downloadBytes(item.id), snapshotBytes), 'Current fixture head does not match its snapshot');
+  const pinned = (await listRevisions(item.id)).filter((revision) => revision.keepForever === true);
+  const candidates = [];
+  for (const candidate of pinned) {
+    const candidateBytes = await downloadRevision(item.id, candidate.id);
+    candidates.push({ ...candidate, matchesSnapshot: sameBytes(candidateBytes, snapshotBytes) });
+  }
+  const reusable = selectMatchingPinnedRevision(candidates);
+  if (reusable) return reusable.id;
   const revision = await drive(`/drive/v3/files/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(current.headRevisionId)}?fields=id,keepForever`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepForever: true }) });
   assert(revision.id === current.headRevisionId && revision.keepForever === true, 'Original binary revision was not pinned');
+  const verified = await drive(`/drive/v3/files/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revision.id)}?fields=id,keepForever`);
+  assert(verified.id === revision.id && verified.keepForever === true, 'Original binary revision pin readback failed');
   return revision.id;
 }
 async function markRecovery(id, revisionId, scope) {
   await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true&fields=id,appProperties`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appProperties: { klasrRecoveryRevision: revisionId, klasrRecoveryVersion: recoveryVersion, klasrRecoveryScope: scope } }) });
   assert(recoveryMarker(await metadata(id), scope) === revisionId, 'Drive recovery marker readback failed');
 }
-async function finishRecovery(id, revisionId, scope) {
+async function finishRecovery(id, scope) {
   await drive(`/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true&fields=id,appProperties`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appProperties: { klasrRecoveryRevision: null, klasrRecoveryVersion: null, klasrRecoveryScope: null } }) });
   assert(!recoveryMarker(await metadata(id), scope), 'Drive recovery marker clear readback failed');
-  await drive(`/drive/v3/files/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId)}?fields=id,keepForever`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepForever: false }) });
 }
 async function restoreFromRevision(item, revisionId, target, scope, finish = true) {
   const revision = await drive(`/drive/v3/files/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revisionId)}?fields=id,keepForever`);
@@ -425,7 +439,7 @@ async function restoreFromRevision(item, revisionId, target, scope, finish = tru
   await restoreMetadata(item.id, target);
   const restored = await metadata(item.id);
   assert(restored.name === target.name && restored.mimeType === target.mimeType && restored.trashed === target.trashed && sameParents(restored.parents, target.parents) && sameBytes(await downloadBytes(item.id), originalBytes), 'Drive revision restoration readback failed');
-  if (finish) await finishRecovery(item.id, revisionId, scope);
+  if (finish) await finishRecovery(item.id, scope);
 }
 async function recoveryCandidates(scope, driveId) {
   const q = new URLSearchParams({ q: `appProperties has { key='klasrRecoveryScope' and value='${scope}' }`, ...(driveId ? { corpora: 'drive', driveId } : { corpora: 'allDrives' }), pageSize: '1000', fields: 'files(id,name,mimeType,parents,trashed,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
@@ -466,6 +480,8 @@ async function restoreFixtures(finish = true) {
 async function cleanupVerified() { if (!fixtureSnapshots.length) return false; accessToken = await serviceAccountToken(); if (!(await createdGone()) || fixtureSnapshots.length !== 2 || replacementAttempted.size !== 2 || replacementVerified.size !== 2) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.mimeType !== snapshot.mimeType || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes) || recoveryMarker(current, snapshot.id === fixtureSnapshots[0].id ? 'invoice' : 'manual')) return false; } return true; }
 function sameParents(actual = [], expected = []) { return actual.length === expected.length && actual.every((parent) => expected.includes(parent)); }
 function sameBytes(actual, expected) { return createHash('sha256').update(actual).digest().equals(createHash('sha256').update(expected).digest()); }
+// Stable choice: lexicographically smallest matching pinned revision ID.
+function selectMatchingPinnedRevision(candidates) { return candidates.filter(({ matchesSnapshot }) => matchesSnapshot).sort((left, right) => left.id.localeCompare(right.id))[0]; }
 
 function syntheticInvoicePdf(reference) {
   const text = ['INVOICE', 'Northwind Office Supplies', 'Bill to: Klasr Consulting', `Invoice number: ${reference}`, 'Invoice date: 2026-08-15', 'Professional services: EUR 1,200.00', 'VAT 20%: EUR 240.00', 'TOTAL DUE: EUR 1,440.00', 'Payment terms: 30 days'];
