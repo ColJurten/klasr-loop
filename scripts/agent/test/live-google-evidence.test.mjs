@@ -53,6 +53,7 @@ test('closing issue reference accepts only one exact same-repository token', () 
   const repository = 'ColJurten/klasr-loop';
   assert.equal(closingIssueReference('Closes #13', repository), 13);
   assert.equal(closingIssueReference('cLoSeS coljurten/KLASR-loop#13', repository), 13);
+  assert.equal(closingIssueReference('## What & why\r\n\r\nCloses #16\r\n\r\n## Type\r\n- [ ] feat  - [ ] fix  - [ ] hotfix  - [ ] chore/docs/ci', repository), 16);
   for (const body of [
     'Closes evil#13',
     'Closes text(#13)',
