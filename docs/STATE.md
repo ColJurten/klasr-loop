@@ -26,6 +26,8 @@
 
 ## Done
 
+- [x] 2026-08-16 — Maintenance corrective CI PR #17 FIX12 (`improve-ocr`) : le runner conserve avant nettoyage un diagnostic pg-boss borné au tenant et à l'exécution (`stage=analysis reason=job_failed`) sans lire ni exposer payload, sortie fournisseur ou contenu ; comportement produit et sémantique d'échec inchangés.
+
 - [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX11 (`improve-ocr`) : FIX10 supersédé par la réutilisation stable de la plus petite révision originale épinglée dont les octets correspondent exactement au snapshot ; sinon épinglage vérifié de la tête exacte, puis restauration exacte et effacement relu du seul marqueur, sans suppression de révision. Preuves statiques/unitaires locales uniquement, sans fournisseur, navigateur ni credential.
 
 - [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX10 (`improve-ocr`) : suppression de la révision Drive épinglée par DELETE uniquement après restauration exacte et effacement relu du marqueur ; tout manifeste final FAIL impose désormais un code de sortie 1. Preuves locales statiques/unitaires uniquement, sans fournisseur, navigateur ni credential.

@@ -98,6 +98,7 @@ const nextAuthSecret = process.env.KLASR_LIVE_NEXTAUTH_SECRET ?? 'google-sa-live
 const tokenKey = process.env.TOKEN_ENCRYPTION_KEY ?? 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const email = 'google-staging-acceptance@klasr.test';
 const runName = `klasr-sa-${Date.now()}`;
+const runStartedAt = new Date();
 const createdIds = [];
 const fixtureSnapshots = [];
 const observedReplacements = new Map();
@@ -122,6 +123,7 @@ let emergencyCleanupFlight;
 let restorationFlight;
 let emergencyExitStarted = false;
 let normalCleanupDone = false;
+let failureDiagnostic;
 
 async function emergencyExit(code) {
   if (emergencyExitStarted) return;
@@ -142,7 +144,7 @@ async function emergencyExit(code) {
 }
 async function fatalExit(error) {
   const message = /^Google Drive request failed \(\d+, [A-Za-z0-9_-]+\)$/.test(error?.message) ? error.message : error?.name ?? 'Error';
-  process.stderr.write(`root failure: ${message}\n`);
+  process.stderr.write(`root failure: ${failureDiagnostic ?? message}\n`);
   if (normalCleanupDone) { process.exitCode = 1; return; }
   await emergencyExit(1);
 }
@@ -312,6 +314,9 @@ try {
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
   evidence.terminalNoReenqueue = 'PASS';
   runCompleted = true;
+} catch (error) {
+  failureDiagnostic = await failedAnalysisDiagnostic().catch(() => undefined);
+  throw error;
 } finally {
   if (browser) await browser.close().catch(() => undefined);
   cleanup.fixtureRestored = await restoreFixtures().then(() => true, () => false);
@@ -552,6 +557,7 @@ async function lifecycleCheck() {
   await assertAppsAbsent([`http://127.0.0.1:${port}`]);
 }
 async function tenantId() { for (let i = 0; i < 40; i += 1) { const membership = await prisma.membership.findFirst({ where: { user: { email } }, select: { organizationId: true } }); if (membership) return membership.organizationId; await delay(250); } throw new Error('Acceptance tenant was not onboarded'); }
+async function failedAnalysisDiagnostic() { if (!organizationId) return; const rows = await prisma.$queryRaw`SELECT 1 FROM pgboss.job WHERE name = 'analysis' AND state = 'failed' AND data->>'organizationId' = ${organizationId} AND created_on >= ${runStartedAt} LIMIT 1`; return rows.length ? 'stage=analysis reason=job_failed' : undefined; }
 
 async function resetTenantData(id) { const rules = await prisma.classificationRule.findMany({ where: { organizationId: id }, select: { id: true } }); await prisma.actionHistory.deleteMany({ where: { organizationId: id } }); await prisma.classificationProposal.deleteMany({ where: { organizationId: id } }); await prisma.document.deleteMany({ where: { organizationId: id } }); await prisma.ruleCondition.deleteMany({ where: { ruleId: { in: rules.map((rule) => rule.id) } } }); await prisma.classificationRule.deleteMany({ where: { organizationId: id } }); await prisma.folder.deleteMany({ where: { organizationId: id } }); await prisma.organization.update({ where: { id }, data: { referenceRootExternalId: null, referenceRootName: null } }); }
 async function cleanupTenant(id) { const rules = await prisma.classificationRule.findMany({ where: { organizationId: id }, select: { id: true } }); await prisma.actionHistory.deleteMany({ where: { organizationId: id } }); await prisma.classificationProposal.deleteMany({ where: { organizationId: id } }); await prisma.document.deleteMany({ where: { organizationId: id } }); await prisma.ruleCondition.deleteMany({ where: { ruleId: { in: rules.map((rule) => rule.id) } } }); await prisma.classificationRule.deleteMany({ where: { organizationId: id } }); await prisma.folder.deleteMany({ where: { organizationId: id } }); await prisma.organization.update({ where: { id }, data: { referenceRootExternalId: null, referenceRootName: null } }); }

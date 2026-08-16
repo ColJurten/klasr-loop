@@ -182,6 +182,21 @@ test('live runner binds a sanitized FAIL manifest to exit code 1 before finaliza
   assert(manifest !== -1 && manifest < exitBinding && exitBinding < finalization.length);
 });
 
+test('live runner preserves a sanitized async analysis failure before tenant cleanup', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const diagnostic = functionBody(source, 'failedAnalysisDiagnostic');
+  assert.match(diagnostic, /SELECT 1 FROM pgboss\.job/);
+  assert.match(diagnostic, /name = 'analysis' AND state = 'failed'/);
+  assert.match(diagnostic, /data->>'organizationId' = \$\{organizationId\}/);
+  assert.match(diagnostic, /created_on >= \$\{runStartedAt\}/);
+  assert.match(diagnostic, /'stage=analysis reason=job_failed'/);
+  assert.doesNotMatch(diagnostic, /output|response|content|text|prompt|bytes|externalId|documentId/);
+  const capture = source.indexOf('failureDiagnostic = await failedAnalysisDiagnostic()');
+  const cleanup = source.indexOf('cleanup.tenantCleaned =');
+  assert(capture !== -1 && capture < cleanup);
+  assert.match(functionBody(source, 'fatalExit'), /failureDiagnostic \?\? message/);
+});
+
 test('live runner routes signals and fatal errors through bounded single-flight recovery with fresh tokens', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   for (const event of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) assert.match(source, new RegExp(`process\\.on\\('${event}'`));
