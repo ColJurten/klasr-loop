@@ -69,6 +69,20 @@ describe('document understanding units', () => {
     expect(destination).toMatchObject({ path: '/Clients/Acme', confidence: .35, reviewRequired: true });
     expect(calls).toBe(3);
   });
+  it.each(['tenant', 'environment'] as const)('applies agent model overrides only to the environment source (%s)', async (source) => {
+    const requests: StructuredGeneration[] = [];
+    const provider = new FakeLlmProvider((request) => { requests.push(request); return request.task === 'analyse_document' ? analysis : request.task === 'suggest_filename' ? { value: 'facture', confidence: 1, signals: [], reviewRequired: false, failureReason: null } : { path: '/Clients', confidence: 1, signals: [], reviewRequired: false, failureReason: null }; });
+    const resolver = { forOrganization: jest.fn().mockResolvedValue({ provider, source }) };
+    const previous = [process.env.KLASR_AGENT_ANALYSE_MODEL, process.env.KLASR_AGENT_FILENAME_MODEL, process.env.KLASR_AGENT_DESTINATION_MODEL];
+    [process.env.KLASR_AGENT_ANALYSE_MODEL, process.env.KLASR_AGENT_FILENAME_MODEL, process.env.KLASR_AGENT_DESTINATION_MODEL] = ['env-analysis', 'env-filename', 'env-destination'];
+    try {
+      const service = new SuggestionService(resolver); const input = { organizationId: 'org-a', content: Buffer.from('Facture F-42'), mimeType: 'text/plain', originalName: 'x.pdf' };
+      await Promise.all([service.suggestFilename(input), service.suggestDestination(input, [{ id: '1', name: 'Clients', path: '/Clients', children: [] }])]);
+      expect(Object.fromEntries(requests.map(({ task, model }) => [task, model]))).toEqual(source === 'tenant'
+        ? { analyse_document: undefined, suggest_filename: undefined, suggest_destination: undefined }
+        : { analyse_document: 'env-analysis', suggest_filename: 'env-filename', suggest_destination: 'env-destination' });
+    } finally { [process.env.KLASR_AGENT_ANALYSE_MODEL, process.env.KLASR_AGENT_FILENAME_MODEL, process.env.KLASR_AGENT_DESTINATION_MODEL] = previous; }
+  });
   it.each([['', 'empty_content'], ['\u0000\u0001', 'empty_content']])('returns a reviewable zero-confidence result for empty/corrupt text', async (content, failureReason) => {
     const result = await new SuggestionService(new LocalStructuredProvider()).suggestDestination({ content: Buffer.from(content), mimeType: 'text/plain', originalName: 'x.txt' }, []);
     expect(result).toMatchObject({ path: null, confidence: 0, reviewRequired: true, failureReason });

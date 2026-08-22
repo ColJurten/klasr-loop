@@ -26,6 +26,14 @@
 
 ## Done
 
+- [x] 2026-08-22 — BYOK genuine-live attempt 96 (task `t_ee0bcfe4`, unchanged uncommitted HEAD `c7e26bfacb7b26cec42f54b30e0988d4825ec1b7`): the initial genuine run reached settings deletion but strict finalization rejected duplicated identical filename/destination provider/model provenance. A test-first deduplication fix passed the focused API spec (4/4), and corrected genuine reruns passed with evidence bound to the post-fix/post-documentation dirty tree.
+
+- [x] 2026-08-22 — BYOK review blockers fix (task `t_b0e99403`, uncommitted HEAD `c7e26bfacb7b26cec42f54b30e0988d4825ec1b7`): the prior genuine-live PASS claim is superseded because its harness browser-typed the Anthropic key and did not bind the exact dirty product tree or an independently parsed observed record. This card adds server-side authenticated BFF setup, exact tracked/untracked tree binding, metadata-only observed-record consumption, explicit tenant/environment resolver provenance for all three agent model overrides, and mapped/special-address SSRF rejection. Credential-free automated checks only; genuine external Anthropic/Google acceptance was **not run** and remains a future handoff gate.
+
+- [x] 2026-08-16 — BYOK FIX (task `t_35899439`, branch `improve-ocr`, uncommitted): (1) `responseErrorMessage` in `apps/web/lib/api.ts` now extracts a single bounded string from `{message}`, `{error}` and the nested Nest `{message:{code,message}}` shape, and falls back to `API error <status>` for arrays, deeper nesting, non-strings, control characters, oversized messages (>300 chars), oversized bodies (>16 KiB) and malformed bodies — no upstream payload can reach the browser; (2) selected-model validation rejected with HTTP 400/422 now maps to the stable `model_incompatible` code and an actionable French message instead of `endpoint_unavailable`, while the same status during discovery stays an endpoint problem (`ProviderClientService.statusError` is phase-aware); (3) the browser E2E now starts with a wrong synthetic key through the real BFF → Nest → fixture socket, asserts redacted French authorization feedback on both discovery and save, proves zero `LlmSetting` rows, then recovers with the valid key through discovery, non-default model, save, reload-without-key, queued Drive analysis and delete; (4) run 89 fixed mobile navigation overflow with authenticated desktop/390 browser geometry and Settings-reachability evidence. All canonical gates pass; remaining external gates are real Anthropic acceptance and independent reviewer/human review.
+
+- [x] 2026-08-16 — BYOK run 84: tenant-scoped provider settings use live discovery/validation, AES-256-GCM PostgreSQL persistence, authenticated BFF routes, SSRF controls, and per-job provider resolution with environment fallback; real fixture and desktop/390px browser coverage prove the selected model.
+
 - [x] 2026-08-16 — PR #17 FIX13 : les mots-clés de clôture sont ancrés en début de ligne, empêchant le texte `fix/hotfix` des checklists de créer de fausses clauses de clôture ; la filiation exacte dans le même dépôt reste fail-closed.
 
 - [x] 2026-08-16 — Maintenance corrective CI PR #17 FIX12 (`improve-ocr`) : le runner conserve avant nettoyage un diagnostic pg-boss borné au tenant et à l'exécution (`stage=analysis reason=job_failed`) sans lire ni exposer payload, sortie fournisseur ou contenu ; comportement produit et sémantique d'échec inchangés.
@@ -68,6 +76,8 @@
 
 ## REAC coverage notes (feeds KLASR_CONTEXT.md / jury dossier)
 
+- BYOK demonstrates C1/C2 (accessible responsive tenant UI), C3/C4 (encrypted organization-owned SQL model), C5/C6 (live provider abstraction and worker resolution), C7/C8 (network/PostgreSQL/Mongo browser integration), and C9/C10/C11 (TDD, SSRF/secret safeguards, deployment variables).
+- BYOK FIX adds C2 (actionable, distinguishable French error taxonomy: refused key vs incompatible model vs unavailable endpoint), C7 (browser failure-then-recovery path proving non-persistence of a rejected configuration) and C10 (bounded, sanitized upstream error parsing at the BFF boundary, closing an untrusted-payload passthrough).
 - Maintenance corrective CI PR #17 démontre : C4 (preuves automatisées ciblées et navigateur), C7 (intégration PostgreSQL/pg-boss et décisions terminales), C8 (métadonnées Mongo TTL sans contenu, contrôlées et nettoyées).
 - Loop setup demonstrates: CI/CD design, quality gates, Git workflow industrialization.
 - Starter code demonstrates: layered architecture (controller/service/repository), hexagonal port for Drive execution, multi-tenant data access design, TDD on the confirm flow, eco-design instrumentation (llmCallsUsed, UsageMetric).

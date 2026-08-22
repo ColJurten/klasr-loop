@@ -38,7 +38,7 @@ export class AnalysisService implements OnModuleInit {
     let content: Buffer = Buffer.alloc(0); let readable = true;
     try { content = await readDocumentBytes(await this.drive.download(job.organizationId, document.externalId)); }
     catch { readable = false; }
-    const input = { content, mimeType: readable ? document.mimeType : 'application/octet-stream', originalName: document.name };
+    const input = { organizationId: job.organizationId, content, mimeType: readable ? document.mimeType : 'application/octet-stream', originalName: document.name };
     const extracted = readable ? await extract(input) : null;
     const inheritedFolders = await this.folders.listInherited(job.organizationId);
     const rules = await this.rules.listOrdered(job.organizationId);
@@ -49,7 +49,7 @@ export class AnalysisService implements OnModuleInit {
     else {
       const [filename, destination] = await Promise.all([this.suggestions.suggestFilename(input), this.suggestions.suggestDestination(input, folderTree(inheritedFolders))]);
       const providers = new Set([filename.provider, destination.provider]);
-      proposal = { proposedName: filename.value, destinationPath: destination.path ?? '', confidence: Math.min(filename.confidence, destination.confidence), filenameConfidence: filename.confidence, destinationConfidence: destination.confidence, reviewRequired: filename.reviewRequired || destination.reviewRequired, reviewReason: filename.failureReason ?? destination.failureReason ?? undefined, source: 'LLM' as const, modelUsed: `${filename.provider}/${filename.model};${destination.provider}/${destination.model}`, llmCallsUsed: providers.has('none') || providers.has('local') ? 0 : 3, signals: [...new Set([...filename.signals, ...destination.signals])] };
+      proposal = { proposedName: filename.value, destinationPath: destination.path ?? '', confidence: Math.min(filename.confidence, destination.confidence), filenameConfidence: filename.confidence, destinationConfidence: destination.confidence, reviewRequired: filename.reviewRequired || destination.reviewRequired, reviewReason: filename.failureReason ?? destination.failureReason ?? undefined, source: 'LLM' as const, modelUsed: [...new Set([`${filename.provider}/${filename.model}`, `${destination.provider}/${destination.model}`])].join(';'), llmCallsUsed: providers.has('none') || providers.has('local') ? 0 : 3, signals: [...new Set([...filename.signals, ...destination.signals])] };
     }
     await this.proposals.createPending({ organizationId: job.organizationId, documentId: document.id, proposedName: proposal.proposedName, destinationPath: proposal.destinationPath, destinationFolderExternalId: inheritedFolders.find((folder) => folder.path === proposal.destinationPath)?.externalId, confidence: proposal.confidence, filenameConfidence: proposal.filenameConfidence, destinationConfidence: proposal.destinationConfidence, reviewRequired: proposal.reviewRequired, reviewReason: proposal.reviewReason, source: proposal.source as ProposalSource, modelUsed: proposal.modelUsed, llmCallsUsed: proposal.llmCallsUsed });
     await this.documents.markProposed(job.organizationId, document.id);

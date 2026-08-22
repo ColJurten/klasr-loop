@@ -11,6 +11,8 @@ export const configValidationSchema = Joi.object({
   KLASR_LLM_MODEL: Joi.string().allow('').default(''),
   KLASR_LLM_API_KEY: Joi.string().allow('').default(''),
   KLASR_LLM_BASE_URL: Joi.string().allow('').default(''),
+  KLASR_LLM_ALLOWED_ORIGINS: Joi.string().allow('').default(''),
+  KLASR_LLM_TIMEOUT_MS: Joi.number().integer().min(100).max(60000).default(10000),
   KLASR_AGENT_ANALYSE_MODEL: Joi.string().allow('').default(''),
   KLASR_AGENT_FILENAME_MODEL: Joi.string().allow('').default(''),
   KLASR_AGENT_DESTINATION_MODEL: Joi.string().allow('').default(''),

@@ -1,6 +1,7 @@
 export type ExtractionQuality = 'ok' | 'sparse' | 'empty' | 'failed';
 
 export interface DocumentInput {
+  organizationId?: string;
   content: Buffer | ReadableStream<Uint8Array>;
   mimeType: string;
   originalName: string;

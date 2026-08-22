@@ -18,9 +18,11 @@ const email = 'camille.local@klasr.test';
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const mongo = new MongoClient(mongoUrl);
 let api;
+let providerFixture;
 
 try {
   await resetLocalData();
+  providerFixture = spawn(process.execPath, ['scripts/byok-provider-fixture.mjs'], { cwd: root, detached: true, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, BYOK_FIXTURE_PORT: '3110', BYOK_FIXTURE_AUTH: 'Bearer synthetic-fixture-token' } });
   api = spawn(
     'pnpm',
     ['--filter', '@klasr/api', 'exec', 'nest', 'start'],
@@ -52,6 +54,7 @@ try {
 
   await waitForHealth();
   const organizationId = await onboardLocalTenant();
+  await assertByok(organizationId);
   await seedRule(organizationId);
 
   const referenceResponse = await fetch(`${apiBase}/organizations/${organizationId}/drive/reference-root`, {
@@ -161,9 +164,68 @@ try {
   console.log('integration ok: reference tree -> selected Drive launch -> pg-boss analysis -> Mongo/PostgreSQL assertions -> confirm/correct/reject');
 } finally {
   stopApi();
+  stopProcess(providerFixture);
   await resetLocalData();
   await mongo.close().catch(() => undefined);
   await prisma.$disconnect();
+}
+
+async function assertByok(organizationId) {
+  const input = { provider: 'openai-compatible', apiKey: 'synthetic-fixture-token', baseUrl: 'http://127.0.0.1:3110/v1' };
+  const headers = { 'content-type': 'application/json', 'x-internal-secret': internalSecret };
+  await assertByokRejections(organizationId, input, headers);
+  const discovery = await fetch(`${apiBase}/organizations/${organizationId}/llm-settings/models`, { method: 'POST', headers, body: JSON.stringify(input) });
+  if (!discovery.ok || JSON.stringify(await discovery.json()) !== JSON.stringify({ models: ['fixture-a', 'fixture-z'] })) throw new Error('BYOK model discovery failed');
+  const save = await fetch(`${apiBase}/organizations/${organizationId}/llm-settings`, { method: 'PUT', headers, body: JSON.stringify({ ...input, model: 'fixture-z' }) });
+  if (!save.ok) throw new Error(`BYOK save failed: ${save.status}`);
+  const safeBody = JSON.stringify(await save.json());
+  if (safeBody.includes(input.apiKey) || safeBody.includes('encryptedApiKey')) throw new Error('BYOK safe response disclosed credential material');
+  const stored = await prisma.llmSetting.findUniqueOrThrow({ where: { organizationId } });
+  if (stored.encryptedApiKey === input.apiKey || stored.model !== 'fixture-z') throw new Error('BYOK encrypted persistence failed');
+  const other = await fetch(`${apiBase}/organizations/nonexistent-tenant/llm-settings`, { headers: { 'x-internal-secret': internalSecret } });
+  if (!other.ok || (await other.json()).configured !== false) throw new Error('BYOK tenant isolation failed');
+}
+
+/**
+ * Every rejection below crosses the real Nest HTTP boundary and the real fixture socket
+ * before any valid configuration exists, so a stored row afterwards would be a persistence leak.
+ */
+async function assertByokRejections(organizationId, input, headers) {
+  const wrongKey = { ...input, apiKey: 'wrong-synthetic-fixture-token' };
+  const settingsUrl = `${apiBase}/organizations/${organizationId}/llm-settings`;
+  const attempt = async (method, path, body) => {
+    const response = await fetch(`${settingsUrl}${path}`, { method, headers, body: JSON.stringify(body) });
+    const payload = await response.json();
+    const serialized = JSON.stringify(payload);
+    if (serialized.includes(body.apiKey) || /encryptedApiKey|choices|prompt/.test(serialized)) {
+      throw new Error('BYOK rejection disclosed credential material or a raw provider body');
+    }
+    return { status: response.status, payload };
+  };
+
+  const rejectedDiscovery = await attempt('POST', '/models', wrongKey);
+  if (rejectedDiscovery.status !== 400 || rejectedDiscovery.payload.code !== 'invalid_key') {
+    throw new Error(`BYOK wrong key was not reported as invalid: ${JSON.stringify(rejectedDiscovery)}`);
+  }
+  const rejectedSave = await attempt('PUT', '', { ...wrongKey, model: 'fixture-z' });
+  if (rejectedSave.status !== 400 || rejectedSave.payload.code !== 'invalid_key') {
+    throw new Error(`BYOK wrong key save was not reported as invalid: ${JSON.stringify(rejectedSave)}`);
+  }
+
+  for (const model of ['fixture-legacy', 'fixture-unprocessable']) {
+    const refusedModel = await attempt('PUT', '', { ...input, model });
+    if (refusedModel.status !== 400 || refusedModel.payload.code !== 'model_incompatible') {
+      throw new Error(`BYOK refused model ${model} was not reported as incompatible: ${JSON.stringify(refusedModel)}`);
+    }
+  }
+  const unusableEndpoint = await attempt('POST', '/models', { ...input, baseUrl: 'http://127.0.0.1:3110/refuse/v1' });
+  if (unusableEndpoint.status !== 400 || unusableEndpoint.payload.code !== 'endpoint_unavailable') {
+    throw new Error(`BYOK unusable endpoint was not distinguished from an incompatible model: ${JSON.stringify(unusableEndpoint)}`);
+  }
+
+  if (await prisma.llmSetting.count({ where: { organizationId } }) !== 0) {
+    throw new Error('BYOK persisted a setting for a rejected key or model');
+  }
 }
 
 async function resetLocalData() {
@@ -315,4 +377,8 @@ function stopApi() {
   } catch {
     api.kill('SIGTERM');
   }
+}
+function stopProcess(processHandle) {
+  if (!processHandle?.pid) return;
+  try { process.kill(-processHandle.pid, 'SIGTERM'); } catch { processHandle.kill('SIGTERM'); }
 }

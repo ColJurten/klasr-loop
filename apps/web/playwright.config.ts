@@ -21,6 +21,12 @@ export default defineConfig({
   workers: 1,
   webServer: [
     {
+      command: 'env BYOK_FIXTURE_PORT=4310 BYOK_FIXTURE_AUTH="Bearer synthetic-fixture-token" node ../../scripts/byok-provider-fixture.mjs',
+      port: 4310,
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
       command:
         `docker compose up -d --wait && node ../../scripts/retry-command.mjs 30000 250 env DATABASE_URL=${databaseUrl} pnpm --filter @klasr/api prisma:deploy && pnpm --filter @klasr/api build && env NODE_ENV=test PORT=4301 KLASR_INLINE_WORKER=true ${sharedEnv} pnpm --filter @klasr/api exec node dist/main.js`,
       url: `${apiUrl}/health`,

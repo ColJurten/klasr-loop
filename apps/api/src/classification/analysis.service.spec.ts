@@ -14,7 +14,7 @@ describe('AnalysisService', () => {
     const service = new AnalysisService(documents as never, drive as never, rules as never, folders as never, proposals as never, analyses as never, metrics as never, jobs as never, suggestions as never);
     await service.analyze({ organizationId: 'org_1', documentId: 'doc_1' });
     expect(suggestions.suggestDestination).toHaveBeenCalledWith(expect.objectContaining({ originalName: 'misleading.pdf' }), [{ id: 'root', name: 'Clients', path: '/Clients', children: [{ id: 'acme', name: 'Acme', path: '/Clients/Acme', children: [] }] }]);
-    expect(proposals.createPending).toHaveBeenCalledWith(expect.objectContaining({ proposedName: '2026-08-15_facture_Acme_F-42.pdf', destinationFolderExternalId: 'acme', confidence: .8 }));
+    expect(proposals.createPending).toHaveBeenCalledWith(expect.objectContaining({ proposedName: '2026-08-15_facture_Acme_F-42.pdf', destinationFolderExternalId: 'acme', confidence: .8, modelUsed: 'fake/deterministic' }));
     expect(analyses.record).toHaveBeenCalledWith(expect.not.objectContaining({ content: expect.anything(), text: expect.anything(), bytes: expect.anything() }));
   });
 

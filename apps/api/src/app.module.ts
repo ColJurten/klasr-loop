@@ -12,6 +12,7 @@ import { AuthModule } from './auth/auth.module';
 import { DriveModule } from './drive/drive.module';
 import { JobsModule } from './jobs/jobs.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { LlmSettingsModule } from './llm-settings/llm-settings.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     DriveModule,
     JobsModule,
     DashboardModule,
+    LlmSettingsModule,
   ],
 })
 export class AppModule {}

@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AnalysesModule } from '../analyses/analyses.module';
 import { DriveModule } from '../drive/drive.module';
 import { DocumentsModule } from '../documents/documents.module';
@@ -12,10 +11,11 @@ import { AnalysisService } from './analysis.service';
 import { ProposalsRepository } from './proposals.repository';
 import { SyncService } from './sync.service';
 import { SuggestionService } from '../analysis/suggestion.service';
-import { createLlmProvider } from '../analysis/llm/provider.factory';
+import { LlmSettingsModule } from '../llm-settings/llm-settings.module';
+import { TenantProviderResolver } from '../llm-settings/tenant-provider.resolver';
 
 @Module({
-  imports: [DocumentsModule, DriveModule, JobsModule, RulesModule, AnalysesModule],
+  imports: [DocumentsModule, DriveModule, JobsModule, RulesModule, AnalysesModule, LlmSettingsModule],
   controllers: [ClassificationController, SyncController, DriveWorkflowController],
   providers: [
     ClassificationService,
@@ -26,8 +26,7 @@ import { createLlmProvider } from '../analysis/llm/provider.factory';
     SuggestionService,
     {
       provide: 'SUGGESTION_LLM',
-      useFactory: (config: ConfigService) => createLlmProvider((name) => config.get<string>(name)),
-      inject: [ConfigService],
+      useExisting: TenantProviderResolver,
     },
   ],
   exports: [ClassificationService, SyncService, AnalysisService, SuggestionService],

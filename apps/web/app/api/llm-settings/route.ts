@@ -1,16 +1,11 @@
-import { getServerSession } from 'next-auth';
 import { NextResponse } from 'next/server';
-import { authOptions } from '@/lib/auth';
-import { detectProvider, modelAllowlist } from '@/lib/llm-settings';
+import { ApiUpstreamError, deleteLlmSettings, discoverLlmModels, getLlmSettings, LlmSettingsInput, saveLlmSettings } from '@/lib/api';
 
-export async function GET() {
-  const session = await getServerSession(authOptions); if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  return NextResponse.json({ providers: modelAllowlist(), configured: null, productionMode: 'environment' });
-}
-export async function POST(request: Request) {
-  const session = await getServerSession(authOptions); if (!session?.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  const body = await request.json() as { apiKey?: string; model?: string };
-  const key = body.apiKey?.trim() ?? ''; const provider = detectProvider(key); const allowed = modelAllowlist()[provider] ?? [];
-  if (key.length < 12 || !body.model || !allowed.includes(body.model)) return NextResponse.json({ error: 'invalid_settings', provider, models: allowed }, { status: 400 });
-  return NextResponse.json({ provider, model: body.model, validated: true, retained: false });
+export async function GET() { return proxy(() => getLlmSettings()); }
+export async function POST(request: Request) { return proxy(async () => discoverLlmModels(await request.json() as LlmSettingsInput)); }
+export async function PUT(request: Request) { return proxy(async () => saveLlmSettings(await request.json() as LlmSettingsInput)); }
+export async function DELETE() { return proxy(() => deleteLlmSettings()); }
+async function proxy(action: () => Promise<unknown>) {
+  try { return NextResponse.json(await action()); }
+  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Erreur inattendue.' }, { status: error instanceof ApiUpstreamError ? error.status : 500 }); }
 }
