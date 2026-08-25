@@ -1,8 +1,10 @@
 # Klasr — Loop State
 
+> 2026-08-15 : extraction, analyse, nommage et destination séparés sous `apps/api/src/analysis`; Office reste en revue manuelle. Les mutations Drive demeurent exclusivement postérieures à une validation explicite dans `ClassificationService`.
+
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-07-30 (real MVP vertical slice)
+> Last updated: 2026-08-12 (OCR suggestion quality)
 
 ## In progress
 
@@ -23,6 +25,26 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-08-22 — BYOK genuine-live attempt 96 (task `t_ee0bcfe4`, unchanged uncommitted HEAD `c7e26bfacb7b26cec42f54b30e0988d4825ec1b7`): the initial genuine run reached settings deletion but strict finalization rejected duplicated identical filename/destination provider/model provenance. A test-first deduplication fix passed the focused API spec (4/4), and corrected genuine reruns passed with evidence bound to the post-fix/post-documentation dirty tree.
+
+- [x] 2026-08-22 — BYOK review blockers fix (task `t_b0e99403`, uncommitted HEAD `c7e26bfacb7b26cec42f54b30e0988d4825ec1b7`): the prior genuine-live PASS claim is superseded because its harness browser-typed the Anthropic key and did not bind the exact dirty product tree or an independently parsed observed record. This card adds server-side authenticated BFF setup, exact tracked/untracked tree binding, metadata-only observed-record consumption, explicit tenant/environment resolver provenance for all three agent model overrides, and mapped/special-address SSRF rejection. Credential-free automated checks only; genuine external Anthropic/Google acceptance was **not run** and remains a future handoff gate.
+
+- [x] 2026-08-16 — BYOK FIX (task `t_35899439`, branch `improve-ocr`, uncommitted): (1) `responseErrorMessage` in `apps/web/lib/api.ts` now extracts a single bounded string from `{message}`, `{error}` and the nested Nest `{message:{code,message}}` shape, and falls back to `API error <status>` for arrays, deeper nesting, non-strings, control characters, oversized messages (>300 chars), oversized bodies (>16 KiB) and malformed bodies — no upstream payload can reach the browser; (2) selected-model validation rejected with HTTP 400/422 now maps to the stable `model_incompatible` code and an actionable French message instead of `endpoint_unavailable`, while the same status during discovery stays an endpoint problem (`ProviderClientService.statusError` is phase-aware); (3) the browser E2E now starts with a wrong synthetic key through the real BFF → Nest → fixture socket, asserts redacted French authorization feedback on both discovery and save, proves zero `LlmSetting` rows, then recovers with the valid key through discovery, non-default model, save, reload-without-key, queued Drive analysis and delete; (4) run 89 fixed mobile navigation overflow with authenticated desktop/390 browser geometry and Settings-reachability evidence. All canonical gates pass; remaining external gates are real Anthropic acceptance and independent reviewer/human review.
+
+- [x] 2026-08-16 — BYOK run 84: tenant-scoped provider settings use live discovery/validation, AES-256-GCM PostgreSQL persistence, authenticated BFF routes, SSRF controls, and per-job provider resolution with environment fallback; real fixture and desktop/390px browser coverage prove the selected model.
+
+- [x] 2026-08-16 — PR #17 FIX13 : les mots-clés de clôture sont ancrés en début de ligne, empêchant le texte `fix/hotfix` des checklists de créer de fausses clauses de clôture ; la filiation exacte dans le même dépôt reste fail-closed.
+
+- [x] 2026-08-16 — Maintenance corrective CI PR #17 FIX12 (`improve-ocr`) : le runner conserve avant nettoyage un diagnostic pg-boss borné au tenant et à l'exécution (`stage=analysis reason=job_failed`) sans lire ni exposer payload, sortie fournisseur ou contenu ; comportement produit et sémantique d'échec inchangés.
+
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX11 (`improve-ocr`) : FIX10 supersédé par la réutilisation stable de la plus petite révision originale épinglée dont les octets correspondent exactement au snapshot ; sinon épinglage vérifié de la tête exacte, puis restauration exacte et effacement relu du seul marqueur, sans suppression de révision. Preuves statiques/unitaires locales uniquement, sans fournisseur, navigateur ni credential.
+
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX10 (`improve-ocr`) : suppression de la révision Drive épinglée par DELETE uniquement après restauration exacte et effacement relu du marqueur ; tout manifeste final FAIL impose désormais un code de sortie 1. Preuves locales statiques/unitaires uniquement, sans fournisseur, navigateur ni credential.
+
+- [x] 2026-08-15 — Maintenance corrective CI PR #17 FIX9 (`improve-ocr`) : récupération Google limitée aux deux requêtes exactes de scope `invoice` et `manual`, sans requête de marqueur par clé seule ; chaque scope reste ambiguïté-fail-closed et son unique candidat est validé par version, scope et révision avant restauration. Preuves locales statiques/unitaires seulement ; aucun appel fournisseur, navigateur ou credential, et statut exact-head `klasr/live-google` reste requis.
+
+- [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 
 - [x] 2026-08-06 — Agent loop v3 (#13) : spec v2 et hiérarchie de preuves, manifeste/finaliseur lié issue-tentative-SHA, états/lineage/supersession, rôle `acceptance-validator` en lecture seule du code produit, gate CI pnpm toujours présent avec intégration/E2E/acceptation Google conditionnelle et artefacts, CODEOWNERS, sync Projects v2 fail-safe, documentation et tests node:test. Aucun changement produit ni second orchestrateur.
 
@@ -54,7 +76,11 @@
 
 ## REAC coverage notes (feeds KLASR_CONTEXT.md / jury dossier)
 
+- BYOK demonstrates C1/C2 (accessible responsive tenant UI), C3/C4 (encrypted organization-owned SQL model), C5/C6 (live provider abstraction and worker resolution), C7/C8 (network/PostgreSQL/Mongo browser integration), and C9/C10/C11 (TDD, SSRF/secret safeguards, deployment variables).
+- BYOK FIX adds C2 (actionable, distinguishable French error taxonomy: refused key vs incompatible model vs unavailable endpoint), C7 (browser failure-then-recovery path proving non-persistence of a rejected configuration) and C10 (bounded, sanitized upstream error parsing at the BFF boundary, closing an untrusted-payload passthrough).
+- Maintenance corrective CI PR #17 démontre : C4 (preuves automatisées ciblées et navigateur), C7 (intégration PostgreSQL/pg-boss et décisions terminales), C8 (métadonnées Mongo TTL sans contenu, contrôlées et nettoyées).
 - Loop setup demonstrates: CI/CD design, quality gates, Git workflow industrialization.
 - Starter code demonstrates: layered architecture (controller/service/repository), hexagonal port for Drive execution, multi-tenant data access design, TDD on the confirm flow, eco-design instrumentation (llmCallsUsed, UsageMetric).
 - #1 Auth demonstrates: OAuth-based auth (NextAuth Google/Microsoft) with server-side session augmentation, automatic multi-tenant onboarding (organization minted or reused from a verified OAuth email, never client input), a fail-closed + constant-time internal-service guard (defense in depth for a service-to-service endpoint with no other verification), and NextAuth middleware protecting the **Next.js dashboard pages** (`/dashboard/**`) — with unit tests covering the onboarding happy/reuse/race/defensive paths and every guard failure mode. **Precise about what's NOT covered**: the API itself (`apps/api`) has no request-level authentication yet — every controller still trusts `organizationId` from the URL/body with nothing checking who's asking. That gap is tracked as issue #2, not closed by #1.
 - One-shot MVP 2026-07-30 demonstrates: C1 (workspace pnpm reproductible), C2 (interface Next.js responsive et accessible de validation/correction), C3 (chemin de confirmation conservé via `DriveExecutor` côté API, sans mutation avant validation), C4/C5 (livraison guidée par SPEC et besoins jury), C6 (contraintes ADR respectées, aucun nouveau datastore/runtime/service), C7/C8 (modèles PostgreSQL et collection Mongo `analyses` inchangés), C9 (tests Jest/Vitest/node:test + build + lancement local), C10/C11 (commandes racine et gates qualité exécutables localement).
+- OCR suggestion quality 2026-08-12 demonstrates: C2 (états accessibles de revue faible confiance), C3 (pipeline OCR → règles → cascade LLM → proposition), C6 (bornes ressources et invariants Drive/RGPD), C7/C8 (migration PostgreSQL metadata-only + Mongo `analyses` sans contenu), C9 (régressions Jest/Vitest ciblées).

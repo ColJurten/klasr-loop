@@ -18,6 +18,7 @@ vi.mock('next/navigation', () => ({
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
   useRouter: () => ({ refresh: vi.fn() }),
+  usePathname: () => '/dashboard',
 }));
 
 vi.mock('next-auth', () => ({

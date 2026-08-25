@@ -1,7 +1,7 @@
 const CLOSING = String.raw`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)`;
 
 export function closingIssueReference(body, repository) {
-  const clauses = [...String(body ?? '').matchAll(new RegExp(String.raw`(?:^|\s)${CLOSING}\s+([^\r\n]+)`, 'gi'))];
+  const clauses = [...String(body ?? '').matchAll(new RegExp(String.raw`^[^\S\r\n]*${CLOSING}\s+([^\r\n]+)`, 'gim'))];
   if (clauses.length !== 1 || !repository) return undefined;
   const match = clauses[0][1].match(/^(?:(?<repository>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+))?#(?<issue>[1-9]\d*)$/);
   if (!match || (match.groups.repository && match.groups.repository.toLowerCase() !== repository.toLowerCase())) return undefined;
@@ -26,7 +26,7 @@ export function pullRequestMatchesIssue(pr, sha, issue, expectedBranch, reposito
   const explicitIssue = closingIssueReference(pr.body, repository);
   if (expectedBranch) return pr.head?.ref === expectedBranch && explicitIssue === issue;
   const conventional = Number(pr.head?.ref?.match(/^(?:feature|fix)\/(\d+)-/)?.[1]) === issue;
-  const hasClosingClause = new RegExp(String.raw`(?:^|\s)${CLOSING}\s+`, 'i').test(pr.body ?? '');
+  const hasClosingClause = new RegExp(String.raw`^[^\S\r\n]*${CLOSING}\s+`, 'im').test(pr.body ?? '');
   return conventional && (!hasClosingClause || explicitIssue === issue);
 }
 

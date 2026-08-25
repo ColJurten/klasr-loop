@@ -122,6 +122,20 @@ describe('ClassificationService.confirm (single-click flow)', () => {
     );
   });
 
+  it('allows explicit as-is validation for a low-confidence proposal', async () => {
+    proposals.claimPending.mockResolvedValue({ ...pendingProposal, reviewRequired: true } as never);
+
+    await service.confirm('org_1', 'prop_1', {});
+
+    expect(driveExecutor.moveAndRename).toHaveBeenCalledWith(expect.objectContaining({
+      newName: 'Facture_EDF_2026-03.pdf',
+      destinationFolderExternalId: 'folder_elec',
+    }));
+    expect(proposals.confirmClaimedTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'CONFIRMED' }),
+    );
+  });
+
   it('rejects invalid filenames before executing Drive changes', async () => {
     proposals.claimPending.mockResolvedValue(pendingProposal as never);
     await expect(service.confirm('org_1', 'prop_1', { finalName: '../secret.pdf' })).rejects.toThrow('Invalid filename');

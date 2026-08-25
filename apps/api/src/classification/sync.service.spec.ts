@@ -16,7 +16,7 @@ describe('SyncService — Drive reference and selected launch', () => {
     { id: 'organized', name: 'deja.pdf', mimeType: 'application/pdf', sizeBytes: 100, parents: ['grandchild'] },
   ];
 
-  function makeService(statuses = ['PENDING', 'PROPOSED', 'MANUAL']) {
+  function makeService(statuses = ['PENDING', 'PROPOSED', 'PENDING']) {
     const drive: { listMetadata: jest.Mock; listChildren?: jest.Mock } = { listMetadata: jest.fn().mockResolvedValue(metadata) };
     const repository = {
       upsertDocumentMetadata: jest.fn()
@@ -107,14 +107,14 @@ describe('SyncService — Drive reference and selected launch', () => {
   it('recursively launches one selected folder and skips inherited destination files', async () => {
     const { service, repository, jobs } = makeService();
 
-    await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 1, manual: 1 });
+    await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 2, manual: 0 });
 
     expect(repository.upsertDocumentMetadata).toHaveBeenCalledTimes(3);
     expect(repository.upsertDocumentMetadata).not.toHaveBeenCalledWith(
       'org_1',
       expect.objectContaining({ externalId: 'organized' }),
     );
-    expect(jobs.enqueueAnalysis).toHaveBeenCalledTimes(1);
+    expect(jobs.enqueueAnalysis).toHaveBeenCalledTimes(2);
     expect(jobs.enqueueAnalysis).toHaveBeenCalledWith({ organizationId: 'org_1', documentId: 'doc_1' });
   });
 
@@ -124,7 +124,7 @@ describe('SyncService — Drive reference and selected launch', () => {
     process.env.KLASR_INLINE_WORKER = 'true';
 
     try {
-      await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 1, manual: 1 });
+      await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 2, manual: 0 });
       expect(jobs.waitForAnalysisIdle).not.toHaveBeenCalled();
     } finally {
       delete process.env.KLASR_LOCAL_MVP;
@@ -132,10 +132,23 @@ describe('SyncService — Drive reference and selected launch', () => {
     }
   });
 
+  it('keeps Google-native and oversized files reviewable without enqueueing a doomed download', async () => {
+    const { service, repository, jobs } = makeService(['PENDING', 'PENDING']);
+    driveMetadata(service, [
+      { id: 'native', name: 'tableur', mimeType: 'application/vnd.google-apps.spreadsheet', sizeBytes: 0, parents: [] },
+      { id: 'large', name: 'large.pdf', mimeType: 'application/pdf', sizeBytes: 21 * 1024 * 1024, parents: [] },
+    ]);
+    await expect(service.launchDriveItem('org_1', 'native')).resolves.toEqual({ enqueued: 0, manual: 1 });
+    await expect(service.launchDriveItem('org_1', 'large')).resolves.toEqual({ enqueued: 0, manual: 1 });
+    expect(repository.upsertDocumentMetadata).toHaveBeenCalledTimes(2);
+    expect(repository.upsertDocumentMetadata).toHaveBeenCalledWith('org_1', expect.objectContaining({ supported: false }));
+    expect(repository.markManual).toHaveBeenCalledTimes(2); expect(jobs.enqueueAnalysis).not.toHaveBeenCalled();
+  });
+
   it('does not re-enqueue already PROPOSED, CLASSIFIED, or MANUAL documents', async () => {
     const { service, jobs } = makeService(['PROPOSED', 'CLASSIFIED', 'MANUAL']);
 
-    await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 0, manual: 1 });
+    await expect(service.launchDriveItem('org_1', 'input')).resolves.toEqual({ enqueued: 0, manual: 0 });
 
     expect(jobs.enqueueAnalysis).not.toHaveBeenCalled();
   });

@@ -22,6 +22,20 @@ async function sessionTenant(): Promise<string> {
   return organizationId;
 }
 
+export interface LlmSettingsInput { provider: 'anthropic' | 'openai' | 'mistral' | 'openai-compatible'; apiKey: string; model?: string; baseUrl?: string; }
+export async function getLlmSettings() { return llmRequest(''); }
+export async function discoverLlmModels(input: LlmSettingsInput) { return llmRequest('/models', 'POST', input); }
+export async function saveLlmSettings(input: LlmSettingsInput) { return llmRequest('', 'PUT', input); }
+export async function deleteLlmSettings() { return llmRequest('', 'DELETE'); }
+async function llmRequest(path: string, method = 'GET', body?: LlmSettingsInput) {
+  const organizationId = await sessionTenant();
+  const response = await fetch(`${apiUrl()}/organizations/${organizationId}/llm-settings${path}`, {
+    method, headers: { ...internalHeaders(), ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store',
+  });
+  await assertOk(response);
+  return response.json();
+}
+
 function internalHeaders(): HeadersInit {
   const secret = process.env.INTERNAL_API_SECRET;
   if (!secret) throw new Error('Missing INTERNAL_API_SECRET');
@@ -130,14 +144,57 @@ async function assertOk(response: Response): Promise<void> {
   throw new ApiUpstreamError(await responseErrorMessage(response), response.status);
 }
 
-async function responseErrorMessage(response: Response): Promise<string> {
+/** Untrusted upstream error bodies are read up to this many characters, then discarded. */
+const MAX_ERROR_BODY_CHARS = 16_384;
+/** A surfaced upstream message must stay short enough to be a UI label, never a payload. */
+const MAX_ERROR_MESSAGE_CHARS = 300;
+
+/**
+ * Extract a single bounded, human-readable string from an upstream error body.
+ * Accepts `{ message: string }`, `{ error: string }` and the nested Nest shape
+ * `{ message: { code, message } }`. Anything else — arrays, numbers, deeper
+ * nesting, control characters, oversized or malformed bodies — falls back to a
+ * generic status message so no upstream payload can reach the browser.
+ */
+export async function responseErrorMessage(response: Response): Promise<string> {
+  const generic = `API error ${response.status}`;
+  let raw: string;
   try {
-    const body = (await response.json()) as { message?: unknown; error?: unknown };
-    const message = typeof body.message === 'string' ? body.message : body.error;
-    if (typeof message === 'string') return message;
-    if (Array.isArray(message)) return message.join(', ');
+    raw = await response.text();
   } catch {
-    // Fall through to the generic status message.
+    return generic;
   }
-  return `API error ${response.status}`;
+  if (!raw || raw.length > MAX_ERROR_BODY_CHARS) return generic;
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return generic;
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return generic;
+  const record = body as Record<string, unknown>;
+  return boundedMessage(record.message) ?? boundedMessage(record.error) ?? generic;
+}
+
+function boundedMessage(value: unknown): string | null {
+  if (typeof value === 'string') return boundedText(value);
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return boundedText((value as Record<string, unknown>).message);
+  }
+  return null;
+}
+
+function boundedText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_ERROR_MESSAGE_CHARS) return null;
+  return hasControlCharacter(trimmed) ? null : trimmed;
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
 }

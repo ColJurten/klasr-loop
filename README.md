@@ -1,5 +1,19 @@
 # Klasr
 
+## Analyse documentaire DSA
+
+Le pipeline API sépare extraction, analyse structurée, décision de nom et décision de destination. Il fonctionne hors ligne avec `KLASR_LLM_PROVIDER=local`. Pour un endpoint compatible OpenAI, renseigner `KLASR_LLM_PROVIDER`, `KLASR_LLM_MODEL`, `KLASR_LLM_BASE_URL` et `KLASR_LLM_API_KEY`; les modèles par agent peuvent être surchargés par les variables `KLASR_AGENT_*_MODEL`. `ANTHROPIC_API_KEY` reste un repli de compatibilité temporaire, pas le contrat du pipeline.
+
+```bash
+pnpm install
+pnpm dsa:filename --file apps/api/test/fixtures/synthetic-invoice.txt
+pnpm dsa:destination --file apps/api/test/fixtures/synthetic-invoice.txt --dir /Comptabilite/Factures --dir /Juridique/Contrats
+```
+
+La CLI n'affiche ni texte extrait ni clé. PDF, PNG, JPEG, TIFF et texte sont pris en charge. Les formats Office entrent dans le flux mais demandent une revue manuelle; leur extraction nécessitera une dépendance TypeScript approuvée et, si le périmètre l'exige, un ADR.
+
+L’écran de réglages charge ses listes de modèles depuis `KLASR_ANTHROPIC_MODELS`, `KLASR_OPENAI_MODELS`, `KLASR_MISTRAL_MODELS` et `KLASR_COMPATIBLE_MODELS` (valeurs séparées par des virgules). Il valide le format d’une clé puis l’oublie immédiatement; les traitements utilisent exclusivement les variables d’environnement de l’API.
+
 Klasr est un micro-SaaS de classement documentaire pour cabinets et professions
 reglementees. Le flux reel est volontairement explicite :
 
@@ -8,7 +22,8 @@ reglementees. Le flux reel est volontairement explicite :
 3. heriter de ses sous-dossiers comme destinations possibles ;
 4. choisir un fichier Drive ou un dossier Drive existant a organiser ;
 5. streamer les octets Drive vers l'OCR, produire une proposition de nom et de
-   destination, puis jeter les octets ;
+   destination a partir d'un extrait representatif normalise, puis jeter les
+   octets et le texte OCR ;
 6. executer le renommage/deplacement uniquement apres `Valider`, `Corriger` ou
    `Retirer`.
 
@@ -101,6 +116,21 @@ deterministe : `Cabinet de demonstration` comme racine, une arborescence
 destination, un dossier separe `A classer`, des fichiers supportes et un fichier
 non supporte. Aucun token OAuth reel ni document reel n'est utilise.
 
+## OCR et qualite des suggestions
+
+L'OCR accepte PDF, PNG, JPEG et TIFF. Les PDF natifs utilisent d'abord la couche
+texte `pdfjs-dist`; seules les pages sans texte utile sont rasterisees puis lues
+par Tesseract (`fra+eng`). L'adaptateur borne l'entree a 20 MiB, analyse au plus
+20 pages par PDF et transmet au classement un contenu normalise et representatif
+(debut/milieu/fin), jamais un simple debut de document.
+
+Une extraction vide, trop courte, corrompue ou non supportee cree une proposition
+visible "a verifier" sans destination executable. Les propositions faibles ou
+ambigues sont exclues de `Tout valider` jusqu'a correction explicite du nom et
+du dossier. Les fournisseurs LLM doivent rendre un JSON borne : nom sur avec
+extension preservee, destination existante, confiances entre 0 et 1. Toute sortie
+inventee ou dangereuse est rejetee et retombe vers la revue manuelle.
+
 ## Configuration Google OAuth / Drive
 
 Pour tester Google Drive reel :
@@ -133,8 +163,8 @@ référence. Un dossier peut être choisi partout et ses descendants supportés 
 parcourus récursivement. La racine de référence elle-même, le dossier
 `À traiter manuellement` et tous ses descendants sont exclus. Les documents déjà
 `PROPOSED`, `CLASSIFIED` ou `MANUAL` ne sont pas ré-enfilés. Les formats non
-supportés, notamment XLSX, restent visibles avec « Non supporté » et ne sont pas
-envoyés à l'OCR.
+supportés, notamment XLSX, restent visibles et révisables avec « Non supporté » :
+ils ne sont ni masqués ni envoyés à l'OCR, et aboutissent à une revue manuelle.
 
 La preuve Google exige qu'un humain ouvre `/login` et réalise lui-même le
 consentement. Il contrôle ensuite, sans copier de jeton ni de contenu : navigation
@@ -164,7 +194,8 @@ un rapport.
    `/Comptabilite/Banque`, `/Comptabilite/Electricite`, `/Social/Paie`.
 8. Dans `Fichiers a organiser`, choisir `Dossier - A classer`.
 9. Cliquer `Lancer l'organisation`.
-10. Verifier plusieurs propositions, les badges de confiance et `Tout valider`.
+10. Verifier plusieurs propositions, les badges de confiance, les cartes "a
+    verifier" et `Tout valider` qui ignore ces cartes faibles.
 11. Valider une proposition telle quelle.
 12. Corriger un nom de fichier.
 13. Corriger une destination avec le select de dossiers herites.
@@ -196,7 +227,8 @@ Si un workflow GitHub est modifie, executer aussi `actionlint`.
 - Le contenu documentaire et le texte OCR ne sont pas stockes dans PostgreSQL,
   MongoDB, les logs, les fixtures ou les preuves.
 - PostgreSQL conserve les metadonnees : organisation, racine de reference,
-  dossiers herites, documents, propositions, decisions et historique.
+  dossiers herites, documents, propositions, decisions, historique, confiances
+  et raisons non sensibles de revue.
 - MongoDB conserve uniquement la collection TTL `analyses`, avec metadonnees
   d'analyse redactees.
 - Aucun renommage ou deplacement n'est execute sans decision explicite.

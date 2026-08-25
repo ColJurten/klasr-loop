@@ -61,8 +61,15 @@ describe('applyRules (pre-filter, eco-design stage)', () => {
 
   it('matches case-insensitively on the filename', () => {
     const proposal = applyRules(
-      input([rule(1, [{ field: 'filename', operator: 'contains', value: 'SCAN' }], '/Scans')]),
+      input([rule(1, [{ field: 'filename', operator: 'contains', value: 'SCAN' }], '/Scans')], { folderPaths: ['/Scans'] }),
     );
     expect(proposal?.destinationPath).toBe('/Scans');
+  });
+
+  it('ignores matching rules outside the inherited destination list', () => {
+    const proposal = applyRules(
+      input([rule(1, [{ field: 'content', operator: 'contains', value: 'facture' }], '/Invented')]),
+    );
+    expect(proposal).toBeNull();
   });
 });

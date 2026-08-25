@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { liveEvidenceEventKey } from './agent/lib/evidence.mjs';
 import { resolveLivePullRequest } from './agent/lib/pull-request.mjs';
 import { trustedComment } from './agent/lib/trusted-comments.mjs';
+import { parseObservedRecord } from './live-google-evidence.mjs';
 
 const EXPECTED_SHA = process.env.EXPECTED_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const CONTEXT = 'klasr/live-google';
-const RESULT_KEYS = ['service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
+const RESULT_KEYS = ['anthropic_discovery', 'anthropic_setting_saved', 'anthropic_classification', 'anthropic_setting_removed', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
 const CLEANUP_KEYS = ['fixture_restored', 'created_items_removed', 'tenant_cleaned'];
 const PROCESS_KEYS = ['apps_stopped', 'no_orphans'];
 const dryRun = process.argv.includes('--dry-run');
@@ -16,10 +17,12 @@ const input = process.argv.find((arg) => !arg.startsWith('--') && arg !== proces
 try {
   if (!/^[0-9a-f]{40}$/.test(EXPECTED_SHA)) throw new Error('Expected SHA is invalid');
   const manifest = JSON.parse(input === '-' ? readFileSync(0, 'utf8') : readFileSync(input ?? '.tmp/hermes/drive-reference-organization-flow/manifest.sanitized.json', 'utf8'));
-  exactKeys(manifest, ['version', 'identity', 'sha', 'issue', 'attempt', 'status', 'results', 'cleanup', 'processes']);
+  exactKeys(manifest, ['version', 'identity', 'sha', 'issue', 'attempt', 'status', 'tree', 'observed', 'results', 'cleanup', 'processes']);
   exactKeys(manifest.results, RESULT_KEYS); exactKeys(manifest.cleanup, CLEANUP_KEYS); exactKeys(manifest.processes, PROCESS_KEYS);
   if (manifest.version !== 1 || manifest.identity !== 'Google service account non-production acceptance' || !['PASS', 'FAIL'].includes(manifest.status)) throw new Error('Manifest labels are invalid');
   if (!/^[0-9a-f]{40}$/.test(manifest.sha) || manifest.sha !== EXPECTED_SHA) throw new Error('Manifest SHA is not the approved current head');
+  if (manifest.tree?.head !== manifest.sha) throw new Error('Manifest tree does not bind the approved head');
+  parseObservedRecord(JSON.stringify(manifest.observed), manifest.tree);
   if (!Number.isInteger(manifest.issue) || manifest.issue < 1 || !Number.isInteger(manifest.attempt) || manifest.attempt < 1) throw new Error('Manifest lineage is invalid');
 
   const complete = manifest.status === 'PASS' && RESULT_KEYS.every((key) => manifest.results[key] === true)

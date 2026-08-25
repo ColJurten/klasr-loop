@@ -3,25 +3,11 @@ import { redirect } from 'next/navigation';
 import { getServerSession } from 'next-auth';
 import {
   ChevronsUpDown,
-  FolderTree,
-  History,
-  LayoutDashboard,
-  LayoutTemplate,
-  ListChecks,
-  Users,
 } from 'lucide-react';
 import { KlasrLogo } from '@/components/logo';
 import { authOptions, type MembershipRole } from '@/lib/auth';
 import { SignOutButton } from './sign-out-button';
-
-const NAV = [
-  { label: 'Tableau de bord', href: '/dashboard', icon: LayoutDashboard, active: true },
-  { label: 'Arborescence', href: '#', icon: FolderTree },
-  { label: 'Historique', href: '#', icon: History },
-  { label: 'Règles', href: '#', icon: ListChecks },
-  { label: 'Membres', href: '#', icon: Users },
-  { label: 'Templates', href: '#', icon: LayoutTemplate },
-];
+import { DashboardNav } from './dashboard-nav';
 
 const ROLE_LABEL: Record<MembershipRole, string> = {
   ADMIN: 'Administrateur/Administratrice',
@@ -65,21 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <ChevronsUpDown className="h-3.5 w-3.5 text-ink/60" strokeWidth={1.5} />
         </button>
 
-        <nav className="mt-6 flex gap-1 overflow-x-auto md:flex-1 md:flex-col md:overflow-visible" aria-label="Navigation principale">
-          {NAV.map(({ label, href, icon: Icon, active }) => (
-            <Link
-              key={label}
-              href={href}
-              aria-current={active ? 'page' : undefined}
-              className={`flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-                active ? 'bg-lavender/25 font-medium text-ink' : 'text-ink/60 hover:text-ink'
-              }`}
-            >
-              <Icon className="h-4 w-4" strokeWidth={1.5} />
-              {label}
-            </Link>
-          ))}
-        </nav>
+        <DashboardNav />
 
         <div className="mt-4 border-t border-line pt-4 md:mt-0">
           <div className="flex items-center gap-3">

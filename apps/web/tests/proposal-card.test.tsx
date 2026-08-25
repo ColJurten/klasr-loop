@@ -7,6 +7,7 @@ const proposal: ProposalView = {
   id: 'prop_1',
   proposedName: 'Facture_EDF_2026-03.pdf',
   destinationPath: '/Comptabilité/Électricité',
+  destinationFolderExternalId: 'folder_elec',
   confidence: 0.92,
   source: 'LLM',
   document: {
@@ -39,6 +40,36 @@ describe('ProposalCard — single-click confirmation flow', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onConfirm).toHaveBeenCalledWith('prop_1', undefined);
+  });
+
+  it('allows explicit as-is validation when low confidence still has a destination', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProposalCard
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'Texte extrait insuffisant' }}
+        status="idle"
+        onConfirm={onConfirm}
+      />,
+    );
+
+    expect(screen.getByText('Texte extrait insuffisant')).toBeDefined();
+    expect(screen.getByText(/exclue de Tout valider/)).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: /Valider le classement/ }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('prop_1', undefined));
+  });
+
+  it('blocks direct validation when the destination is missing', () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProposalCard
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'Destination absente', destinationPath: '', destinationFolderExternalId: null }}
+        status="idle"
+        onConfirm={onConfirm}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /Corriger avant validation/ })).toHaveProperty('disabled', true);
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it('ignores double clicks (no double execution)', async () => {

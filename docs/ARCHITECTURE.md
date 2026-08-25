@@ -1,5 +1,13 @@
 # Klasr — Architecture cible (pilotée par le REAC CDA, RNCP 37873)
 
+## ADR — Séparation du pipeline de compréhension documentaire (2026-08-15)
+
+Le chemin OCR est découpé en extraction typée, analyse structurée, décision de nom et décision de destination. Agents et tâches sont déclarés en YAML; chaque sortie traverse un schéma zod. Le fournisseur LLM est configurable et le mode local déterministe garantit des tests sans appel externe.
+
+L'audit distingue cinq causes : formats/plafonds et normalisation côté extraction; texte brut et double décision côté contexte; chemins aplatis côté arborescence; validation combinée sans motif typé côté parsing; orchestration et persistance mêlées côté architecture. Les destinations utilisent une arborescence typée et toute réponse hors arborescence échoue fermée.
+
+Les octets restent en mémoire entre le téléchargement Drive et l'extraction. Aucun texte, prompt ou résultat brut n'est persisté. Office produit l'avertissement `office_extractor_unavailable`; un extracteur TypeScript approuvé fera l'objet d'une décision ultérieure. REAC : C1, C2, C3, C4/C5, C6, C7/C8, C9, C10/C11.
+
 > Principe directeur : **chaque technologie du stack doit être justifiée soit par une
 > compétence du REAC, soit par une exigence produit. Tout le reste est supprimé.**
 > Ce document est l'annexe d'architecture du dossier de projet ; chaque décision est
@@ -28,8 +36,8 @@
                             │ Prisma           │ driver MongoDB
                     ┌───────▼───────┐  ┌───────▼───────────────────┐
                     │  PostgreSQL   │  │  MongoDB (1 collection)   │
-                    │  12 entités   │  │  `analyses` : OCR + LLM   │
-                    │  + file jobs  │  │  bruts, schéma variable,  │
+                    │  12 entités   │  │  `analyses` : métadonnées │
+                    │  + file jobs  │  │  OCR/LLM redactées,       │
                     │  (pg-boss)    │  │  index TTL (purge RGPD)   │
                     └───────────────┘  └───────────────────────────┘
 
@@ -62,6 +70,13 @@ Google/OCR uniquement : Next.js, NestJS HTTP, PostgreSQL, MongoDB, Prisma,
 repositories, services et pg-boss restent réels. Il refuse de démarrer en
 production, comme `KLASR_INLINE_WORKER=true`.
 
+Le pipeline OCR/document-understanding garde les octets en mémoire bornée
+pendant l'analyse, privilégie la couche texte PDF native, OCR seulement les pages
+qui en ont besoin, normalise le texte puis ne transmet qu'un extrait
+représentatif au classement. Les sorties vides, corrompues, ambiguës ou faibles
+créent une proposition de revue non bulk-applicable avec raisons et confiances
+non sensibles ; aucun texte OCR, extrait documentaire ou octet n'est persisté.
+
 ## 2. ADR — décisions et justifications (à défendre devant le jury)
 
 ### ADR-001 — Un seul langage : TypeScript (suppression de Python/FastAPI)
@@ -83,15 +98,15 @@ C3/C6 au lieu d'exister à côté.
 ### ADR-002 — PostgreSQL source de vérité + MongoDB volontairement minimal
 **Contexte.** « Pourquoi plusieurs bases ? » — question légitime.
 **Décision.** PostgreSQL porte tout le modèle métier (12 entités, Prisma). MongoDB est
-réduit à UNE collection `analyses` (texte OCR extrait, réponses LLM brutes, schéma
-variable selon le fournisseur) avec index TTL.
+réduit à UNE collection `analyses` (métadonnées d'analyse OCR/LLM redactées, schéma
+variable selon le fournisseur, sans texte documentaire) avec index TTL.
 **Justification.**
 - La compétence 8 du REAC est explicite : *« Développer des composants d'accès aux
   données SQL **et NoSQL** »*. Sans NoSQL, cette compétence n'est pas démontrable.
 - Le choix est honnête et assumé comme tel devant le jury : « MongoDB existe dans ce
   projet pour couvrir la compétence NoSQL du référentiel, sur un cas d'usage réel où
-  le document store est pertinent (payloads d'analyse à schéma variable, purgés par
-  TTL — exigence RGPD et éco-conception) ».
+  le document store est pertinent : métadonnées d'analyse à schéma variable, purgées
+  par TTL, sans contenu documentaire — exigence RGPD et éco-conception ».
 - Surface minimale : un repository, une collection, zéro relation.
 **Alternative rejetée.** JSONB dans PostgreSQL : techniquement suffisant, mais la
 démonstration de la compétence NoSQL devient discutable devant un jury.

@@ -1,0 +1,2 @@
+import { SettingsForm } from './settings-form';
+export default function SettingsPage() { return <main className="mx-auto max-w-4xl px-4 py-8 sm:px-8 sm:py-10"><h1 className="text-2xl font-medium">Paramètres IA</h1><p className="mt-2 max-w-2xl text-sm text-ink/65">Votre clé est validée auprès du fournisseur, chiffrée et utilisée uniquement pour les analyses de votre organisation. Elle n’est jamais réaffichée.</p><SettingsForm /></main>; }

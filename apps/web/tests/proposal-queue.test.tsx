@@ -10,6 +10,7 @@ const proposals: ProposalView[] = [
     id: 'prop_ok',
     proposedName: 'Facture_Acme_2026-07.pdf',
     destinationPath: '/Comptabilité/2026/Fournisseurs',
+    destinationFolderExternalId: 'folder_fournisseurs',
     confidence: 0.96,
     source: 'RULE',
     document: {
@@ -23,6 +24,7 @@ const proposals: ProposalView[] = [
     id: 'prop_retry',
     proposedName: 'Contrat_Nexa_2026.pdf',
     destinationPath: '/Juridique/Contrats',
+    destinationFolderExternalId: 'folder_contrats',
     confidence: 0.72,
     source: 'LLM',
     document: {
@@ -76,5 +78,22 @@ describe('ProposalQueue', () => {
   it('shows a calm empty state when there is nothing to review', () => {
     render(<ProposalQueue initialProposals={[]} />);
     expect(screen.getByText('Rien à valider')).toBeDefined();
+  });
+
+  it('excludes review-required proposals from bulk validation', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ProposalQueue
+        initialProposals={[proposals[0], { ...proposals[1], reviewRequired: true, confidence: 0.2, destinationFolderExternalId: null }]}
+        onConfirmProposal={onConfirm}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tout valider' }));
+
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(onConfirm).toHaveBeenCalledWith('prop_ok', undefined);
+    expect(screen.getByText(/faible confiance sont exclues/)).toBeDefined();
   });
 });

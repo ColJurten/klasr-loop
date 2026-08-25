@@ -5,6 +5,10 @@ export interface ProposalView {
   destinationPath: string;
   destinationFolderExternalId: string | null;
   confidence: number;
+  filenameConfidence?: number | null;
+  destinationConfidence?: number | null;
+  reviewRequired?: boolean;
+  reviewReason?: string | null;
   source: 'RULE' | 'LLM';
   /** L'IA suggère de créer un dossier absent de l'arborescence (état pêche). */
   isNewFolder?: boolean;

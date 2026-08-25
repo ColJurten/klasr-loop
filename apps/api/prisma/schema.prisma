@@ -29,6 +29,20 @@ model Organization {
   notifications   Notification[]
   usageMetrics    UsageMetric[]
   subscription    Subscription?
+  llmSetting      LlmSetting?
+}
+
+model LlmSetting {
+  id              String       @id @default(cuid())
+  provider        String
+  model           String
+  baseUrl         String
+  encryptedApiKey String
+  status          String       @default("VALID")
+  validatedAt     DateTime
+  updatedAt       DateTime     @updatedAt
+  organizationId  String       @unique
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 // ── 2. User ──────────────────────────────────────────────────────────────────
@@ -134,6 +148,10 @@ model ClassificationProposal {
   destinationPath String
   destinationFolderExternalId String?
   confidence      Float
+  filenameConfidence Float?
+  destinationConfidence Float?
+  reviewRequired Boolean @default(false)
+  reviewReason   String?
   source          ProposalSource
   modelUsed       String?
   llmCallsUsed    Int            @default(0) // eco-design instrumentation

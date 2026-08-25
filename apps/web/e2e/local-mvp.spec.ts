@@ -73,32 +73,32 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
   await page.getByLabel('Élément Drive existant').selectOption('local_input_folder');
   await page.getByRole('button', { name: /Lancer l'organisation/ }).click();
   await expect((await launchResponse).status()).toBe(200);
-  await page.waitForLoadState('networkidle');
   const proposalRows = page.locator('[data-testid^="proposal-"]');
-  for (let attempt = 0; attempt < 15 && (await proposalRows.count()) < 3; attempt += 1) {
-    await page.waitForTimeout(1000);
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-  }
+  await expect(proposalRows).toHaveCount(4, { timeout: 30_000 });
   await expect(proposalRows.filter({ hasText: 'scan-facture-electricite.pdf' })).toBeVisible({ timeout: 30_000 });
   await expect(proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' })).toBeVisible();
   await expect(proposalRows.filter({ hasText: 'note-paie-juillet.png' })).toBeVisible();
+  await expect(proposalRows.filter({ hasText: 'archive.zip' })).toBeVisible();
 
-  await page.getByRole('button', { name: /Valider le classement de scan-facture-electricite.pdf/ }).click();
+  const factureCard = proposalRows.filter({ hasText: 'scan-facture-electricite.pdf' });
+  await factureCard.getByRole('button', { name: 'Corriger', exact: true }).click();
+  await page.getByLabel('Nom final').fill('Facture_Electricite_2026-07.pdf');
+  await page.getByLabel('Dossier de destination').selectOption('local_folder_elec');
+  await page.getByRole('button', { name: /Confirmer la correction/ }).click();
 
-  await proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' }).getByRole('button', { name: 'Corriger' }).click();
+  await proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' }).getByRole('button', { name: 'Corriger', exact: true }).click();
   await page.getByLabel('Nom final').fill('Releve_Banque_2026-07.pdf');
   await page.getByLabel('Dossier de destination').selectOption('local_folder_banque');
   await page.getByRole('button', { name: /Confirmer la correction/ }).click();
 
   await proposalRows.filter({ hasText: 'note-paie-juillet.png' }).getByRole('button', { name: 'Retirer' }).click();
+  await proposalRows.filter({ hasText: 'archive.zip' }).getByRole('button', { name: 'Retirer' }).click();
 
   await expect(proposalRows).toHaveCount(0, { timeout: 15_000 });
-  await page.reload();
   await expect(page.getByText('Historique récent')).toBeVisible();
   await expect(page.getByText('Rien à valider')).toBeVisible();
   const history = page.locator('section[aria-label="Historique"]');
   await expect(history.getByText('Releve_Banque_2026-07.pdf')).toBeVisible();
-  await expect(history.getByText('/À traiter manuellement')).toBeVisible();
+  await expect(history.getByText('/À traiter manuellement')).toHaveCount(2);
   await expect(page.getByText('Classés')).toBeVisible();
 });

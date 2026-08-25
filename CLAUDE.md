@@ -20,7 +20,7 @@ architecture and documented trade-offs over clever shortcuts.
 
 ## Non-negotiable invariants
 
-1. Files NEVER leave the user's Drive. Bytes are streamed from the Drive API into the OCR step and discarded — no object storage, no content at rest. Never persist document content in PostgreSQL; MongoDB `analyses` holds excerpts only, TTL-purged.
+1. Files NEVER leave the user's Drive. Bytes are streamed from the Drive API into the OCR step and discarded — no object storage, no content at rest. Never persist document content or OCR text in PostgreSQL or MongoDB; MongoDB `analyses` holds metadata only, TTL-purged.
 2. Every classification action requires explicit user confirmation before execution (single-click flow).
 3. LLM calls go through the provider abstraction in `apps/api/src/classification/llm` — never call a vendor API outside that folder.
 4. Pre-filter before LLM: skip the LLM when rules/metadata suffice (eco-design + cost).
