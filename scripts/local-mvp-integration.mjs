@@ -278,6 +278,7 @@ async function onboardLocalTenant() {
     headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
     body: JSON.stringify({
       email,
+      emailVerified: true,
       displayName: 'Camille Local',
       provider: 'google',
       providerAccountId: 'local-google-account',

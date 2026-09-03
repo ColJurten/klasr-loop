@@ -60,6 +60,17 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
   await expect(page.getByText('Mode local')).toBeVisible();
   await expect(page.getByText('API hors ligne')).toHaveCount(0);
 
+  await page.getByRole('link', { name: 'Paramètres IA', exact: true }).click();
+  await page.getByText('Compatible', { exact: true }).click();
+  await page.getByLabel('URL de base').fill('http://127.0.0.1:4310/v1');
+  await page.getByLabel('Clé API').fill('synthetic-fixture-token');
+  await page.getByRole('button', { name: 'Découvrir les modèles' }).click();
+  await expect(page.getByLabel('Modèle').locator('option')).toHaveCount(2);
+  await page.getByLabel('Modèle').selectOption('fixture-z');
+  await page.getByRole('button', { name: 'Valider et enregistrer' }).click();
+  await expect(page.getByRole('status')).toContainText('Configuration validée');
+  await page.goto('/dashboard');
+
   const referenceResponse = page.waitForResponse((response) => response.url().endsWith('/api/drive/reference-root'));
   await page.getByRole('button', { name: /Choisir Cabinet de démonstration/ }).click();
   await expect((await referenceResponse).status()).toBe(200);

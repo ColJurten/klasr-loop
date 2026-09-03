@@ -3,6 +3,8 @@ import { resolvePlaywrightRuntime } from './playwright-runtime';
 
 const databaseUrl = 'postgresql://postgres:postgres@127.0.0.1:5432/klasr';
 const mongoUrl = 'mongodb://127.0.0.1:27017';
+process.env.DATABASE_URL ??= databaseUrl;
+process.env.MONGO_URL ??= mongoUrl;
 const apiUrl = 'http://127.0.0.1:4301/api/v1';
 const runtime = resolvePlaywrightRuntime(process.env);
 const { webUrl } = runtime;

@@ -8,6 +8,8 @@
 
 ## In progress
 
+- 2026-09-03 — PR #20 CI repair (`UX-Update`) : correction minimale des contrats de harness (onboarding local vérifié, environnement Prisma des workers Playwright, sélecteurs E2E alignés sur l’UX approuvée). Intégration répétée, E2E et gates déterministes verts en contexte CI local.
+
 | Item | Branch / worktree | Owner (agent/human) | Next step |
 |---|---|---|---|
 | #1 — Auth: NextAuth + OAuth Google/Microsoft, organization onboarding | `feature/1-Auth` (worktree `klasr-worktrees/feature-1-Auth`) | orchestrated directly (no subagent) | **PR #3 verifier-APPROVED, ready for human merge.** Full arc: core onboarding logic (2 review rounds) → manual end-to-end test with real Google OAuth surfaced a missing DB migration (fixed, committed) and missing logout/login-page polish (fixed) → that round's tests gap (fixed, re-approved). 16/16 web tests, 31/31 API tests, lint/build clean on both. Note: API request authentication itself remains out of scope for #1 — tracked as #2, must land before real tenant data. |

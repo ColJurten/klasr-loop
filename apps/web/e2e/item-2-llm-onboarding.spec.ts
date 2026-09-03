@@ -47,7 +47,7 @@ test('missing and validated dashboard states plus accessible provider picker', a
   await expect(onboarding).toBeVisible();
   const launch = page.getByRole('button', { name: /Lancer l'organisation/ });
   await expect(launch).toBeDisabled();
-  await expect(page.getByRole('tooltip')).toContainText('analyse est bloquée');
+  await expect(page.locator('#llm-launch-help')).toContainText('analyse est bloquée');
   await assertAxe(page, '/dashboard missing');
   await page.screenshot({ path: `${evidence}/dashboard-missing-1280.png`, fullPage: true });
 
