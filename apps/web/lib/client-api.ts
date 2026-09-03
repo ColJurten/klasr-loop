@@ -51,8 +51,8 @@ export async function confirmProposal(
   return response.json();
 }
 
-export async function rejectProposal(proposalId: string): Promise<{ executed: boolean; destinationPath: string }> {
-  const response = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, { method: 'POST' });
+export async function ignoreProposal(proposalId: string): Promise<{ ignored: true }> {
+  const response = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/ignore`, { method: 'POST' });
   if (!response.ok) throw new Error(`API error ${response.status}`);
   return response.json();
 }

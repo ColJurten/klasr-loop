@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { rejectProposal } from '@/lib/api';
+import { ignoreProposal } from '@/lib/api';
 import { bffErrorResponse } from '@/lib/bff-errors';
 
 export async function POST(
@@ -7,8 +7,8 @@ export async function POST(
   { params }: { params: { proposalId: string } },
 ) {
   try {
-    return NextResponse.json(await rejectProposal(params.proposalId));
+    return NextResponse.json(await ignoreProposal(params.proposalId));
   } catch (error) {
-    return bffErrorResponse(error, 'reject failed');
+    return bffErrorResponse(error, 'ignore failed');
   }
 }

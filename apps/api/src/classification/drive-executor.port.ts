@@ -7,6 +7,7 @@ export const DRIVE_EXECUTOR = Symbol('DRIVE_EXECUTOR');
 
 export interface MoveRenameCommand {
   organizationId: string;
+  userId?: string;
   documentExternalId: string;
   newName: string;
   destinationPath?: string;

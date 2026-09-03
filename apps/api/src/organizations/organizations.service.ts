@@ -7,8 +7,22 @@ import { OrganizationsRepository } from './organizations.repository';
 export class OrganizationsService {
   constructor(private readonly repository: OrganizationsRepository) {}
 
-  create(dto: CreateOrganizationDto): Promise<Organization> {
-    return this.repository.createWithOwner(dto.name, dto.ownerEmail);
+  create(dto: CreateOrganizationDto, user?: { name?: string; passwordHash?: string }): Promise<Organization> {
+    return user
+      ? this.repository.createWithOwner(dto.name, dto.ownerEmail, user)
+      : this.repository.createWithOwner(dto.name, dto.ownerEmail);
+  }
+
+  findLocalIdentity(email: string) {
+    return this.repository.findLocalIdentity(email);
+  }
+
+  findLocalIdentityById(userId: string) {
+    return this.repository.findLocalIdentityById(userId);
+  }
+
+  enrollLocalPassword(userId: string, organizationId: string, membershipId: string, passwordHash: string): Promise<number> {
+    return this.repository.enrollLocalPassword(userId, organizationId, membershipId, passwordHash);
   }
 
   async getById(organizationId: string): Promise<Organization> {

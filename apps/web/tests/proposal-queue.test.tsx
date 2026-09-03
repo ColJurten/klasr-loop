@@ -80,6 +80,16 @@ describe('ProposalQueue', () => {
     expect(screen.getByText('Rien à valider')).toBeDefined();
   });
 
+  it('removes an ignored proposal from the review list', async () => {
+    const onIgnore = vi.fn().mockResolvedValue(undefined);
+    render(<ProposalQueue initialProposals={[proposals[0]]} onIgnoreProposal={onIgnore} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ignorer' }));
+
+    await waitFor(() => expect(screen.queryByTestId('proposal-prop_ok')).toBeNull());
+    expect(onIgnore).toHaveBeenCalledWith('prop_ok');
+  });
+
   it('excludes review-required proposals from bulk validation', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
 

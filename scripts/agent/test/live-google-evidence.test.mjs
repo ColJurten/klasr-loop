@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { closingIssueReference, pullRequestMatchesIssue, resolveCiPullRequest, resolveLivePullRequest } from '../lib/pull-request.mjs';
-import { assertTreeBinding, computeTreeBinding, parseObservedRecord } from '../../live-google-evidence.mjs';
+import { assertTreeBinding, computeTreeBinding, parseObservedRecord, resolveEvidenceRunDir } from '../../live-google-evidence.mjs';
 
 const root = new URL('../../../', import.meta.url);
 const head = readFileSync(new URL('.git/HEAD', root), 'utf8').trim();
@@ -95,20 +95,72 @@ test('CI recovery fails closed for hostile PR ambiguity and issue disagreement',
 });
 
 test('live runner evidence self-check enforces the sanitized manifest allowlist', () => {
-  const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--evidence-self-check'], { cwd: root, encoding: 'utf8' });
+  const directory = mkdtempSync(path.join(tmpdir(), 'klasr-live-evidence-'));
+  const canonicalFiles = [
+    new URL('.tmp/hermes/ux-clarity/evidence/item-3/provider-proof.sanitized.json', root),
+    new URL('.tmp/hermes/ux-clarity/evidence/item-4/provider-proof.sanitized.json', root),
+  ];
+  const before = canonicalFiles.map((file) => existsSync(file) ? readFileSync(file) : null);
+  const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--evidence-self-check'], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_FATAL_CHECK_DIR: directory } });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, 'live evidence schema check PASS\n');
+  assert.deepEqual(canonicalFiles.map((file) => existsSync(file) ? readFileSync(file) : null), before);
 
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const results = functionBody(source, 'sanitizedManifest');
   const schema = functionBody(source, 'assertManifest');
   const markdown = functionBody(source, 'realAcceptanceMarkdown');
+  const item4Schema = functionBody(source, 'assertItem4Proof');
+  const item3Schema = functionBody(source, 'assertItem3Proof');
   assert.match(markdown, /Task:.*\$\{task\}/s);
   assert.match(markdown, /Attempt:.*\$\{manifest\.attempt\}/s);
+  assert.match(item4Schema, /schema.*klasr-item4-provider-proof-v1/s);
+  assert.match(item4Schema, /proof\.task.*task/s);
+  assert.match(item4Schema, /proof\.attempt.*proofLineage\.attempt/s);
+  assert.match(item4Schema, /assertTreeBinding\(tree, proof\.tree\)/);
+  assert.match(item3Schema, /schema.*klasr-item3-provider-proof-v1/s);
+  assert.match(item3Schema, /proof\.task.*task/s);
+  assert.match(item3Schema, /proof\.attempt.*proofLineage\.attempt/s);
+  assert.match(item3Schema, /assertTreeBinding\(tree, proof\.tree\)/);
   for (const key of ['anthropic_discovery', 'anthropic_setting_saved', 'anthropic_classification', 'anthropic_setting_removed']) {
     assert.match(results, new RegExp(`${key}:`), `${key} must bind manifest PASS`);
     assert.match(schema, new RegExp(`results\\) === '[^']*${key}`), `${key} must be allowlisted in the exact result schema`);
   }
+});
+
+test('Item 5 evidence paths are issue-attempt-task-run scoped and distinct', () => {
+  const repo = path.resolve(new URL('../../../', import.meta.url).pathname);
+  const lineage = { issue: 5, attempt: 5 };
+  const first = resolveEvidenceRunDir(repo, lineage, 't_a5e1271c', 'run-a');
+  const second = resolveEvidenceRunDir(repo, lineage, 't_a5e1271c', 'run-b');
+  assert.notEqual(first, second);
+  for (const resolved of [first, second]) {
+    assert.match(resolved, /evidence\/item-5\/attempt-5\/runs\/t_a5e1271c-run-[ab]$/);
+    assert.doesNotMatch(resolved, /evidence\/item-[34](?:\/|$)/);
+  }
+});
+
+test('Item 5 runner retains borrowed bytes and gates Anthropic no_destination_match', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const branch = source.slice(source.indexOf('if (lineage.issue === 5) {'), source.indexOf('} else {', source.indexOf('if (lineage.issue === 5) {')));
+  assert.doesNotMatch(branch, /replaceBytes\(/);
+  assert.match(branch, /originalBytesRetained/);
+  assert.match(branch, /modelUsed.*anthropic/);
+  assert.match(branch, /reviewReason === 'no_destination_match'/);
+  assert.match(branch, /reviewReason !== 'extraction_failed'/);
+  assert.match(branch, /live-google-sa-item-5-post-validation-1280\.png/);
+});
+
+test('service-account proof gets scope from tokeninfo and identity from Drive about', () => {
+  const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--provider-identity-self-check'], {
+    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_TASK: 't_selfcheck', KLASR_EVIDENCE_SHA: sha, KLASR_EVIDENCE_ISSUE: '3', KLASR_EVIDENCE_ATTEMPT: '21' },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, 'provider identity read-back check PASS\n');
+
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(functionBody(source, 'providerTokenInfo'), /\.email|emailAddress|client_email/);
+  assert.match(functionBody(source, 'providerDriveIdentity'), /\/drive\/v3\/about\?fields=user%28emailAddress%29/);
 });
 
 test('live runner contracts real tenant Anthropic BYOK before Google mutation', () => {
@@ -142,8 +194,8 @@ test('exact tree binding is stable, sensitive, excludes evidence and rejects mis
   const changed = computeTreeBinding(directory, options); assert.notEqual(changed.digest, first.digest);
   writeFileSync(path.join(directory, 'new.bin'), Buffer.from([0, 255, 1]));
   assert.notEqual(computeTreeBinding(directory, { ...options, untracked: ['new.bin'] }).digest, changed.digest);
-  writeFileSync(path.join(directory, '.env'), 'credential'); writeFileSync(path.join(directory, 'run.log'), 'generated');
-  assert.deepEqual(computeTreeBinding(directory, { ...options, untracked: ['.env', 'run.log'] }), changed);
+  writeFileSync(path.join(directory, '.env'), 'credential'); writeFileSync(path.join(directory, '.env.example'), 'example credential'); writeFileSync(path.join(directory, 'run.log'), 'generated');
+  assert.deepEqual(computeTreeBinding(directory, { ...options, tracked: [...options.tracked, '.env.example'], untracked: ['.env', 'run.log'] }), changed);
   assert.throws(() => assertTreeBinding(first, changed), /tree_binding_mismatch/);
 });
 
@@ -198,7 +250,7 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
   assert.match(source, /uploadType=media/);
   assert.match(source, /fixtureSnapshots\.length === 2/);
   assert.match(source, /downloadBytes\(snapshot\.id\)/);
-  assert.match(source, /replaceBytes\(manualFixture\.id, manualBytes\)/);
+  assert.match(source, /replaceBytes\(reviewFixture\.id, reviewBytes\)/);
   const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--decision-selection-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, 'live runner fixture restoration and decision selection check PASS\n');
@@ -207,7 +259,7 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
 test('live runner keeps crash recovery inside Drive revisions without local byte backups', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const startupRecovery = source.indexOf('await recoverMarkedFixtures();');
-  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixtures(rootItems)', startupRecovery));
+  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixturePlan(rootItems)', startupRecovery));
   const discovery = functionBody(source, 'recoveryCandidates');
   assert.match(discovery, /appProperties has \{ key='klasrRecoveryScope' and value='/);
   assert.doesNotMatch(source, /function markedCandidates|markedCandidates\(/);
@@ -223,8 +275,8 @@ test('live runner keeps crash recovery inside Drive revisions without local byte
   assert.match(recover, /const revisionId = recoveryMarker\(item, scope\)[\s\S]*assert\(revisionId, 'Exact Drive recovery marker is missing'\)[\s\S]*await restoreFromRevision\(item, revisionId/);
   assert.match(recover, /parents: \[sharedRootId\], trashed: false/);
   assert.match(recover, /await restoreFromRevision\(item, revisionId, \{ name: fixtureNames\[index\]/);
-  assert.match(source, /await pinOriginalRevision\(invoiceFixture, fixtureSnapshots\[0\]\.bytes\)[\s\S]*await markRecovery\(invoiceFixture\.id,[\s\S]*await replaceBytes\(invoiceFixture\.id/);
-  assert.match(source, /await pinOriginalRevision\(manualFixture, fixtureSnapshots\[1\]\.bytes\)[\s\S]*await markRecovery\(manualFixture\.id,[\s\S]*await replaceBytes\(manualFixture\.id/);
+  assert.match(source, /await pinOriginalRevision\(invoiceFixture, invoiceSnapshot\.bytes\)[\s\S]*await markRecovery\(invoiceFixture\.id,[\s\S]*await replaceBytes\(invoiceFixture\.id/);
+  assert.match(source, /await pinOriginalRevision\(reviewFixture, manualSnapshot\.bytes\)[\s\S]*await markRecovery\(reviewFixture\.id,[\s\S]*await replaceBytes\(reviewFixture\.id/);
   assert.match(source, /revisions\/[\s\S]*alt=media/);
   assert.match(source, /appProperties/);
   assert.doesNotMatch(source, /backup(?:Path|File)|writeFileSync\([^)]*(?:bytes|content|snapshot)/i);
@@ -251,11 +303,39 @@ test('live runner keeps crash recovery inside Drive revisions without local byte
   const fallback = pin.indexOf('body: JSON.stringify({ keepForever: true })');
   assert(pin.indexOf('return reusable.id') < fallback);
   assert.match(pin.slice(fallback), /assert\(revision\.id === current\.headRevisionId && revision\.keepForever === true[\s\S]*drive\([\s\S]*assert\(verified\.id === revision\.id && verified\.keepForever === true/);
-  assert.match(source, /pinOriginalRevision\(invoiceFixture, fixtureSnapshots\[0\]\.bytes\)/);
-  assert.match(source, /pinOriginalRevision\(manualFixture, fixtureSnapshots\[1\]\.bytes\)/);
+  assert.match(source, /pinOriginalRevision\(invoiceFixture, invoiceSnapshot\.bytes\)/);
+  assert.match(source, /pinOriginalRevision\(reviewFixture, manualSnapshot\.bytes\)/);
   assert.match(functionBody(source, 'markRecovery'), /await drive\([\s\S]*assert\(recoveryMarker\(await metadata\(id\), scope\) === revisionId/);
   const midRunRestore = source.indexOf('await restoreFixtures(false);');
   assert(midRunRestore !== -1 && midRunRestore < source.indexOf('const correctionFixture'));
+});
+
+test('live runner quarantines a legacy holding folder outside ignore measurement and restores it exactly', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const removedFolderName = '[^']+';/);
+  assert.doesNotMatch(source.match(/const removedFolderName = .*;/)?.[0] ?? '', /`|\$\{/);
+  const quarantine = functionBody(source, 'quarantineLegacyFolder');
+  assert.match(quarantine, /assert\(matches\.length === 1, 'Expected exactly one legacy holding folder in the reference fixture'\)/);
+  assert.match(quarantine, /legacyFolderSnapshot = await metadata\(folder\.id\)/);
+  assert.match(quarantine, /assertLegacyFolderSnapshot\(legacyFolderSnapshot, parentId\)/);
+  assert(quarantine.indexOf('await markLegacyFolderRecovery(folder.id, parentId)') < quarantine.indexOf('await restoreMetadata(folder.id,'));
+  assert.match(quarantine, /parents: \[sharedRootId\]/);
+  assert.match(quarantine, /assert\(legacyFolderMatches\(legacyFolderSnapshot, await metadata\(folder\.id\), false\)/);
+  const setup = source.indexOf('await quarantineLegacyFolder(reference.id)');
+  const measurement = source.indexOf('ignoreMutationCount = 0');
+  const click = source.indexOf('await ignoreButton.click()');
+  const assertion = source.indexOf("assert(ignoreMutationCount === 0, 'Ignore issued a Drive files.update or move mutation')");
+  assert(setup !== -1 && setup < measurement && measurement < click && click < assertion);
+  assert.match(source.slice(measurement, assertion), /finally \{\s*ignoreWindowOpen = false;/);
+  const restore = functionBody(source, 'restoreLegacyFolder');
+  assert.match(restore, /await restoreMetadata\(legacyFolderSnapshot\.id, legacyFolderSnapshot\)/);
+  assert.match(restore, /await clearLegacyFolderRecovery\(legacyFolderSnapshot\.id\)/);
+  assert.match(restore, /const restored = await metadata\(legacyFolderSnapshot\.id\)/);
+  assert.match(restore, /assert\(legacyFolderMatches\(legacyFolderSnapshot, restored, true\)/);
+  assert.match(restore, /assert\(!ignoreWindowOpen/);
+  assert.match(functionBody(source, 'legacyFolderMatches'), /sameParents\(current\.parents, restored \? snapshot\.parents : \[sharedRootId\]\)/);
+  assert.match(functionBody(source, 'finalize'), /cleanup\.legacyFolderRestored = await restoreLegacyFolder\(\)/);
+  assert.match(functionBody(source, 'cleanupVerified'), /cleanup\.legacyFolderRestored/);
 });
 
 test('live runner binds a sanitized FAIL manifest to exit code 1 before finalization ends', () => {
@@ -278,16 +358,38 @@ test('live runner preserves a sanitized async analysis failure before tenant cle
   assert.doesNotMatch(diagnostic, /output|response|content|text|prompt|bytes|externalId|documentId/);
   const finalize = functionBody(source, 'finalize');
   assert(finalize.indexOf('failedAnalysisDiagnostic()') < finalize.indexOf('cleanup.tenantCleaned ='));
-  assert.match(source, /const failureOverrides = \['stage=analysis reason=job_failed'\]/);
+  assert.match(source, /const failureOverrides = \['stage=analysis reason=job_failed'/);
   assert.match(functionBody(source, 'fatalExit'), /failureOverrides\.includes\(failureDiagnostic\)/);
   assert.match(functionBody(source, 'fatalExit'), /failureDiagnostic \?\? `stage=\$\{failureStageAtFailure \?\? failureStage\}`/);
 });
 
+test('live runner reports only allowlisted Item 4 provider assertion reasons', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert.match(source, /failureDiagnostic \?\?= safeFailureReason\(error\)/);
+  const reason = functionBody(source, 'safeFailureReason');
+  assert.match(reason, /ignore_metadata_changed/);
+  assert.match(reason, /legacy_folder_present/);
+  assert.doesNotMatch(reason, /error\.stack/);
+});
+
 test('live runner exposes only exact allowlisted failure stages', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const stages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-byok', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'settings-delete', 'cleanup-finalization'];
+  const stages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'anthropic-server-setup', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'settings-delete', 'cleanup-finalization'];
   assert.match(source, new RegExp(`const failureStages = \\[${stages.map((stage) => `'${stage}'`).join(', ')}\\]`));
-  for (const stage of stages.slice(6)) assert.match(source, new RegExp(`failureStage = '${stage}'`));
+  for (const stage of stages.slice(5)) assert.match(source, new RegExp(`failureStage = '${stage}'`));
+  const browserBoundaries = [
+    ['browser-launch', 'browser = await chromium.launch'],
+    ['login-navigation', 'await page.goto'],
+    ['acceptance-login-session', "await page.getByRole('button', { name: 'Validation Google staging' }).click()"],
+    ['dashboard-identity', "await page.getByText('Validation staging · identité de service Google').waitFor()"],
+    ['tenant-lookup', 'organizationId = await tenantId()'],
+    ['drive-connection-readback', 'const connectionBeforeSync = await prisma.driveConnection.findFirst'],
+    ['tenant-reset', 'await assertNoPriorTenantSetting(organizationId)'],
+    ['anthropic-server-setup', '({ model: selectedAnthropicModel'],
+    ['settings-verification', "await page.getByRole('link', { name: 'Paramètres IA' }).click()"],
+    ['dashboard-resume', "await page.getByRole('link', { name: 'Tableau de bord' }).click()"],
+  ];
+  for (const [stage, operation] of browserBoundaries) assert(source.includes(`failureStage = '${stage}';\n  ${operation}`), `Missing immediate boundary: ${stage}`);
   assert.doesNotMatch(source, /drive-classification/);
   const fatal = functionBody(source, 'fatalExit');
   assert.match(fatal, /failureStages\.includes\(failureStage\)/);
@@ -314,7 +416,8 @@ test('live runner reports ordered proposal launch boundaries immediately before 
 
 test('live runner routes signals and fatal errors through bounded single-flight recovery with fresh tokens', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  for (const event of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) assert.match(source, new RegExp(`process\\.on\\('${event}'`));
+  for (const event of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) assert.match(source, new RegExp(`process\\.once\\('${event}'`));
+  assert.match(source, /let fatalExitStarted = false/);
   assert.match(source, /let finalizationFlight/);
   assert.match(source, /let restorationFlight/);
   const emergency = functionBody(source, 'emergencyExit');
@@ -350,6 +453,11 @@ test('live runner routes signals and fatal errors through bounded single-flight 
 test('live runner fatal rejection replaces stale evidence with current sanitized FAIL evidence', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'klasr-live-fatal-'));
   const manifest = path.join(directory, 'manifest.sanitized.json');
+  const canonicalItem3 = [
+    new URL('.tmp/hermes/ux-clarity/evidence/item-3/provider-proof.sanitized.json', root),
+    new URL('.tmp/hermes/ux-clarity/evidence/item-3/screenshots/linked-service-account-final-1280.png', root),
+  ];
+  const before = canonicalItem3.map((file) => existsSync(file) ? readFileSync(file) : null);
   writeFileSync(manifest, '{"attempt":94,"status":"PASS"}\n');
   const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--fatal-lifecycle-check'], {
     cwd: root, encoding: 'utf8', timeout: 10_000,
@@ -360,6 +468,7 @@ test('live runner fatal rejection replaces stale evidence with current sanitized
   assert.deepEqual(JSON.parse(readFileSync(manifest, 'utf8')), {
     ...JSON.parse(readFileSync(manifest, 'utf8')), issue: 17, attempt: 95, sha, status: 'FAIL',
   });
+  assert.deepEqual(canonicalItem3.map((file) => existsSync(file) ? readFileSync(file) : null), before);
   assert.doesNotMatch(`${run.stdout}${run.stderr}`, /fatal-probe-secret|Error|stack/i);
 });
 

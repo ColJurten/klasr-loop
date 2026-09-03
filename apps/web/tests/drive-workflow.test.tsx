@@ -56,6 +56,7 @@ describe('DriveWorkflow production browser', () => {
     fireEvent.click(screen.getAllByLabelText(/sélectionner/i)[0]);
     fireEvent.click(screen.getByRole('button', { name: /choisir ce dossier/i }));
     await waitFor(() => expect(clientApi.selectReferenceRoot).toHaveBeenCalledWith('folder_real'));
+    expect(router.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('shows a root PDF, marks XLSX unsupported, and launches the selected PDF', async () => {

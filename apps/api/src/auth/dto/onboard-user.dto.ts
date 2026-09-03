@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 /**
  * Payload posted by the web app's NextAuth jwt() callback on first sign-in.
@@ -16,6 +16,10 @@ export class OnboardUserDto {
   @IsString()
   @IsNotEmpty()
   provider!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  emailVerified?: boolean;
 
   @IsOptional()
   @IsString()

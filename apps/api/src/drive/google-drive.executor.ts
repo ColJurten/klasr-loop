@@ -1,4 +1,5 @@
 import { BadGatewayException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { appendFileSync } from 'node:fs';
 import { DriveExecutor, MoveRenameCommand } from '../classification/drive-executor.port';
 import { FoldersRepository } from './folders.repository';
 import { GoogleTokenService } from './google-token.service';
@@ -22,8 +23,8 @@ export class GoogleDriveExecutor implements DriveExecutor {
     private readonly folders: FoldersRepository,
   ) {}
 
-  async listMetadata(organizationId: string): Promise<DriveMetadataItem[]> {
-    const accessToken = await this.tokens.getAccessToken(organizationId);
+  async listMetadata(organizationId: string, userId = ''): Promise<DriveMetadataItem[]> {
+    const accessToken = await this.tokens.getAccessToken(organizationId, userId);
     const files: Array<{ id: string; name: string; mimeType: string; size?: string; parents?: string[] }> = [];
     let pageToken: string | undefined;
     do {
@@ -55,11 +56,12 @@ export class GoogleDriveExecutor implements DriveExecutor {
     }));
   }
 
-  async listChildren(organizationId: string, parentId: string, pageToken?: string): Promise<DriveMetadataPage> {
-    const accessToken = await this.tokens.getAccessToken(organizationId);
+  async listChildren(organizationId: string, userId: string, parentId?: string, pageToken?: string): Promise<DriveMetadataPage> {
+    if (arguments.length <= 3) [pageToken, parentId, userId] = [parentId, userId, ''];
+    const accessToken = await this.tokens.getAccessToken(organizationId, userId);
     const effectiveParentId = parentId === 'root' && process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT === 'true'
       ? process.env.KLASR_GOOGLE_DRIVE_ROOT_ID ?? parentId
-      : parentId;
+      : parentId!;
     const search = new URLSearchParams({
       pageSize: '100', fields: 'nextPageToken,files(id,name,mimeType,size,parents)',
       q: `'${effectiveParentId.replace(/'/g, "\\'")}' in parents and trashed=false`,
@@ -75,8 +77,9 @@ export class GoogleDriveExecutor implements DriveExecutor {
     };
   }
 
-  async download(organizationId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>> {
-    const accessToken = await this.tokens.getAccessToken(organizationId);
+  async download(organizationId: string, userId: string, documentExternalId?: string): Promise<ReadableStream<Uint8Array>> {
+    if (documentExternalId === undefined) [documentExternalId, userId] = [userId, ''];
+    const accessToken = await this.tokens.getAccessToken(organizationId, userId);
     const response = await fetch(
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(documentExternalId)}?alt=media`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -86,13 +89,14 @@ export class GoogleDriveExecutor implements DriveExecutor {
   }
 
   async moveAndRename(command: MoveRenameCommand): Promise<void> {
+    if (process.env.KLASR_DRIVE_MUTATION_LOG) appendFileSync(process.env.KLASR_DRIVE_MUTATION_LOG, 'files.update\n');
     const destination = command.destinationFolderExternalId
       ? await this.folders.findByExternalId(command.organizationId, command.destinationFolderExternalId)
       : command.destinationPath
         ? await this.folders.findByPath(command.organizationId, command.destinationPath)
         : null;
     if (!destination) throw new NotFoundException('Destination folder not found');
-    const accessToken = await this.tokens.getAccessToken(command.organizationId);
+    const accessToken = await this.tokens.getAccessToken(command.organizationId, command.userId ?? '');
     const metadataResponse = await fetch(
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(command.documentExternalId)}?fields=parents&supportsAllDrives=true`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -124,53 +128,6 @@ export class GoogleDriveExecutor implements DriveExecutor {
     if (!response.ok) throw new Error(`Google Drive move/rename failed: ${response.status}`);
   }
 
-  async ensureHoldingFolder(organizationId: string, referenceRootExternalId: string): Promise<DriveMetadataItem> {
-    const accessToken = await this.tokens.getAccessToken(organizationId);
-    const query = [
-      "mimeType='application/vnd.google-apps.folder'",
-      "name='À traiter manuellement'",
-      `'${referenceRootExternalId.replace(/'/g, "\\'")}' in parents`,
-      'trashed=false',
-    ].join(' and ');
-    const search = new URLSearchParams({
-      q: query,
-      pageSize: '1',
-      fields: 'files(id,name,mimeType,parents)',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-    });
-    const existingResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${search}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!existingResponse.ok) throw new Error(`Google Drive holding lookup failed: ${existingResponse.status}`);
-    const existing = (await existingResponse.json()) as {
-      files?: Array<{ id: string; name: string; mimeType: string; parents?: string[] }>;
-    };
-    const found = existing.files?.[0];
-    if (found) {
-      return { id: found.id, name: found.name, mimeType: found.mimeType, sizeBytes: 0, parents: found.parents ?? [] };
-    }
-
-    const createParams = new URLSearchParams({
-      fields: 'id,name,mimeType,parents',
-      supportsAllDrives: 'true',
-    });
-    const createResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${createParams}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: 'À traiter manuellement',
-        mimeType: FOLDER_MIME,
-        parents: [referenceRootExternalId],
-      }),
-    });
-    if (!createResponse.ok) throw new Error(`Google Drive holding create failed: ${createResponse.status}`);
-    const created = (await createResponse.json()) as { id: string; name: string; mimeType: string; parents?: string[] };
-    return { id: created.id, name: created.name, mimeType: created.mimeType, sizeBytes: 0, parents: created.parents ?? [] };
-  }
 }
 
 export function isFolder(item: DriveMetadataItem): boolean {

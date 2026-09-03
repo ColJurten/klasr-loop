@@ -43,7 +43,7 @@ export class UsageMetricsRepository {
       this.prisma.classificationProposal.count({ where: { organizationId, status: 'PENDING' } }),
       this.prisma.document.count({ where: { organizationId, status: 'PENDING' } }),
       this.prisma.document.count({ where: { organizationId, status: 'CLASSIFIED' } }),
-      this.prisma.document.count({ where: { organizationId, status: { in: ['PROPOSED', 'CLASSIFIED', 'MANUAL'] } } }),
+      this.prisma.document.count({ where: { organizationId, status: { in: ['PROPOSED', 'CLASSIFIED', 'MANUAL', 'IGNORED'] } } }),
       this.prisma.usageMetric.aggregate({
         where: { organizationId },
         _sum: { documentsIn: true, ruleMatches: true, llmCalls: true, ocrRuns: true },

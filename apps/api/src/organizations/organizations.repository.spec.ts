@@ -5,6 +5,7 @@ describe('OrganizationsRepository — email normalization', () => {
   let prisma: {
     organization: { create: jest.Mock };
     membership: { findFirst: jest.Mock };
+    user: { updateMany: jest.Mock };
   };
   let repository: OrganizationsRepository;
 
@@ -12,6 +13,7 @@ describe('OrganizationsRepository — email normalization', () => {
     prisma = {
       organization: { create: jest.fn() },
       membership: { findFirst: jest.fn() },
+      user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     };
     repository = new OrganizationsRepository(prisma as unknown as PrismaService);
   });
@@ -24,12 +26,7 @@ describe('OrganizationsRepository — email normalization', () => {
         data: expect.objectContaining({
           memberships: expect.objectContaining({
             create: expect.objectContaining({
-              user: {
-                connectOrCreate: {
-                  where: { email: 'foo.bar@example.com' },
-                  create: { email: 'foo.bar@example.com' },
-                },
-              },
+              user: { create: { email: 'foo.bar@example.com' } },
             }),
           }),
         }),
@@ -54,5 +51,17 @@ describe('OrganizationsRepository — email normalization', () => {
     const [firstCallArgs] = prisma.membership.findFirst.mock.calls[0];
     const [secondCallArgs] = prisma.membership.findFirst.mock.calls[1];
     expect(firstCallArgs.where).toEqual(secondCallArgs.where);
+  });
+
+  it('atomically enrolls only the exact passwordless Google owner', async () => {
+    await expect(repository.enrollLocalPassword('user_1', 'org_1', 'membership_1', 'bcrypt-hash')).resolves.toBe(1);
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'user_1', passwordHash: null,
+        memberships: { some: { id: 'membership_1', organizationId: 'org_1', role: 'ADMIN' } },
+        driveConnection: { is: { organizationId: 'org_1', provider: 'GOOGLE_DRIVE', externalId: { not: 'acceptance' } } },
+      },
+      data: { passwordHash: 'bcrypt-hash' },
+    });
   });
 });

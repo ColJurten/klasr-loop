@@ -51,7 +51,8 @@ test.beforeEach(async () => {
   }
 });
 
-test('local sign-in selects a reference tree, launches Drive input, reviews corrections and rejection', async ({ page }, testInfo) => {
+test('local sign-in selects a reference tree, launches Drive input, reviews corrections and ignore', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/login');
   await expect(page.getByText('Mode local')).toBeVisible();
   await page.getByText('Mode local').click();
@@ -82,23 +83,45 @@ test('local sign-in selects a reference tree, launches Drive input, reviews corr
 
   const factureCard = proposalRows.filter({ hasText: 'scan-facture-electricite.pdf' });
   await factureCard.getByRole('button', { name: 'Corriger', exact: true }).click();
-  await page.getByLabel('Nom final').fill('Facture_Electricite_2026-07.pdf');
-  await page.getByLabel('Dossier de destination').selectOption('local_folder_elec');
-  await page.getByRole('button', { name: /Confirmer la correction/ }).click();
+  let correction = page.getByRole('dialog', { name: 'Éditer la proposition' });
+  await correction.getByLabel('Nom du fichier proposé').fill('Facture_Electricite_2026-07.pdf');
+  await correction.getByLabel('Dossier de destination').selectOption('local_folder_elec');
+  await correction.getByRole('button', { name: 'Valider' }).click();
 
-  await proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' }).getByRole('button', { name: 'Corriger', exact: true }).click();
-  await page.getByLabel('Nom final').fill('Releve_Banque_2026-07.pdf');
-  await page.getByLabel('Dossier de destination').selectOption('local_folder_banque');
-  await page.getByRole('button', { name: /Confirmer la correction/ }).click();
+  const bankCard = proposalRows.filter({ hasText: 'releve-banque-juillet.pdf' });
+  await bankCard.getByRole('button', { name: 'Corriger', exact: true }).click();
+  correction = page.getByRole('dialog', { name: 'Éditer la proposition' });
+  await correction.getByLabel('Nom du fichier proposé').fill('Releve_Banque_2026-07.pdf');
+  await correction.getByLabel('Dossier de destination').selectOption('local_folder_banque');
+  await correction.getByRole('button', { name: 'Valider' }).click();
 
-  await proposalRows.filter({ hasText: 'note-paie-juillet.png' }).getByRole('button', { name: 'Retirer' }).click();
-  await proposalRows.filter({ hasText: 'archive.zip' }).getByRole('button', { name: 'Retirer' }).click();
+  const ignoredCard = proposalRows.filter({ hasText: 'note-paie-juillet.png' });
+  const ignoreButton = ignoredCard.getByRole('button', { name: 'Ignorer' });
+  await expect(ignoreButton).toHaveAttribute('title', 'Ignorer cette proposition — le fichier reste à sa place');
+  for (let presses = 0; presses < 30 && !(await ignoreButton.evaluate((button) => button === document.activeElement)); presses += 1) {
+    await page.keyboard.press('Tab');
+  }
+  await expect(ignoreButton).toBeFocused();
+  await expect(ignoreButton).toHaveCSS('outline-width', '2px');
+  await expect(ignoreButton).toHaveCSS('outline-style', 'solid');
+  await expect(ignoredCard.getByRole('tooltip', { name: 'Ignorer cette proposition — le fichier reste à sa place' })).toBeVisible();
+  await page.screenshot({
+    path: path.resolve(process.cwd(), '../../.tmp/hermes/ux-clarity/evidence/item-4/screenshots/dashboard-ignore-tooltip-1280.png'),
+    fullPage: true,
+  });
+  await ignoreButton.press('Enter');
+  await proposalRows.filter({ hasText: 'archive.zip' }).getByRole('button', { name: 'Ignorer' }).click();
 
   await expect(proposalRows).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByText('Historique récent')).toBeVisible();
   await expect(page.getByText('Rien à valider')).toBeVisible();
   const history = page.locator('section[aria-label="Historique"]');
   await expect(history.getByText('Releve_Banque_2026-07.pdf')).toBeVisible();
-  await expect(history.getByText('/À traiter manuellement')).toHaveCount(2);
+  await expect(history.getByText('Ignoré', { exact: false })).toHaveCount(2);
+  await expect(history).not.toContainText('/À traiter');
+  await page.screenshot({
+    path: path.resolve(process.cwd(), '../../.tmp/hermes/ux-clarity/evidence/item-4/screenshots/dashboard-ignore-history-1280.png'),
+    fullPage: true,
+  });
   await expect(page.getByText('Classés')).toBeVisible();
 });
