@@ -85,6 +85,16 @@ if (process.argv.includes('--borrowed-carrier-check')) {
   process.exit(0);
 }
 
+if (process.argv.includes('--quota-safe-mode-check')) {
+  const issue = Number(process.env.KLASR_EVIDENCE_ISSUE);
+  assert(/^\d+$/.test(process.env.KLASR_EVIDENCE_ISSUE ?? '') && issue > 0, 'Evidence issue is invalid');
+  const mode = fixtureMode(process.env, issue);
+  if (mode === 'borrowed-carrier') assertThrows(() => assertProviderMutationAllowed(mode, '/drive/v3/files', { method: 'POST' }), 'Borrowed mode must reject provider creates');
+  else assertProviderMutationAllowed(mode, '/drive/v3/files', { method: 'POST' });
+  process.stdout.write(`${mode}\n`);
+  process.exit(0);
+}
+
 if (process.argv.includes('--byok-acceptance-self-check')) {
   assert(selectEligibleAnthropicModel(['claude-z', 'not-eligible', 'claude-a']) === 'claude-z', 'Eligible model selection is not deterministic');
   assertThrows(() => selectEligibleAnthropicModel(['not-eligible']), 'Missing eligible models must fail');
@@ -97,12 +107,13 @@ if (process.argv.includes('--byok-acceptance-self-check')) {
 const syntheticLineage = { sha: '0'.repeat(40), issue: 1, attempt: 1 };
 const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineage : parseLineage(process.env);
 const evidenceTask = process.argv.includes('--evidence-self-check') ? 't_selfcheck' : parseEvidenceTask(process.env);
+const quotaSafeMode = fixtureMode(process.env, lineage.issue) === 'borrowed-carrier';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fatalLifecycleCheck = process.argv.includes('--fatal-lifecycle-check');
 const isolatedLifecycleCheck = fatalLifecycleCheck || process.argv.includes('--preflight-lifecycle-check') || process.argv.includes('--evidence-self-check');
 const evidenceRunId = process.env.KLASR_EVIDENCE_RUN_ID ?? `run-${Date.now()}`;
-const evidenceDir = isolatedLifecycleCheck ? required('KLASR_FATAL_CHECK_DIR') : lineage.issue === 5
+const evidenceDir = isolatedLifecycleCheck ? required('KLASR_FATAL_CHECK_DIR') : quotaSafeMode
   ? resolveEvidenceRunDir(root, lineage, evidenceTask, evidenceRunId)
   : path.join(root, '.tmp/hermes/drive-reference-organization-flow');
 const screenshotDir = path.join(evidenceDir, 'screenshots');
@@ -114,7 +125,7 @@ const item4ProofPath = path.join(evidenceDir, 'item4-provider-proof.sanitized.js
 const item3EvidenceDir = isolatedLifecycleCheck ? path.join(evidenceDir, 'item-3') : path.join(root, '.tmp/hermes/ux-clarity/evidence/item-3');
 const item3ProofPath = path.join(item3EvidenceDir, 'provider-proof.sanitized.json');
 const item3ScreenshotPath = path.join(item3EvidenceDir, 'screenshots/linked-service-account-final-1280.png');
-const item5ProofPath = lineage.issue === 5 ? path.join(evidenceDir, 'provider-proof.sanitized.json') : path.join(root, '.tmp/hermes/ux-clarity/evidence/item-5/provider-proof.sanitized.json');
+const item5ProofPath = quotaSafeMode ? path.join(evidenceDir, 'provider-proof.sanitized.json') : path.join(root, '.tmp/hermes/ux-clarity/evidence/item-5/provider-proof.sanitized.json');
 mkdirSync(screenshotDir, { recursive: true });
 mkdirSync(path.dirname(item3ScreenshotPath), { recursive: true });
 mkdirSync(path.dirname(item5ProofPath), { recursive: true });
@@ -148,6 +159,25 @@ if (process.argv.includes('--evidence-self-check')) {
   for (const key of ['anthropicDiscovery', 'anthropicSettingSaved', 'anthropicClassification', 'anthropicSettingRemoved']) {
     assert(sanitizedManifest({ ...raw, [key]: 'FAIL' }, proof, lineage, tree, observed, true).status === 'FAIL', `${key} must bind manifest PASS`);
   }
+  const borrowedProof = Object.fromEntries(Object.keys(item5ProofTemplate()).map((key) => [key, !['originalExactNameCount', 'originalPdfCount', 'createdRunnerOwned', 'createdInAuthorizedRoot', 'finalExactNameCount', 'finalPdfCount'].includes(key)]));
+  for (const key of ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount']) borrowedProof[key] = 0;
+  const issue21 = { ...lineage, issue: 21 };
+  const borrowedItem5 = sanitizedItem5Proof(borrowedProof, evidenceTask, issue21, tree);
+  assertItem5Proof(borrowedItem5, evidenceTask, issue21, tree, true, true);
+  for (const key of Object.keys(borrowedProof)) {
+    const value = borrowedProof[key];
+    const assertions = { ...borrowedProof, [key]: typeof value === 'boolean' ? !value : 1 };
+    assertThrows(() => assertItem5Proof(sanitizedItem5Proof(assertions, evidenceTask, issue21, tree), evidenceTask, issue21, tree, true, true), `Borrowed Item 5 ${key} must fail closed`);
+  }
+  for (const malformed of [null, { ...borrowedItem5, assertions: null }, { ...borrowedItem5, assertions: {} }]) assertThrows(() => assertItem5Proof(malformed, evidenceTask, issue21, tree, true, true), 'Malformed borrowed Item 5 proof must fail closed');
+  const runnerProof = item5ProofTemplate();
+  for (const key of ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount']) runnerProof[key] = 0;
+  const runnerItem5 = sanitizedItem5Proof(runnerProof, evidenceTask, lineage, tree);
+  assertItem5Proof(runnerItem5, evidenceTask, lineage, tree, true, false);
+  assertThrows(() => assertItem5Proof(sanitizedItem5Proof({ ...runnerProof, originalExactNameCount: 1, finalExactNameCount: 1 }, evidenceTask, lineage, tree), evidenceTask, lineage, tree, true, false), 'Completed runner-owned nonzero Item 5 counts must fail closed');
+  assert(sanitizedManifest(raw, proof, issue21, tree, observed, true, borrowedProof, true).status === 'PASS', 'Issue 21 borrowed manifest must pass from complete truth');
+  assert(sanitizedManifest(raw, proof, issue21, tree, undefined, true, borrowedProof, true).status === 'FAIL', 'Borrowed manifest must require observed truth');
+  assert(sanitizedManifest({ ...raw, realDriveListing: 'FAIL' }, proof, issue21, tree, observed, true, borrowedProof, true).status === 'FAIL', 'Borrowed manifest must require every result');
   process.stdout.write('live evidence schema check PASS\n');
   process.exit(0);
 }
@@ -215,7 +245,7 @@ let ignoreMutationCount;
 let ignoreWindowOpen = false;
 const item4Proof = { oneLegacyFolderQuarantined: false, quarantinedOutsideReference: false, absentDuringAcceptance: false, ignoredNameIdentical: false, ignoredParentsIdentical: false, ignoreFilesUpdateOrMoveCount: null, setupOutsideIgnoreWindow: false, restorationOutsideIgnoreWindow: false, restoredNameExact: false, restoredParentsExact: false, freshRestorationReadback: false };
 const item3Proof = { serviceAccountIdentity: null, grantedScopes: [], driveConnectionPresent: false, lastSyncAt: null, realSyncObserved: false, fileBrowserVisible: false };
-const item5Proof = { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, noDestinationMatch: false, notExtractionFailed: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null };
+const item5Proof = item5ProofTemplate();
 let syntheticReviewFixtureId;
 let syncBaseline;
 let restorationFlight;
@@ -273,7 +303,7 @@ try {
   await recoverLegacyFolder();
   failureStage = 'listing';
   const rootItems = await listChildren(sharedRootId);
-  const fixturePlan = lineage.issue === 5 ? undefined : selectFixturePlan(rootItems);
+  const fixturePlan = quotaSafeMode ? undefined : selectFixturePlan(rootItems);
   item5Proof.originalExactNameCount = rootItems.filter(({ name }) => name === fixtureNames[1]).length;
   item5Proof.originalPdfCount = rootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length;
   const reference = exact(rootItems, 'stg_tree', 'application/vnd.google-apps.folder');
@@ -282,14 +312,14 @@ try {
     return [name, item];
   })));
   let reviewFixture = fixturePlan?.review;
-  if (lineage.issue !== 5 && !reviewFixture) {
+  if (!quotaSafeMode && !reviewFixture) {
     reviewFixture = await createRunnerOwnedPdf(fixtureNames[1], sharedRootId, reviewRequiredPdf());
     syntheticReviewFixtureId = reviewFixture.id;
     item5Proof.createdRunnerOwned = true;
     item5Proof.createdInAuthorizedRoot = sameParents(reviewFixture.parents, [sharedRootId]);
   }
-  const supplied = lineage.issue === 5 ? undefined : [fixturePlan.invoice, reviewFixture];
-  if (lineage.issue !== 5) await quarantineLegacyFolder(reference.id);
+  const supplied = quotaSafeMode ? undefined : [fixturePlan.invoice, reviewFixture];
+  if (!quotaSafeMode) await quarantineLegacyFolder(reference.id);
   evidence.realDriveListing = 'PASS';
 
   // fixtureNames order is contractual: invoice drives OCR/confirm; review drives extraction failure/ignore/correct.
@@ -334,7 +364,7 @@ try {
   await page.getByText('Validation staging · identité de service Google').waitFor();
   await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor();
 
-  if (lineage.issue === 5) {
+  if (quotaSafeMode) {
     failureStage = 'drive-fixture-prepare';
     const carrier = selectBorrowedCarrier(rootItems, sharedRootId);
     const snapshot = { ...await metadata(carrier.id), bytes: await downloadBytes(carrier.id), recoveryScope: 'invoice' };
@@ -621,7 +651,7 @@ try {
   await expect(page.getByRole('status')).toContainText('Configuration supprimée');
   assert(await prisma.llmSetting.count({ where: { organizationId } }) === 0, 'tenant_setting_absent');
   evidence.anthropicSettingRemoved = 'PASS';
-  if (lineage.issue !== 5) writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: selectedAnthropicModel, modelCount: discoveredAnthropicModelCount, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
+  writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: selectedAnthropicModel, modelCount: discoveredAnthropicModelCount, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
   runCompleted = true;
 } catch (error) {
   failureStageAtFailure = failureStage;
@@ -657,7 +687,7 @@ function finalize() {
     failureStage = 'cleanup-finalization';
     if (browser) await browser.close().catch(() => undefined);
     cleanup.fixtureRestored = await restoreFixtures().then(() => true, () => false);
-    if (lineage.issue === 5 && fixtureSnapshots.length === 1) {
+    if (quotaSafeMode && fixtureSnapshots.length === 1) {
       const restoredCarrier = await metadata(fixtureSnapshots[0].id).catch(() => undefined);
       item5Proof.exactRestorationVerified = Boolean(restoredCarrier && await fixtureMatches(fixtureSnapshots[0]));
       item5Proof.recoveryMarkerCleared = Boolean(restoredCarrier && !recoveryMarker(restoredCarrier, 'invoice'));
@@ -681,7 +711,7 @@ function finalize() {
     accessToken = undefined;
     const finalTreeBinding = currentTreeBinding(root);
     assertTreeBinding(initialTreeBinding, finalTreeBinding);
-    if (lineage.issue !== 5) {
+    if (!quotaSafeMode) {
       const sanitizedItem4 = sanitizedItem4Proof(item4Proof, evidenceTask, lineage, finalTreeBinding);
       assertItem4Proof(sanitizedItem4, evidenceTask, lineage, finalTreeBinding, runCompleted);
       writeFileSync(item4ProofPath, `${JSON.stringify(sanitizedItem4, null, 2)}\n`, { mode: 0o600 });
@@ -690,10 +720,10 @@ function finalize() {
       writeFileSync(item3ProofPath, `${JSON.stringify(sanitizedItem3, null, 2)}\n`, { mode: 0o600 });
     }
     const sanitizedItem5 = sanitizedItem5Proof(item5Proof, evidenceTask, lineage, finalTreeBinding);
-    assertItem5Proof(sanitizedItem5, evidenceTask, lineage, finalTreeBinding, runCompleted);
+    assertItem5Proof(sanitizedItem5, evidenceTask, lineage, finalTreeBinding, runCompleted, quotaSafeMode);
     writeFileSync(item5ProofPath, `${JSON.stringify(sanitizedItem5, null, 2)}\n`, { mode: 0o600 });
-    const observed = runCompleted && lineage.issue !== 5 ? parseObservedRecord(readFileSync(observedPath, 'utf8'), finalTreeBinding) : undefined;
-    const manifest = sanitizedManifest(evidence, cleanup, lineage, finalTreeBinding, observed, runCompleted, item5Proof);
+    const observed = runCompleted ? parseObservedRecord(readFileSync(observedPath, 'utf8'), finalTreeBinding) : undefined;
+    const manifest = sanitizedManifest(evidence, cleanup, lineage, finalTreeBinding, observed, runCompleted, item5Proof, quotaSafeMode);
     assertManifest(manifest);
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     writeFileSync(realAcceptancePath, realAcceptanceMarkdown(manifest, evidenceTask, selectedAnthropicModel), { mode: 0o600 });
@@ -705,7 +735,7 @@ function realAcceptanceMarkdown(manifest, task, model) {
   const live = manifest.status === 'PASS' ? 'PASS' : acceptanceBlocked ? 'BLOCKED' : 'FAIL';
   return `# Real BYOK acceptance\n\n- Task: \`${task}\`\n- Attempt: \`${manifest.attempt}\`\n- SHA: \`${manifest.sha}\`\n- Fake/browser fixture evidence: separate deterministic acceptance; never promoted to live-provider PASS.\n- Genuine Anthropic + Google browser: **${live}**\n- Provider metadata: \`${model ? `anthropic/${model}` : 'not-recorded'}\`\n- Cleanup: **${manifest.cleanup.fixture_restored && manifest.cleanup.created_items_removed && manifest.cleanup.tenant_cleaned && manifest.processes.apps_stopped && manifest.processes.no_orphans ? 'PASS' : 'FAIL'}**\n`;
 }
-function sanitizedManifest(raw, proof, manifestLineage, tree, observed, completed, item5Assertions) {
+function sanitizedManifest(raw, proof, manifestLineage, tree, observed, completed, item5Assertions, borrowedMode = false) {
   const results = {
     anthropic_discovery: raw.anthropicDiscovery === 'PASS', anthropic_setting_saved: raw.anthropicSettingSaved === 'PASS',
     anthropic_classification: raw.anthropicClassification === 'PASS', anthropic_setting_removed: raw.anthropicSettingRemoved === 'PASS',
@@ -719,13 +749,13 @@ function sanitizedManifest(raw, proof, manifestLineage, tree, observed, complete
   const cleanupResult = { fixture_restored: proof.fixtureRestored, created_items_removed: proof.createdItemsRemoved, tenant_cleaned: proof.tenantCleaned };
   const processes = { apps_stopped: proof.appsStopped, no_orphans: proof.noOrphans };
   const item5Required = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'headedBrowser', 'noDestinationMatch', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
-  const item5Passed = manifestLineage.issue === 5 && completed && item5Assertions
+  const item5Passed = borrowedMode && completed && observed && item5Assertions
     && item5Assertions.originalExactNameCount === 0 && item5Assertions.originalPdfCount === 0
     && item5Assertions.finalExactNameCount === 0 && item5Assertions.finalPdfCount === 0
     && item5Assertions.createdRunnerOwned === false && item5Assertions.createdInAuthorizedRoot === false
     && item5Required.every((key) => item5Assertions[key] === true)
-    && [...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
-  const passed = item5Passed || (manifestLineage.issue !== 5 && completed && observed && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true));
+    && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
+  const passed = item5Passed || (!borrowedMode && completed && observed && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true));
   return {
     version: 1,
     identity: 'Google service account non-production acceptance',
@@ -737,6 +767,13 @@ function parseLineage(env) {
   const value = { sha: env.KLASR_EVIDENCE_SHA, issue: Number(env.KLASR_EVIDENCE_ISSUE), attempt: Number(env.KLASR_EVIDENCE_ATTEMPT) };
   assert(/^[0-9a-f]{40}$/.test(value.sha ?? '') && /^\d+$/.test(env.KLASR_EVIDENCE_ISSUE ?? '') && value.issue > 0 && /^\d+$/.test(env.KLASR_EVIDENCE_ATTEMPT ?? '') && value.attempt > 0, 'Evidence lineage is invalid');
   return value;
+}
+function fixtureMode(env, issue) {
+  if (Object.hasOwn(env, 'KLASR_LIVE_FIXTURE_MODE')) assert(env.KLASR_LIVE_FIXTURE_MODE === 'borrowed-carrier', 'Live fixture mode is invalid');
+  return env.KLASR_LIVE_FIXTURE_MODE ?? (issue === 5 ? 'borrowed-carrier' : 'runner-owned');
+}
+function assertProviderMutationAllowed(mode, route, init) {
+  assert(!(mode === 'borrowed-carrier' && init.method === 'POST' && /^\/(?:upload\/)?drive\/v3\/files(?:[/?]|$)/.test(route)), 'Borrowed carrier mode forbids provider file creates');
 }
 function parseEvidenceTask(env) { assert(/^t_[a-z0-9]+$/.test(env.KLASR_EVIDENCE_TASK ?? ''), 'Evidence task is invalid'); return env.KLASR_EVIDENCE_TASK; }
 function assertManifest(manifest) {
@@ -777,14 +814,15 @@ function assertItem3Proof(proof, task, proofLineage, tree, requireComplete = fal
 function sanitizedItem5Proof(assertions, task, proofLineage, tree) {
   return { schema: 'klasr-item5-provider-proof-v1', task, issue: proofLineage.issue, attempt: proofLineage.attempt, sha: proofLineage.sha, tree, assertions };
 }
-function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = false) {
+function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, noDestinationMatch: false, notExtractionFailed: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
+function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = false, borrowedMode = false) {
   const keys = (value) => Object.keys(value).sort().join(',');
   assert(keys(proof) === 'assertions,attempt,issue,schema,sha,task,tree' && proof.schema === 'klasr-item5-provider-proof-v1', 'Item 5 proof schema mismatch');
   assert(proof.task === task && proof.issue === proofLineage.issue && proof.attempt === proofLineage.attempt && proof.sha === proofLineage.sha, 'Item 5 proof lineage mismatch');
   assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,headedBrowser,noDestinationMatch,noMutationBeforeValidation,notExtractionFailed,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
   const counts = ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount'];
   assert(Object.entries(proof.assertions).every(([key, value]) => counts.includes(key) ? value === null || Number.isInteger(value) : typeof value === 'boolean'), 'Item 5 proof assertion value invalid');
-  if (requireComplete && proofLineage.issue === 5) {
+  if (requireComplete && borrowedMode) {
     const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'headedBrowser', 'noDestinationMatch', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
     assert(proof.assertions.originalExactNameCount === 0 && proof.assertions.originalPdfCount === 0
       && proof.assertions.finalExactNameCount === 0 && proof.assertions.finalPdfCount === 0
@@ -827,7 +865,7 @@ async function providerDriveIdentity(fetcher = fetch, token = accessToken) {
   return emailAddress;
 }
 
-async function drive(url, init = {}) { const response = await fetch(`https://www.googleapis.com${url}`, { ...init, signal: init.signal ?? AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) } }); if (!response.ok) { let reason = 'unknown'; try { const payload = await response.json(); reason = payload?.error?.errors?.[0]?.reason ?? 'unknown'; } catch { /* status remains sufficient */ } throw new Error(`Google Drive request failed (${response.status}, ${reason})`); } return response.status === 204 ? null : response.json(); }
+async function drive(url, init = {}) { assertProviderMutationAllowed(quotaSafeMode ? 'borrowed-carrier' : 'runner-owned', url, init); const response = await fetch(`https://www.googleapis.com${url}`, { ...init, signal: init.signal ?? AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) } }); if (!response.ok) { let reason = 'unknown'; try { const payload = await response.json(); reason = payload?.error?.errors?.[0]?.reason ?? 'unknown'; } catch { /* status remains sufficient */ } throw new Error(`Google Drive request failed (${response.status}, ${reason})`); } return response.status === 204 ? null : response.json(); }
 async function listChildren(parentId) { const q = new URLSearchParams({ q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed=false`, pageSize: '1000', fields: 'files(id,name,mimeType,parents)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' }); return (await drive(`/drive/v3/files?${q}`)).files ?? []; }
 async function metadata(id) { return drive(`/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,parents,trashed,headRevisionId,appProperties,driveId&supportsAllDrives=true`); }
 async function createFolder(name, parentId) { return drive('/drive/v3/files?supportsAllDrives=true&fields=id,name,parents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }) }); }
@@ -936,7 +974,7 @@ async function restoreFixtures(finish = true) {
   try { return await restorationFlight; }
   finally { restorationFlight = undefined; }
 }
-async function cleanupVerified() { if (!fixtureSnapshots.length) return false; if (!cleanup.legacyFolderRestored) return false; accessToken = await serviceAccountToken(); const expectedReplacements = lineage.issue === 5 ? 0 : fixtureSnapshots.length; if (!(await createdGone()) || replacementAttempted.size !== expectedReplacements || replacementVerified.size !== expectedReplacements) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.mimeType !== snapshot.mimeType || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes) || recoveryMarker(current, snapshot.recoveryScope)) return false; } const rootItems = await listChildren(sharedRootId); if (rootItems.filter(({ name }) => name === fixtureNames[1]).length !== item5Proof.originalExactNameCount || rootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length !== item5Proof.originalPdfCount) return false; return !legacyFolderSnapshot || legacyFolderMatches(legacyFolderSnapshot, await metadata(legacyFolderSnapshot.id), true); }
+async function cleanupVerified() { if (!fixtureSnapshots.length) return false; if (!cleanup.legacyFolderRestored) return false; accessToken = await serviceAccountToken(); const expectedReplacements = quotaSafeMode ? 0 : fixtureSnapshots.length; if (!(await createdGone()) || replacementAttempted.size !== expectedReplacements || replacementVerified.size !== expectedReplacements) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.mimeType !== snapshot.mimeType || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes) || recoveryMarker(current, snapshot.recoveryScope)) return false; } const rootItems = await listChildren(sharedRootId); if (rootItems.filter(({ name }) => name === fixtureNames[1]).length !== item5Proof.originalExactNameCount || rootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length !== item5Proof.originalPdfCount) return false; return !legacyFolderSnapshot || legacyFolderMatches(legacyFolderSnapshot, await metadata(legacyFolderSnapshot.id), true); }
 function sameParents(actual = [], expected = []) { return actual.length === expected.length && actual.every((parent) => expected.includes(parent)); }
 function sameBytes(actual, expected) { return createHash('sha256').update(actual).digest().equals(createHash('sha256').update(expected).digest()); }
 // Stable choice: lexicographically smallest matching pinned revision ID.

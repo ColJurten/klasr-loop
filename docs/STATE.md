@@ -8,6 +8,8 @@
 
 ## In progress
 
+- 2026-09-04 — Maintenance du harness Google live PR #20 (`t_c56a39aa`, sans appel fournisseur) : le mode explicite `KLASR_LIVE_FIXTURE_MODE=borrowed-carrier` réutilise le carrier quota-safe pour toute issue positive, conserve la compatibilité issue 5 et interdit les créations de fichiers au point d’entrée Drive partagé ; le gate live résiduel exige une exécution issue 21 au HEAD post-commit exact et une preuve observée/résultats/nettoyage/processus complète.
+
 - 2026-09-03 — PR #20 CI repair (`UX-Update`) : correction minimale des contrats de harness (onboarding local vérifié, environnement Prisma des workers Playwright, sélecteurs E2E alignés sur l’UX approuvée). Intégration répétée, E2E et gates déterministes verts en contexte CI local.
 
 | Item | Branch / worktree | Owner (agent/human) | Next step |

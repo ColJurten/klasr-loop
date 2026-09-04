@@ -142,13 +142,41 @@ test('Item 5 evidence paths are issue-attempt-task-run scoped and distinct', () 
 
 test('Item 5 runner retains borrowed bytes and gates Anthropic no_destination_match', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const branch = source.slice(source.indexOf('if (lineage.issue === 5) {'), source.indexOf('} else {', source.indexOf('if (lineage.issue === 5) {')));
+  const branch = source.slice(source.indexOf('if (quotaSafeMode) {'), source.indexOf('} else {', source.indexOf('if (quotaSafeMode) {')));
   assert.doesNotMatch(branch, /replaceBytes\(/);
   assert.match(branch, /originalBytesRetained/);
   assert.match(branch, /modelUsed.*anthropic/);
   assert.match(branch, /reviewReason === 'no_destination_match'/);
   assert.match(branch, /reviewReason !== 'extraction_failed'/);
   assert.match(branch, /live-google-sa-item-5-post-validation-1280\.png/);
+});
+
+test('live runner selects borrowed carriers only through the explicit quota-safe contract', () => {
+  for (const issue of ['5', '21', '37']) {
+    const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
+      cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: issue, KLASR_LIVE_FIXTURE_MODE: 'borrowed-carrier' },
+    });
+    assert.equal(run.status, 0, run.stderr);
+  }
+  for (const mode of ['', 'borrowed', 'runner-owned', ' BORROWED-CARRIER ']) {
+    const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
+      cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '21', KLASR_LIVE_FIXTURE_MODE: mode },
+    });
+    assert.notEqual(run.status, 0);
+  }
+  const ordinary = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
+    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '21' },
+  });
+  assert.equal(ordinary.status, 0, ordinary.stderr);
+  assert.equal(ordinary.stdout, 'runner-owned\n');
+  const legacy = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
+    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '5' },
+  });
+  assert.equal(legacy.status, 0, legacy.stderr);
+  assert.equal(legacy.stdout, 'borrowed-carrier\n');
+
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert.match(source, /async function drive\(url, init = \{\}\) \{ assertProviderMutationAllowed\(quotaSafeMode \? 'borrowed-carrier' : 'runner-owned', url, init\)/);
 });
 
 test('service-account proof gets scope from tokeninfo and identity from Drive about', () => {
@@ -474,7 +502,7 @@ test('live runner fatal rejection replaces stale evidence with current sanitized
 
 test('publisher dry-run emits only a sanitized success status and performs no network', () => {
   const manifest = JSON.stringify({
-    version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2, tree: treeBinding, observed: observedRecord,
+    version: 1, identity: 'Google service account non-production acceptance', sha, issue: 21, attempt: 2, tree: treeBinding, observed: observedRecord,
     status: 'PASS',
     results: {
       anthropic_discovery: true, anthropic_setting_saved: true, anthropic_classification: true, anthropic_setting_removed: true,
@@ -522,15 +550,25 @@ test('publisher fails closed for wrong SHA or failed required proof', () => {
   assert.equal(actions.rerun, undefined);
 });
 
-test('publisher derives the FAIL event key from recomputed completeness', () => {
+test('publisher derives FAIL from every false required truth and rejects missing observed truth', () => {
   const manifest = {
-    version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2, status: 'PASS', tree: treeBinding, observed: observedRecord,
-    results: Object.fromEntries(liveResultKeys.map((key) => [key, key !== 'service_account_auth'])),
+    version: 1, identity: 'Google service account non-production acceptance', sha, issue: 21, attempt: 2, status: 'PASS', tree: treeBinding, observed: observedRecord,
+    results: Object.fromEntries(liveResultKeys.map((key) => [key, true])),
     cleanup: { fixture_restored: true, created_items_removed: true, tenant_cleaned: true }, processes: { apps_stopped: true, no_orphans: true },
   };
-  const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify(manifest), encoding: 'utf8', env: { PATH: process.env.PATH, GITHUB_REPOSITORY: 'owner/repo', DRY_RUN_CURRENT_HEAD_SHA: sha } });
-  assert.notEqual(run.status, 0);
-  assert.match(JSON.parse(run.stdout).failure_dispatch.client_payload.event_key, /:FAIL$/);
+  const env = { PATH: process.env.PATH, GITHUB_REPOSITORY: 'owner/repo', DRY_RUN_CURRENT_HEAD_SHA: sha };
+  for (const [section, key] of [...liveResultKeys.map((key) => ['results', key]), ...Object.keys(manifest.cleanup).map((key) => ['cleanup', key]), ...Object.keys(manifest.processes).map((key) => ['processes', key])]) {
+    const candidate = structuredClone(manifest);
+    candidate[section][key] = false;
+    const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify(candidate), encoding: 'utf8', env });
+    assert.notEqual(run.status, 0, `${section}.${key}`);
+    assert.match(JSON.parse(run.stdout).failure_dispatch.client_payload.event_key, /:FAIL$/, `${section}.${key}`);
+  }
+  for (const observed of [null, { ...observedRecord, modelCount: 0 }]) {
+    const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify({ ...manifest, observed }), encoding: 'utf8', env });
+    assert.notEqual(run.status, 0);
+    assert.equal(run.stdout, '');
+  }
 });
 
 test('publisher dry-run fails closed for a stale current head or no matching failed CI run', () => {
