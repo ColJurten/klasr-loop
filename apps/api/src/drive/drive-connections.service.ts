@@ -5,6 +5,7 @@ import { DriveConnectionsRepository } from './drive-connections.repository';
 
 export interface UpsertGoogleConnectionInput {
   organizationId: string;
+  userId: string;
   externalId: string;
   refreshToken?: string;
   scopes: string[];
@@ -17,12 +18,12 @@ export class DriveConnectionsService {
     private readonly tokens: TokenEncryptionService,
   ) {}
 
-  findByOrganization(organizationId: string): Promise<DriveConnection | null> {
-    return this.repository.findByOrganization(organizationId);
+  findByUser(organizationId: string, userId: string): Promise<DriveConnection | null> {
+    return this.repository.findByUser(organizationId, userId);
   }
 
   async upsertGoogleConnection(input: UpsertGoogleConnectionInput): Promise<DriveConnection> {
-    const existing = await this.repository.findByOrganization(input.organizationId);
+    const existing = await this.repository.findByUser(input.organizationId, input.userId);
     const encryptedToken = input.refreshToken
       ? this.tokens.encrypt(input.refreshToken)
       : existing?.encryptedToken;
@@ -33,13 +34,14 @@ export class DriveConnectionsService {
 
     return this.repository.upsertGoogle({
       organizationId: input.organizationId,
+      userId: input.userId,
       externalId: input.externalId,
       encryptedToken,
       scopes: input.scopes,
     });
   }
 
-  touchSync(organizationId: string): Promise<void> {
-    return this.repository.touchSync(organizationId);
+  touchSync(organizationId: string, userId: string): Promise<void> {
+    return this.repository.touchSync(organizationId, userId);
   }
 }

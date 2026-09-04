@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, readlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
-const excluded = /(^|\/)(?:\.tmp)(?:\/|$)|(^|\/)\.env(?:\.local|\.(?!example$)[^/]*)?$|\.(?:log|png|jpg|jpeg|webp|trace|zip)$/i;
+const excluded = /(^|\/)(?:\.tmp)(?:\/|$)|(^|\/)\.env(?:\.[^/]*)?$|\.(?:log|png|jpg|jpeg|webp|trace|zip)$/i;
 
 export function currentTreeBinding(root) {
   const head = git(root, ['rev-parse', 'HEAD']).trim();
@@ -16,7 +16,7 @@ export function currentTreeBinding(root) {
 export function computeTreeBinding(root, { head, tracked, untracked, dirty = true }) {
   const hash = createHash('sha256');
   frame(hash, 'schema', 'klasr-tree-v1'); frame(hash, 'head', head);
-  const names = [...tracked.filter((value) => !/(^|\/)\.env(?:\.local|\.(?!example$)[^/]*)?$|(^|\/)\.tmp(?:\/|$)/i.test(value)), ...untracked.filter((value) => !excluded.test(value))];
+  const names = [...tracked.filter((value) => !/(^|\/)\.env(?:\.[^/]*)?$|(^|\/)\.tmp(?:\/|$)/i.test(value)), ...untracked.filter((value) => !excluded.test(value))];
   for (const name of [...new Set(names)].sort()) {
     const file = path.join(root, name); frame(hash, 'path', name);
     if (!existsSync(file)) { frame(hash, 'mode', 'deleted'); frame(hash, 'content', Buffer.alloc(0)); continue; }
@@ -41,6 +41,12 @@ export function parseObservedRecord(text, tree) {
     || !Number.isInteger(value.modelCount) || value.modelCount < 1 || !/^[a-z0-9._-]{1,200}$/i.test(value.selectedModelId ?? '')
     || value.modelUsed !== `anthropic/${value.selectedModelId}`) throw new Error('observed_record_schema');
   assertTreeBinding(tree, value.tree); return value;
+}
+
+export function resolveEvidenceRunDir(root, { issue, attempt }, task, runId) {
+  if (!Number.isInteger(issue) || issue < 1 || !Number.isInteger(attempt) || attempt < 1
+    || !/^t_[a-z0-9]+$/.test(task) || !/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(runId)) throw new Error('evidence_run_lineage');
+  return path.join(root, '.tmp/hermes/ux-clarity/evidence', `item-${issue}`, `attempt-${attempt}`, 'runs', `${task}-${runId}`);
 }
 
 function frame(hash, type, value) {

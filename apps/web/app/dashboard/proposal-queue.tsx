@@ -5,26 +5,26 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, ShieldCheck } from 'lucide-react';
 import { ProposalCard, type ProposalStatus } from '@/components/proposal-card';
 import { Button } from '@/components/ui/button';
-import { confirmProposal, rejectProposal } from '@/lib/client-api';
+import { confirmProposal, ignoreProposal } from '@/lib/client-api';
 import type { FolderChoiceView, ProposalView } from '@/lib/types';
 
 type ConfirmProposalHandler = (
   proposalId: string,
-  options?: string | { finalName?: string; destinationFolderExternalId?: string },
+  options?: string | { finalName?: string; destinationFolderExternalId?: string; overrideDestinationPath?: string },
 ) => Promise<unknown>;
 
-type RejectProposalHandler = (proposalId: string) => Promise<unknown>;
+type IgnoreProposalHandler = (proposalId: string) => Promise<unknown>;
 
 export function ProposalQueue({
   initialProposals,
   folders = [],
   onConfirmProposal = confirmProposal,
-  onRejectProposal = rejectProposal,
+  onIgnoreProposal = ignoreProposal,
 }: {
   initialProposals: ProposalView[];
   folders: FolderChoiceView[];
   onConfirmProposal?: ConfirmProposalHandler;
-  onRejectProposal?: RejectProposalHandler;
+  onIgnoreProposal?: IgnoreProposalHandler;
 }) {
   const router = useRouter();
   const [statuses, setStatuses] = useState<Record<string, ProposalStatus>>({});
@@ -37,7 +37,7 @@ export function ProposalQueue({
     return statuses[proposalId] ?? 'idle';
   }
 
-  async function handleConfirm(proposalId: string, options?: string | { finalName?: string; destinationFolderExternalId?: string }) {
+  async function handleConfirm(proposalId: string, options?: string | { finalName?: string; destinationFolderExternalId?: string; overrideDestinationPath?: string }) {
     const currentStatus = getStatus(proposalId);
     if (currentStatus === 'confirming' || currentStatus === 'done') return;
 
@@ -52,12 +52,12 @@ export function ProposalQueue({
     }
   }
 
-  async function handleReject(proposalId: string) {
+  async function handleIgnore(proposalId: string) {
     const currentStatus = getStatus(proposalId);
     if (currentStatus === 'confirming' || currentStatus === 'done') return;
     setStatuses((current) => ({ ...current, [proposalId]: 'confirming' }));
     try {
-      await onRejectProposal(proposalId);
+      await onIgnoreProposal(proposalId);
       setStatuses((current) => ({ ...current, [proposalId]: 'done' }));
       router.refresh();
     } catch {
@@ -150,7 +150,7 @@ export function ProposalQueue({
             folders={folders}
             status={getStatus(proposal.id)}
             onConfirm={handleConfirm}
-            onReject={handleReject}
+            onIgnore={handleIgnore}
           />
         ))}
       </div>

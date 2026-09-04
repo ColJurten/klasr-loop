@@ -20,7 +20,7 @@ model Organization {
   referenceRootName       String?
 
   memberships     Membership[]
-  driveConnection DriveConnection?
+  driveConnections DriveConnection[]
   folders         Folder[]
   documents       Document[]
   rules           ClassificationRule[]
@@ -50,10 +50,12 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
+  passwordHash String?
   createdAt DateTime @default(now())
 
   memberships Membership[]
   history     ActionHistory[]
+  driveConnection DriveConnection?
 }
 
 // ── 3. Membership ─ user↔org with role ──────────────────────────────────────
@@ -74,7 +76,7 @@ enum MemberRole {
   MEMBER
 }
 
-// ── 4. DriveConnection ─ one Drive per organization ─────────────────────────
+// ── 4. DriveConnection ─ one Drive per user, tenant-scoped ───────────────────
 model DriveConnection {
   id             String        @id @default(cuid())
   provider       DriveProvider
@@ -83,8 +85,13 @@ model DriveConnection {
   scopes         String[]
   connectedAt    DateTime      @default(now())
   lastSyncAt     DateTime?
-  organizationId String        @unique
+  organizationId String
   organization   Organization  @relation(fields: [organizationId], references: [id])
+  // Nullable only for quarantined pre-migration rows whose owner is unknowable.
+  userId         String?       @unique
+  user           User?         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
 }
 
 enum DriveProvider {
@@ -103,7 +110,6 @@ model Folder {
   children       Folder[]     @relation("FolderTree")
   priority       Boolean      @default(false) // "dossiers prioritaires"
   inherited      Boolean      @default(true)
-  holding        Boolean      @default(false)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
@@ -139,6 +145,7 @@ enum DocumentStatus {
   PROPOSED // proposal ready, awaiting user confirmation
   CLASSIFIED // move/rename executed
   MANUAL // no confident proposal, routed to manual queue
+  IGNORED // user discarded the proposal; never analyzed again automatically
 }
 
 // ── 7. ClassificationProposal ─ awaiting the single-click confirmation ──────
@@ -177,10 +184,10 @@ enum ProposalSource {
 enum ProposalStatus {
   PENDING
   CONFIRMING
-  REJECTING
+  IGNORING
   CONFIRMED
   OVERRIDDEN // user chose another destination
-  REJECTED
+  IGNORED
 }
 
 // ── 8. ClassificationRule ─ user rules, applied sequentially by priority ────
@@ -243,7 +250,7 @@ enum HistoryAction {
   MOVE
   RENAME
   MOVE_RENAME
-  REJECT
+  IGNORED
 }
 
 // ── 11. Notification ─────────────────────────────────────────────────────────

@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { Organization } from '@prisma/client';
+import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { OrganizationsService } from './organizations.service';
 
 @Controller('organizations')
+@UseGuards(InternalServiceGuard)
 export class OrganizationsController {
   constructor(private readonly service: OrganizationsService) {}
 

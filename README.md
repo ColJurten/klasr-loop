@@ -160,9 +160,8 @@ le meme contrat applicatif sans OAuth externe.
 
 Un PDF, PNG, JPEG ou TIFF peut être choisi partout, y compris sous la racine de
 référence. Un dossier peut être choisi partout et ses descendants supportés sont
-parcourus récursivement. La racine de référence elle-même, le dossier
-`À traiter manuellement` et tous ses descendants sont exclus. Les documents déjà
-`PROPOSED`, `CLASSIFIED` ou `MANUAL` ne sont pas ré-enfilés. Les formats non
+parcourus récursivement. La racine de référence elle-même est exclue. Les documents déjà
+`PROPOSED`, `CLASSIFIED`, `MANUAL` ou `IGNORED` ne sont pas ré-enfilés. Les formats non
 supportés, notamment XLSX, restent visibles et révisables avec « Non supporté » :
 ils ne sont ni masqués ni envoyés à l'OCR, et aboutissent à une revue manuelle.
 
@@ -170,7 +169,7 @@ La preuve Google exige qu'un humain ouvre `/login` et réalise lui-même le
 consentement. Il contrôle ensuite, sans copier de jeton ni de contenu : navigation
 parent/pagination, racine et descendants, PDF synthétiques à la racine, libellé
 XLSX, job pg-boss, statut OCR/proposition, validation inchangée, correction de
-nom, correction de destination et retrait. Il vérifie uniquement les métadonnées
+nom, correction de destination et action Ignorer. Il vérifie uniquement les métadonnées
 sûres (identifiants, noms finaux, parents, statuts), le non-réenfilage et le rendu
 bureau puis 390×844. Avant cette étape, l'état est `NEEDS HUMAN`, jamais `PASS`.
 
@@ -199,9 +198,9 @@ un rapport.
 11. Valider une proposition telle quelle.
 12. Corriger un nom de fichier.
 13. Corriger une destination avec le select de dossiers herites.
-14. Retirer une proposition.
+14. Ignorer une proposition.
 15. Recharger : l'historique doit conserver les decisions ; les fichiers
-    rejetes partent vers `A traiter manuellement` et ne sont pas reenfiles.
+    ignores restent à leur place et ne sont pas reenfiles.
 
 ## Checks automatises
 
@@ -232,8 +231,8 @@ Si un workflow GitHub est modifie, executer aussi `actionlint`.
 - MongoDB conserve uniquement la collection TTL `analyses`, avec metadonnees
   d'analyse redactees.
 - Aucun renommage ou deplacement n'est execute sans decision explicite.
-- `Retirer` deplace le fichier original dans `A traiter manuellement` sans
-  appliquer le nom propose.
+- `Ignorer` écarte terminalement la proposition sans appel au fournisseur ni
+  modification du fichier original.
 
 ## Arret et nettoyage
 
