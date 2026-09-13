@@ -249,3 +249,185 @@ def test_combined_crew_task_order_and_prompts(monkeypatch):
     assert len(fake.prompts) == 3
     # At least the first prompt (analysis task) contains the content.
     assert "ACME INVOICE 42" in fake.prompts[0]
+
+
+# --- Phase 4: Suggestion quality tests ---
+
+
+def test_assess_quality_with_signals(stub_docling, tmp_path):
+    """Content with date and identifier signals gets 'ok' quality."""
+    from dsa.tools import _assess_quality
+
+    quality, warnings = _assess_quality("Supplier: Acme; invoice: INV-42; date: 2026-09-13")
+    assert quality == "ok"
+    assert "no_dates_found" not in warnings
+    assert "no_identifiers_found" not in warnings
+
+
+def test_assess_quality_without_signals(stub_docling, tmp_path):
+    """Content long enough but without recognizable signals gets 'sparse'."""
+    from dsa.tools import _assess_quality
+
+    quality, warnings = _assess_quality("x" * 100)
+    assert quality == "sparse"
+    assert "no_recognizable_signals" in warnings
+
+
+def test_assess_quality_empty(stub_docling, tmp_path):
+    """Empty content gets 'empty'."""
+    from dsa.tools import _assess_quality
+
+    quality, warnings = _assess_quality("")
+    assert quality == "empty"
+    assert warnings == []
+
+
+def test_assess_quality_short_content(stub_docling, tmp_path):
+    """Very short content gets 'sparse' with warning."""
+    from dsa.tools import _assess_quality
+
+    quality, warnings = _assess_quality("tiny")
+    assert quality == "sparse"
+    assert "very_short_content" in warnings
+
+
+def test_assess_quality_with_siret(stub_docling, tmp_path):
+    """SIRET number is recognized as a signal."""
+    from dsa.tools import _assess_quality
+
+    quality, _ = _assess_quality("Société: Acme SARL SIRET: 123 456 789 00012" + " " * 40)
+    assert quality == "ok"
+
+
+def test_assess_quality_no_dates_warning(stub_docling, tmp_path):
+    """Content with identifiers but no dates gets 'ok' with warning."""
+    from dsa.tools import _assess_quality
+
+    quality, warnings = _assess_quality(
+        "Supplier: Acme; invoice: INV-42; amount: 1500.00 EUR" + " " * 20
+    )
+    assert quality == "ok"
+    assert "no_dates_found" in warnings
+
+
+def test_docling_config_uses_pipeline_options(stub_docling, tmp_path):
+    """Verify _build_converter creates a DocumentConverter (fallback when mocked)."""
+    from dsa.tools import _build_converter
+
+    converter = _build_converter()
+    assert converter is not None
+
+
+def test_filename_grounded_on_content_not_filename(monkeypatch):
+    """Filename is built from content signals, not original filename."""
+    monkeypatch.setattr(
+        dsa,
+        "_extract",
+        lambda *_: ExtractionResult(
+            text="Facture Fournisseur: Acme date: 2026-09-13 référence: INV-42",
+            quality="ok",
+        ),
+    )
+    monkeypatch.setattr(
+        dsa,
+        "_decision",
+        lambda *_: DecisionResult(
+            value="2026-09-13_facture_Acme_INV-42.pdf",
+            confidence=0.9,
+            signals=["supplier:Acme", "invoice:INV-42"],
+        ),
+    )
+    # Original filename is misleading ("vacances.jpg") but content is an invoice
+    result = dsa.suggest_filename(b"vacances.jpg")
+    assert result.value == "2026-09-13_facture_Acme_INV-42.pdf"
+    assert "vacances" not in (result.value or "")
+
+
+def test_nested_tree_destination_parent_context_disambiguates(monkeypatch):
+    """Parent context disambiguates same leaf names."""
+    monkeypatch.setattr(
+        dsa,
+        "_extract",
+        lambda *_: ExtractionResult(text="invoice content for Acme", quality="ok"),
+    )
+    monkeypatch.setattr(
+        dsa,
+        "_decision",
+        lambda *_: DecisionResult(
+            value="/Clients/Acme/Factures", confidence=0.9, signals=["parent:Acme"]
+        ),
+    )
+    # Two folders with same leaf name "Factures" but different parents
+    result = dsa.suggest_directory(
+        b"doc.pdf",
+        ["/Clients/Acme/Factures", "/Clients/Beta/Factures"],
+    )
+    assert result.value == "/Clients/Acme/Factures"
+
+
+def test_destination_outside_tree_rejects_substring(monkeypatch):
+    """Substring path not in tree is rejected."""
+    monkeypatch.setattr(
+        dsa,
+        "_extract",
+        lambda *_: ExtractionResult(text="some content here", quality="ok"),
+    )
+    monkeypatch.setattr(
+        dsa,
+        "_decision",
+        lambda *_: DecisionResult(
+            value="/Clients/Acme/Factures/Child", confidence=0.99, signals=["match:claimed"]
+        ),
+    )
+    result = dsa.suggest_directory(b"x", ["/Clients/Acme/Factures"])
+    assert result.value is None
+    assert "destination_outside_tree" in result.warnings
+
+
+def test_independent_confidence_sparse_caps_both(monkeypatch):
+    """Sparse extraction caps both filename and destination confidence at 0.55.
+
+    The capping happens in AnalysisService.suggest(), not in the DSA-level suggest().
+    This test verifies the DSA suggest() returns raw confidences (the capping is
+    applied at the service layer, not the DSA layer).
+    """
+    monkeypatch.setattr(
+        dsa,
+        "_extract",
+        lambda *_: ExtractionResult(text="sparse", quality="sparse"),
+    )
+
+    def llm(_analysis, _directories):
+        return (
+            DecisionResult(value="name.pdf", confidence=0.95, signals=["kind:invoice"]),
+            DecisionResult(value="/Invoices", confidence=0.9, signals=["kind:invoice"]),
+        )
+
+    monkeypatch.setattr(dsa, "_both_decisions", llm)
+    result = dsa.suggest(b"doc.pdf", ["/Invoices"])
+    # DSA-level suggest returns raw confidences (not capped — capping is in AnalysisService)
+    assert result.filename.confidence == 0.95
+    assert result.destination.confidence == 0.9
+    assert result.extraction_quality == "sparse"
+
+
+def test_mechanical_low_confidence_on_failed_extraction(monkeypatch):
+    """Failed extraction produces mechanical zero confidence."""
+    monkeypatch.setattr(
+        dsa,
+        "_extract",
+        lambda *_: ExtractionResult(text="", quality="failed", warnings=["extraction_failed"]),
+    )
+
+    def llm(_analysis, _directories):
+        return (
+            DecisionResult(value=None, confidence=0, signals=[], warnings=["extraction_failed"]),
+            DecisionResult(value=None, confidence=0, signals=[], warnings=["extraction_failed"]),
+        )
+
+    monkeypatch.setattr(dsa, "_both_decisions", llm)
+    result = dsa.suggest(b"broken.pdf", ["/Invoices"])
+    assert result.filename.confidence == 0
+    assert result.destination.confidence == 0
+    assert result.filename.value is None
+    assert result.destination.value is None

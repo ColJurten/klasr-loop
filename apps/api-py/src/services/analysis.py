@@ -22,9 +22,10 @@ def extract_memory(content, mime_type, name):
         return ExtractionResult(text="", quality="failed", warnings=["input_too_large"])
     if mime_type.startswith("text/") or mime_type == "application/json":
         text = content.decode("utf-8", errors="replace").strip()
-        return ExtractionResult(
-            text=text, quality="empty" if not text else "sparse" if len(text) < 40 else "ok"
-        )
+        if not text:
+            return ExtractionResult(text="", quality="empty")
+        quality, warnings = _assess_extraction_quality(text)
+        return ExtractionResult(text=text, quality=quality, warnings=warnings)
     suffix = {
         "application/pdf": ".pdf",
         "image/png": ".png",
@@ -34,6 +35,49 @@ def extract_memory(content, mime_type, name):
     if not suffix:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
     return extract_bytes(content, suffix)
+
+
+def _assess_extraction_quality(content: str) -> tuple[str, list[str]]:
+    """Assess extraction quality using the same signal-aware logic as dsa.tools."""
+    if not content:
+        return "empty", []
+    warnings: list[str] = []
+    has_date = bool(
+        re.search(r"\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b", content)
+    )
+    has_identifier = bool(
+        re.search(
+            r"(?:facture|invoice|contrat|contract|r[ée]f(?:érence)?|n[°o]|SIRET|SIREN)"
+            r"[ \t:#n°-]*([A-Z0-9][A-Z0-9-]{2,})",
+            content,
+            re.I,
+        )
+    )
+    has_party = bool(
+        re.search(
+            r"(?:de|from|[ée]metteur|issuer|fournisseur|supplier)"
+            r"\s*[:-]?\s*([A-ZÀ-Ÿ][\w &.'-]{2,40})",
+            content,
+            re.I,
+        )
+    )
+    has_amount = bool(
+        re.search(r"\b\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{2})\s*(?:€|EUR|euro)", content, re.I)
+    )
+    has_siret = bool(re.search(r"\b\d{3}\s?\d{3}\s?\d{3}\s?\d{5}\b", content))
+    has_siren = bool(re.search(r"\b\d{3}\s?\d{3}\s?\d{3}\b", content))
+    has_signals = has_date or has_identifier or has_party or has_amount or has_siret or has_siren
+    if len(content) < 10:
+        return "sparse", ["very_short_content"]
+    if len(content) < 40:
+        return "sparse", ["short_content"]
+    if not has_signals:
+        return "sparse", ["no_recognizable_signals"]
+    if not has_date:
+        warnings.append("no_dates_found")
+    if not (has_identifier or has_siret or has_siren):
+        warnings.append("no_identifiers_found")
+    return "ok", warnings
 
 
 def apply_rules(document, text, paths, rules):
@@ -74,7 +118,7 @@ def apply_rules(document, text, paths, rules):
 
 
 def local_suggestion(extraction, directories):
-    """Explicit deterministic provider, matching Nest's local evidence heuristic."""
+    """Explicit deterministic provider with content-grounded filename and nested-tree reasoning."""
     text = extraction.text
     kind = next(
         (
@@ -91,7 +135,8 @@ def local_suggestion(extraction, directories):
     )
     date = re.search(r"\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b", text)
     identifier = re.search(
-        r"(?:facture|invoice|contrat|contract|réf(?:érence)?)[ \t:#n°-]*([A-Z0-9][A-Z0-9-]{2,})",
+        r"(?:facture|invoice|contrat|contract|r[ée]f(?:érence)?|n[°o])"
+        r"[ \t:#n°-]*([A-Z0-9][A-Z0-9-]{2,})",
         text,
         re.I,
     )
@@ -100,42 +145,94 @@ def local_suggestion(extraction, directories):
         text,
         re.I,
     )
+    siret = re.search(r"\b(\d{3}\s?\d{3}\s?\d{3}\s?\d{5})\b", text)
+    amount_match = re.search(
+        r"\b(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{2}))\s*(?:€|EUR|euro)", text, re.I
+    )
+
+    # Build filename from content signals only, never from the original filename.
+    siret_str = siret[1].replace(" ", "") if siret else ""
+    amount_str = amount_match[1].replace(" ", "_").replace(",", "_") if amount_match else ""
     pieces = [
         f"{date[1]}-{int(date[2]):02d}-{int(date[3]):02d}" if date else "",
         kind,
         party[1].strip() if party else "",
         identifier[1] if identifier else "",
+        siret_str or "",
+        amount_str or "",
     ]
     pieces = [piece for piece in pieces if piece]
-    tokens = [
+    filename_value = "_".join(pieces) or None
+    filename_warnings = ["insufficient_evidence"] if len(pieces) < 2 else []
+    filename_confidence = min(0.95, 0.35 + len(pieces) * 0.15)
+
+    # Nested-tree destination reasoning: score leaf and parent tokens separately.
+    content_tokens = [
         token
         for value in [kind, party[1] if party else "", kind]
         for token in re.split(r"\W+", value.lower(), flags=re.ASCII)
         if len(token) > 2
     ]
-    scored = sorted(
-        ((sum(token in path.lower() for token in tokens), path) for path in directories),
-        key=lambda pair: -pair[0],
-    )
-    match = scored and scored[0][0] and (len(scored) < 2 or scored[0][0] != scored[1][0])
+    # Score each directory path using hierarchy: leaf match is stronger than parent match.
+    scored = []
+    for path in directories:
+        parts = [p for p in path.lower().split("/") if p]
+        leaf_tokens = set(re.split(r"\W+", parts[-1], flags=re.ASCII)) if parts else set()
+        parent_tokens = set(
+            tok for p in parts[:-1] for tok in re.split(r"\W+", p, flags=re.ASCII) if len(tok) > 2
+        )
+        leaf_score = sum(token in leaf_tokens for token in content_tokens)
+        parent_score = sum(token in parent_tokens for token in content_tokens)
+        # Leaf matches weight 2, parent matches weight 1.
+        total = leaf_score * 2 + parent_score
+        scored.append((total, leaf_score, path))
+
+    scored.sort(key=lambda pair: -pair[0])
+
+    # No zero-evidence fallback: if all scores are zero, return None.
+    if not scored or scored[0][0] == 0:
+        dest_value = None
+        dest_confidence = 0
+        dest_warnings = ["no_destination_match"]
+    elif len(scored) > 1 and scored[0][0] == scored[1][0]:
+        # Sibling ambiguity: same top score on multiple paths.
+        # Check if they share the same parent (true sibling ambiguity).
+        top_score = scored[0][0]
+        tied = [s for s in scored if s[0] == top_score]
+        if len(tied) > 1:
+            parents = set()
+            for _, _, p in tied:
+                parts = [pp for pp in p.split("/") if pp]
+                parents.add("/".join(parts[:-1]) if len(parts) > 1 else "")
+            if len(parents) == 1:
+                dest_value = None
+                dest_confidence = 0
+                dest_warnings = ["ambiguous_destination"]
+            else:
+                dest_value = scored[0][2]
+                dest_confidence = min(0.9, 0.45 + scored[0][0] * 0.1)
+                dest_warnings = []
+        else:
+            dest_value = scored[0][2]
+            dest_confidence = min(0.9, 0.45 + scored[0][0] * 0.1)
+            dest_warnings = []
+    else:
+        dest_value = scored[0][2]
+        dest_confidence = min(0.9, 0.45 + scored[0][0] * 0.1)
+        dest_warnings = []
+
     return SuggestionResult(
         filename=DecisionResult(
-            value="_".join(pieces) or None,
-            confidence=min(0.95, 0.35 + len(pieces) * 0.15),
+            value=filename_value,
+            confidence=filename_confidence,
             signals=["provider:local"],
-            warnings=["insufficient_evidence"] if len(pieces) < 2 else [],
+            warnings=filename_warnings,
         ),
         destination=DecisionResult(
-            value=scored[0][1] if match else None,
-            confidence=min(0.9, 0.45 + scored[0][0] * 0.15) if match else 0,
+            value=dest_value,
+            confidence=dest_confidence,
             signals=["provider:local"],
-            warnings=(
-                []
-                if match
-                else [
-                    "ambiguous_destination" if scored and scored[0][0] else "no_destination_match"
-                ]
-            ),
+            warnings=dest_warnings,
         ),
         extraction_quality=extraction.quality,
     )
