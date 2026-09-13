@@ -1,6 +1,5 @@
 import sys
 import types
-from pathlib import Path
 
 import pytest
 from crewai import BaseLLM
@@ -148,16 +147,21 @@ def test_destination_no_credible_match(monkeypatch):
 
 
 def test_temp_file_deleted(monkeypatch):
+    # Phase 2 strengthens the old cleanup check: no temporary file is created.
+    import io
+
     observed = []
 
-    def inspect_temp(path, _markdown=False):
-        observed.append(path)
-        assert Path(path).exists()
+    def inspect_memory(stream, _markdown=False):
+        assert isinstance(stream, io.BytesIO)
+        assert stream.read() == b"synthetic"
+        assert stream.name == "document.png"
+        observed.append(stream)
         return ExtractionResult(text="", quality="empty")
 
-    monkeypatch.setattr("dsa.tools.extract_document", inspect_temp)
+    monkeypatch.setattr("dsa.tools.extract_document", inspect_memory)
     extract_bytes(b"synthetic", ".png")
-    assert observed and not Path(observed[0]).exists()
+    assert len(observed) == 1
 
 
 def test_bytes_suffix_is_forwarded(monkeypatch):

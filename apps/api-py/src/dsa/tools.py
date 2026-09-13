@@ -1,5 +1,4 @@
-import os
-import tempfile
+import io
 from pathlib import Path
 
 from crewai.tools import BaseTool
@@ -15,12 +14,17 @@ class DoclingArgs(BaseModel):
 
 
 def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult:
-    path = Path(file_path)
-    if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+    memory = isinstance(file_path, io.BytesIO)
+    path = file_path if memory else Path(file_path)
+    if not memory and path.suffix.lower() not in SUPPORTED_SUFFIXES:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
     try:
         from docling.document_converter import DocumentConverter
 
+        if memory:
+            from docling.datamodel.base_models import DocumentStream
+
+            path = DocumentStream(name=getattr(path, "name", "document.pdf"), stream=path)
         document = DocumentConverter().convert(path).document
         content = document.export_to_markdown() if markdown else document.export_to_text()
     except Exception:
@@ -33,15 +37,9 @@ def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult
 def extract_bytes(data: bytes, suffix: str, markdown: bool = False) -> ExtractionResult:
     if suffix.lower() not in SUPPORTED_SUFFIXES:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
-    path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
-            temporary.write(data)
-            path = temporary.name
-        return extract_document(path, markdown)
-    finally:
-        if path:
-            os.unlink(path)
+    stream = io.BytesIO(data)
+    stream.name = "document" + suffix.lower()
+    return extract_document(stream, markdown)
 
 
 class DoclingMarkdownTool(BaseTool):

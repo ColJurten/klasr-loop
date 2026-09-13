@@ -3,34 +3,48 @@ import os
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 os.environ["OTEL_SDK_DISABLED"] = "true"
 
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
 from .schemas import DecisionResult
-from .tools import DoclingMarkdownTool, DoclingTextTool
+from pydantic import PrivateAttr
+
+
+class DisabledReplayStorage:
+    """Privacy boundary: CrewAI replay would persist document content to SQLite."""
+
+    def reset(self):
+        return None
+
+    def update(self, *_args):
+        return None
+
+    def load(self):
+        return []
+
+
+class EphemeralCrew(Crew):
+    _task_output_handler = PrivateAttr(default_factory=DisabledReplayStorage)
 
 
 def verbose_enabled() -> bool:
-    return (
-        os.getenv("KLASR_CONTAINER", "false").lower() != "true"
-        and os.getenv("KLASR_DSA_VERBOSE", "false").lower() == "true"
-    )
+    os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+    os.environ["OTEL_SDK_DISABLED"] = "true"
+    # Never emit prompts or extracted content, including CLI/container runs.
+    return False
 
 
-def llm_for(agent_name: str) -> LLM:
-    suffix = agent_name.upper()
+def llm_for(agent_name):
+    if provider_factory.get() is not None:
+        return provider_factory.get()(agent_name)
+    from services.llm_provider import environment_llm
 
-    def setting(name: str) -> str | None:
-        return os.getenv(f"KLASR_LLM_{name}_{suffix}") or os.getenv(f"KLASR_LLM_{name}")
+    return environment_llm(agent_name)
 
-    provider, model = setting("PROVIDER"), setting("MODEL")
-    if not provider or not model:
-        raise ValueError("KLASR_LLM_PROVIDER and KLASR_LLM_MODEL are required")
-    return LLM(
-        model=f"{provider}/{model}",
-        api_key=setting("API_KEY"),
-        base_url=setting("BASE_URL"),
-    )
+
+from contextvars import ContextVar
+
+provider_factory = ContextVar("dsa_provider_factory", default=None)
 
 
 @CrewBase
@@ -42,7 +56,6 @@ class DocumentSortingAssistantCrew:
     def analyse_file_agent(self) -> Agent:
         return Agent(
             config=self.agents_config["analyse_file_agent"],
-            tools=[DoclingMarkdownTool(), DoclingTextTool()],
             llm=llm_for("ANALYSE_FILE_AGENT"),
             verbose=verbose_enabled(),
         )
@@ -81,7 +94,7 @@ class DocumentSortingAssistantCrew:
 
     @crew
     def naming_crew(self) -> Crew:
-        return Crew(
+        return EphemeralCrew(
             agents=[self.analyse_file_agent(), self.suggest_filename_agent()],
             tasks=[self.analyse_file_task(), self.suggest_filename_task()],
             process=Process.sequential,
@@ -91,7 +104,7 @@ class DocumentSortingAssistantCrew:
 
     @crew
     def destination_crew(self) -> Crew:
-        return Crew(
+        return EphemeralCrew(
             agents=[self.analyse_file_agent(), self.suggest_directory_agent()],
             tasks=[self.analyse_file_task(), self.suggest_directory_task()],
             process=Process.sequential,
@@ -101,7 +114,7 @@ class DocumentSortingAssistantCrew:
 
     @crew
     def combined_crew(self) -> Crew:
-        return Crew(
+        return EphemeralCrew(
             agents=[
                 self.analyse_file_agent(),
                 self.suggest_filename_agent(),

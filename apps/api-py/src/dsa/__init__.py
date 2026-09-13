@@ -103,3 +103,25 @@ def suggest(
     return SuggestionResult(
         filename=filename, destination=destination, extraction_quality=extraction.quality
     )
+
+
+def suggest_text(
+    extraction: ExtractionResult, directories: list[str], llm_factory
+) -> SuggestionResult:
+    """In-memory worker entry: no credential values cross this boundary."""
+    from .crews import provider_factory
+
+    token = provider_factory.set(llm_factory)
+    try:
+        filename, destination = _both_decisions(extraction, directories)
+        if filename.confidence < CONFIDENCE_THRESHOLD:
+            filename = filename.model_copy(
+                update={"value": None, "warnings": [*filename.warnings, "low_confidence"]}
+            )
+        return SuggestionResult(
+            filename=filename,
+            destination=_validated_destination(destination, directories),
+            extraction_quality=extraction.quality,
+        )
+    finally:
+        provider_factory.reset(token)

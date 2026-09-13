@@ -73,7 +73,7 @@ class JobsService:
             .values(**values, leased_until=None, updated_at=now)
             .execution_options(synchronize_session=False)
         )
-        if result.rowcount:
+        if result.rowcount and job in self.session:
             self.session.expire(job)
         return bool(result.rowcount)
 
@@ -98,7 +98,7 @@ class JobsService:
             self.complete(job)
         return True
 
-    def queue_state(self) -> dict[str, int | bool]:
+    def queue_state(self, organization_id: str | None = None) -> dict[str, int | bool]:
         now = datetime.now(timezone.utc)
         counts = self.session.execute(
             select(
@@ -120,7 +120,7 @@ class JobsService:
                 ),
                 func.sum(case((Job.status == JobStatus.ACTIVE, 1), else_=0)),
                 func.sum(case((Job.status == JobStatus.FAILED, 1), else_=0)),
-            )
+            ).where(Job.organization_id == organization_id if organization_id is not None else True)
         ).one()
         return {
             "queued": counts[0] or 0,
