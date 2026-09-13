@@ -2,17 +2,31 @@
 
 ## Analyse documentaire DSA
 
-Le pipeline API sépare extraction, analyse structurée, décision de nom et décision de destination. Il fonctionne hors ligne avec `KLASR_LLM_PROVIDER=local`. Pour un endpoint compatible OpenAI, renseigner `KLASR_LLM_PROVIDER`, `KLASR_LLM_MODEL`, `KLASR_LLM_BASE_URL` et `KLASR_LLM_API_KEY`; les modèles par agent peuvent être surchargés par les variables `KLASR_AGENT_*_MODEL`. `ANTHROPIC_API_KEY` reste un repli de compatibilité temporaire, pas le contrat du pipeline.
+Le pipeline API Python (FastAPI + CrewAI + Docling) sépare extraction, analyse
+structurée, décision de nom et décision de destination. Il fonctionne hors ligne
+avec `KLASR_LLM_PROVIDER=local`. Pour un endpoint compatible OpenAI, renseigner
+`KLASR_LLM_PROVIDER`, `KLASR_LLM_MODEL`, `KLASR_LLM_BASE_URL` et
+`KLASR_LLM_API_KEY`; les modèles par agent peuvent être surchargés par les
+variables `KLASR_AGENT_*_MODEL`. `ANTHROPIC_API_KEY` reste un repli de
+compatibilité temporaire, pas le contrat du pipeline.
 
 ```bash
-pnpm install
-pnpm dsa:filename --file apps/api/test/fixtures/synthetic-invoice.txt
-pnpm dsa:destination --file apps/api/test/fixtures/synthetic-invoice.txt --dir /Comptabilite/Factures --dir /Juridique/Contrats
+pnpm api:install
+pnpm api:start
+suggest_filename --file <chemin-fichier>
+suggest_directory --file <chemin-fichier> --dir /Comptabilite/Factures --dir /Juridique/Contrats
 ```
 
-La CLI n'affiche ni texte extrait ni clé. PDF, PNG, JPEG, TIFF et texte sont pris en charge. Les formats Office entrent dans le flux mais demandent une revue manuelle; leur extraction nécessitera une dépendance TypeScript approuvée et, si le périmètre l'exige, un ADR.
+La CLI n'affiche ni texte extrait ni clé. PDF, PNG, JPEG, TIFF et texte sont
+pris en charge. Les formats Office entrent dans le flux mais demandent une
+revue manuelle; leur extraction nécessitera une dépendance Python approuvée
+et, si le périmètre l'exige, un ADR.
 
-L’écran de réglages charge ses listes de modèles depuis `KLASR_ANTHROPIC_MODELS`, `KLASR_OPENAI_MODELS`, `KLASR_MISTRAL_MODELS` et `KLASR_COMPATIBLE_MODELS` (valeurs séparées par des virgules). Il valide le format d’une clé puis l’oublie immédiatement; les traitements utilisent exclusivement les variables d’environnement de l’API.
+L'écran de réglages charge ses listes de modèles depuis
+`KLASR_ANTHROPIC_MODELS`, `KLASR_OPENAI_MODELS`, `KLASR_MISTRAL_MODELS` et
+`KLASR_COMPATIBLE_MODELS` (valeurs séparées par des virgules). Il valide le
+format d'une clé puis l'oublie immédiatement; les traitements utilisent
+exclusivement les variables d'environnement de l'API.
 
 Klasr est un micro-SaaS de classement documentaire pour cabinets et professions
 reglementees. Le flux reel est volontairement explicite :
@@ -34,8 +48,9 @@ humaine authentifiée prouve le chemin Google réel.
 
 ## Prerequis
 
-- Node.js compatible avec les versions pinnees du monorepo.
+- Node.js 20 (compatible avec les versions pinnees du monorepo).
 - `pnpm@10.15.1` exactement, comme declare dans `package.json`.
+- Python 3.11+ pour le backend FastAPI (`apps/api-py`).
 - Docker avec Compose v2.
 - Chromium installe par Playwright si `pnpm test:e2e` le demande.
 
@@ -44,6 +59,7 @@ Toutes les commandes suivantes partent de la racine du depot :
 ```bash
 cd /root/projects/klasr-oneshot/klasr-loop
 pnpm install --frozen-lockfile
+pnpm api:install
 ```
 
 ## Environnements locaux
@@ -52,14 +68,14 @@ Copier les exemples, puis remplacer uniquement les placeholders locaux. Ne
 mettre aucun secret reel dans Git.
 
 ```bash
-cp apps/api/.env.example apps/api/.env
+cp apps/api-py/.env.example apps/api-py/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
 Valeurs a remplacer pour un developpement local complet :
 
 - `INTERNAL_API_SECRET` : meme valeur jetable dans API et web.
-- `TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
+- `KLASR_TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
 - `NEXTAUTH_SECRET` : valeur locale jetable.
 - `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : seulement pour tester OAuth Google reel.
 
@@ -73,63 +89,55 @@ NEXT_PUBLIC_KLASR_LOCAL_MVP=true
 
 ## Services locaux
 
-PostgreSQL porte les donnees metier et pg-boss. MongoDB contient uniquement la
-collection TTL `analyses`.
+PostgreSQL porte les donnees metier et la file de jobs (SKIP LOCKED, ADR-007).
+MongoDB contient uniquement la collection TTL `analyses`. Le backend FastAPI
+est `apps/api-py` (port 3001).
 
 ```bash
 docker compose up -d --force-recreate --wait
 docker compose ps
 ```
 
-Deployer Prisma non-interactivement :
+Deployer les migrations Alembic :
 
 ```bash
-pnpm --filter @klasr/api prisma:generate
-pnpm --filter @klasr/api prisma:deploy
+pnpm api:migrate
 ```
 
 Developpement applicatif :
 
 ```bash
-pnpm --filter @klasr/api start:dev
-pnpm --filter @klasr/api worker:dev
-pnpm --filter @klasr/web dev
+pnpm api:start        # FastAPI (uvicorn, port 3001)
+pnpm api:worker       # Worker Python (KLASR_WORKER=true)
+pnpm --filter @klasr/web dev   # Next.js (port 3000)
 ```
 
 En mode local avec `KLASR_INLINE_WORKER=true`, le worker se lance dans l'API et
-`worker:dev` n'est pas necessaire.
+`api:worker` n'est pas necessaire.
 
-## Validation locale sans credentials (preuve de régression locale)
+## Validation locale sans credentials
 
 Chemin le plus simple :
 
 ```bash
 docker compose up -d --force-recreate --wait
-pnpm --filter @klasr/api prisma:generate
-pnpm --filter @klasr/api prisma:deploy
-pnpm test:integration
+pnpm api:install
+pnpm api:migrate
+pnpm api:test
+pnpm test
 pnpm test:e2e
 ```
 
-`pnpm test:integration` lance NestJS sur loopback avec un Drive local
-deterministe : `Cabinet de demonstration` comme racine, une arborescence
-destination, un dossier separe `A classer`, des fichiers supportes et un fichier
-non supporte. Aucun token OAuth reel ni document reel n'est utilise.
-
 ## OCR et qualite des suggestions
 
-L'OCR accepte PDF, PNG, JPEG et TIFF. Les PDF natifs utilisent d'abord la couche
-texte `pdfjs-dist`; seules les pages sans texte utile sont rasterisees puis lues
-par Tesseract (`fra+eng`). L'adaptateur borne l'entree a 20 MiB, analyse au plus
-20 pages par PDF et transmet au classement un contenu normalise et representatif
-(debut/milieu/fin), jamais un simple debut de document.
-
-Une extraction vide, trop courte, corrompue ou non supportee cree une proposition
-visible "a verifier" sans destination executable. Les propositions faibles ou
-ambigues sont exclues de `Tout valider` jusqu'a correction explicite du nom et
-du dossier. Les fournisseurs LLM doivent rendre un JSON borne : nom sur avec
-extension preservee, destination existante, confiances entre 0 et 1. Toute sortie
-inventee ou dangereuse est rejetee et retombe vers la revue manuelle.
+L'OCR (Docling) accepte PDF, PNG, JPEG et TIFF. Le contenu normalise est
+transmis au pipeline CrewAI sans stockage intermediaire. Une extraction vide,
+trop courte, corrompue ou non supportee cree une proposition visible « a
+verifier » sans destination executable. Les propositions faibles ou ambigues
+sont exclues de `Tout valider` jusqu'a correction explicite du nom et du
+dossier. Les fournisseurs LLM doivent rendre un JSON borne : nom sur avec
+extension preservee, destination existante, confiances entre 0 et 1. Toute
+sortie inventee ou dangereuse est rejetee et retombe vers la revue manuelle.
 
 ## Configuration Google OAuth / Drive
 
@@ -148,7 +156,7 @@ Pour tester Google Drive reel :
    `NEXTAUTH_SECRET=<secret-placeholder>`,
    `API_URL=http://localhost:3001/api/v1`,
    `INTERNAL_API_SECRET=<secret-local-identique>` et
-   `TOKEN_ENCRYPTION_KEY=<cle-placeholder>`.
+   `KLASR_TOKEN_ENCRYPTION_KEY=<cle-placeholder>`.
 7. Verifier que le scope Drive est autorise :
    `https://www.googleapis.com/auth/drive`.
 
@@ -168,10 +176,11 @@ ils ne sont ni masqués ni envoyés à l'OCR, et aboutissent à une revue manuel
 La preuve Google exige qu'un humain ouvre `/login` et réalise lui-même le
 consentement. Il contrôle ensuite, sans copier de jeton ni de contenu : navigation
 parent/pagination, racine et descendants, PDF synthétiques à la racine, libellé
-XLSX, job pg-boss, statut OCR/proposition, validation inchangée, correction de
-nom, correction de destination et action Ignorer. Il vérifie uniquement les métadonnées
-sûres (identifiants, noms finaux, parents, statuts), le non-réenfilage et le rendu
-bureau puis 390×844. Avant cette étape, l'état est `NEEDS HUMAN`, jamais `PASS`.
+XLSX, job PostgreSQL (SKIP LOCKED), statut OCR/proposition, validation inchangée,
+correction de nom, correction de destination et action Ignorer. Il vérifie
+uniquement les métadonnées sûres (identifiants, noms finaux, parents, statuts),
+le non-réenfilage et le rendu bureau puis 390×844. Avant cette étape, l'état est
+`NEEDS HUMAN`, jamais `PASS`.
 
 Créer uniquement un dossier temporaire et des PDF/images synthétiques sans
 donnée personnelle. Après la preuve, supprimer ces fixtures dans Drive et purger
@@ -183,9 +192,9 @@ un rapport.
 
 1. Demarrer PostgreSQL et MongoDB :
    `docker compose up -d --force-recreate --wait`.
-2. Deployer les migrations :
-   `pnpm --filter @klasr/api prisma:deploy`.
-3. Demarrer API et web en mode local.
+2. Installer et migrer :
+   `pnpm api:install && pnpm api:migrate`.
+3. Demarrer API et web : `pnpm api:start` et `pnpm --filter @klasr/web dev`.
 4. Ouvrir `http://localhost:3000/login`.
 5. Cliquer `Mode local`.
 6. Sur le dashboard, choisir `Cabinet de demonstration`.
@@ -210,10 +219,10 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-docker compose up -d --force-recreate --wait
-pnpm --filter @klasr/api prisma:generate
-pnpm --filter @klasr/api prisma:deploy
-pnpm test:integration
+pnpm api:install
+pnpm api:migrate
+pnpm api:test
+pnpm api:lint
 pnpm test:e2e
 ```
 

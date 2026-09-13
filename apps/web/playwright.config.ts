@@ -35,7 +35,7 @@ export default defineConfig({
     },
     {
       command:
-        `docker compose up -d --wait && node ../../scripts/retry-command.mjs 30000 250 env DATABASE_URL=${databaseUrl} pnpm --filter @klasr/api prisma:deploy && pnpm --filter @klasr/api build && env NODE_ENV=test PORT=4301 KLASR_INLINE_WORKER=true ${sharedEnv} KLASR_LOCAL_MVP=${apiLocalMode} pnpm --filter @klasr/api exec node dist/main.js`,
+        `docker compose up -d --wait && node ../../scripts/retry-command.mjs 30000 250 sh -c 'cd ../../apps/api-py && .venv/bin/alembic upgrade head' && env KLASR_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/klasr KLASR_MONGO_URL=${mongoUrl} KLASR_INLINE_WORKER=true ${sharedEnv} KLASR_LOCAL_MVP=${apiLocalMode} sh -c 'cd ../../apps/api-py && .venv/bin/uvicorn main:app --host 127.0.0.1 --port 4301 --app-dir src'`,
       env: runtime.apiEnv,
       url: `${apiUrl}/health`,
       reuseExistingServer: false,

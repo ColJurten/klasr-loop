@@ -1,10 +1,9 @@
 from pathlib import Path
-import re
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Enum, create_engine, inspect
+from sqlalchemy import create_engine, inspect
 
-from db.models import Base, LlmSetting
+from db.models import Base
 from main import create_app
 
 
@@ -43,75 +42,13 @@ def test_initial_revision_adopts_existing_tables(tmp_path, monkeypatch):
 
 
 def test_prisma_schema_contract():
-    prisma = (Path(__file__).parents[2] / "api/prisma/schema.prisma").read_text()
-    enum_blocks = re.findall(r"enum (\w+) \{(.*?)\n\}", prisma, re.DOTALL)
-    expected_enums = {
-        name: [line.split()[0] for line in body.splitlines() if line.strip()]
-        for name, body in enum_blocks
-    }
-    actual_enums = {
-        column.type.name: column.type.enums
-        for table in Base.metadata.tables.values()
-        for column in table.columns
-        if isinstance(column.type, Enum) and table.name != "jobs"
-    }
-    assert actual_enums == expected_enums
-    model_blocks = re.findall(r"model (\w+) \{(.*?)\n\}", prisma, re.DOTALL)
-    scalar_types = {"String", "DateTime", "Boolean", "Int", "Float", "Json"} | set(expected_enums)
-    expected_columns = {
-        name: {
-            parts[0]
-            for line in body.splitlines()
-            if len(parts := line.strip().split()) >= 2 and parts[1].rstrip("?[]") in scalar_types
-        }
-        for name, body in model_blocks
-    }
-    assert {
-        name: set(table.columns.keys())
-        for name, table in Base.metadata.tables.items()
-        if name != "jobs"
-    } == expected_columns
-    expected_indexes = {
-        f"{name}_{'_'.join(field.strip() for field in fields.split(','))}_idx"
-        for name, body in model_blocks
-        for fields in re.findall(r"@@index\(\[([^]]+)]\)", body)
-    }
-    assert {
-        index.name
-        for table in Base.metadata.tables.values()
-        for index in table.indexes
-        if not index.unique
-        if table.name != "jobs"
-    } == expected_indexes
-    expected_foreign_keys = set()
-    for model, body in model_blocks:
-        field_types = {
-            parts[0]: parts[1]
-            for line in body.splitlines()
-            if len(parts := line.strip().split()) >= 2
-        }
-        for target, field, reference, action in re.findall(
-            r'(\w+)\??\s+@relation\((?:"[^"]+", )?fields: \[(\w+)], references: \[(\w+)]'
-            r"(?:, onDelete: (\w+))?\)",
-            body,
-        ):
-            action = action or ("SetNull" if field_types[field].endswith("?") else "Restrict")
-            expected_foreign_keys.add(
-                (model, field, target, reference, action.replace("SetNull", "SET NULL").upper())
-            )
-    actual_foreign_keys = {
-        (
-            table.name,
-            column.name,
-            foreign_key.column.table.name,
-            foreign_key.column.name,
-            foreign_key.ondelete,
-        )
-        for table in Base.metadata.tables.values()
-        if table.name != "jobs"
-        for column in table.columns
-        for foreign_key in column.foreign_keys
-    }
-    assert actual_foreign_keys == expected_foreign_keys
-    updated_at = LlmSetting.__table__.c.updatedAt
-    assert updated_at.server_default is not None and updated_at.onupdate is not None
+    """Phase 3 cutover: the NestJS Prisma schema (apps/api/prisma/schema.prisma)
+    was deleted along with apps/api/. The Python SQLAlchemy models in db/models.py
+    are now the single source of truth; there is no Prisma schema to compare against.
+    The contract parity was verified in Phases 1-2 before cutover."""
+    import pytest
+
+    pytest.skip(
+        "NestJS Prisma schema deleted in Phase 3 cutover "
+        "— SQLAlchemy models are single source of truth"
+    )

@@ -1,6 +1,20 @@
-# Stack de dev locale — ADR-002/003/004 : PostgreSQL (métier + jobs pg-boss)
-# et MongoDB (collection `analyses`, compétence NoSQL). Ni Redis, ni MinIO.
+# Stack de dev locale — Backend Python/FastAPI (apps/api-py) + PostgreSQL + MongoDB.
+# ADR-007 : la file de jobs est en PostgreSQL (SKIP LOCKED, sans pg-boss ni Redis).
 services:
+  api:
+    build:
+      context: apps/api-py
+    ports:
+      - '127.0.0.1:3001:3001'
+    environment:
+      KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/klasr
+      KLASR_MONGO_URL: mongodb://mongo:27017
+      KLASR_ENV: development
+      KLASR_INTERNAL_API_SECRET: replace-with-a-local-shared-secret
+    depends_on:
+      - postgres
+      - mongo
+
   postgres:
     image: postgres:16-alpine
     environment:

@@ -7,15 +7,14 @@
     "typecheck": "pnpm --recursive --if-present run typecheck",
     "test": "pnpm --recursive --if-present run test && node --test scripts/test/*.test.mjs",
     "build": "pnpm --recursive --if-present run build",
-    "test:integration": "pnpm --filter @klasr/api exec node ../../scripts/local-mvp-integration.mjs",
+    "test:integration": "cd apps/api-py && .venv/bin/pytest",
     "test:e2e": "pnpm --filter @klasr/web exec playwright test",
-    "test:live-google-sa": "node scripts/live-google-service-account.mjs",
     "api:install": "python3 -m venv apps/api-py/.venv && apps/api-py/.venv/bin/pip install -e 'apps/api-py[dev]'",
     "api:test": "cd apps/api-py && .venv/bin/pytest",
     "api:lint": "cd apps/api-py && .venv/bin/black --check src tests alembic && .venv/bin/flake8 src tests alembic",
     "api:migrate": "cd apps/api-py && .venv/bin/alembic upgrade head",
-    "dsa:filename": "pnpm --filter @klasr/api dsa:filename",
-    "dsa:destination": "pnpm --filter @klasr/api dsa:destination"
+    "api:start": "cd apps/api-py && .venv/bin/uvicorn main:app --host 0.0.0.0 --port 3001 --app-dir src",
+    "api:worker": "cd apps/api-py && KLASR_WORKER=true .venv/bin/python -m src.worker"
   },
   "packageManager": "pnpm@10.15.1"
 }
