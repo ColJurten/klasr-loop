@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import logging
+import uuid
 from typing import Callable
 
 from sqlalchemy import case, func, select, update
@@ -8,6 +10,7 @@ from sqlalchemy.orm import Session
 from db.models import Job, JobStatus
 
 LEASE = timedelta(minutes=15)
+logger = logging.getLogger(__name__)
 
 
 class JobsService:
@@ -44,6 +47,7 @@ class JobsService:
         if job:
             job.status = JobStatus.ACTIVE
             job.leased_until = now + LEASE
+            job.lease_token = uuid.uuid4().hex
             job.updated_at = now
             self.session.flush()
         return job
@@ -61,16 +65,16 @@ class JobsService:
         )
 
     def _finish(self, job: Job, **values) -> bool:
-        lease = job.leased_until
+        token = job.lease_token
         now = datetime.now(timezone.utc)
         result = self.session.execute(
             update(Job)
             .where(
                 Job.id == job.id,
                 Job.status == JobStatus.ACTIVE,
-                Job.leased_until == lease,
+                Job.lease_token == token,
             )
-            .values(**values, leased_until=None, updated_at=now)
+            .values(**values, leased_until=None, lease_token=None, updated_at=now)
             .execution_options(synchronize_session=False)
         )
         if result.rowcount and job in self.session:
@@ -95,7 +99,8 @@ class JobsService:
         except Exception:
             self.fail(job)
         else:
-            self.complete(job)
+            if not self.complete(job):
+                logger.warning("lease lost for job %s", job.id)
         return True
 
     def queue_state(self, organization_id: str | None = None) -> dict[str, int | bool]:

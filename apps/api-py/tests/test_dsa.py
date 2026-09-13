@@ -222,3 +222,30 @@ def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
     directory_crew.kickoff(inputs={"content": "ACME INVOICE 42", "directories": directories})
     assert directory_crew.tracing is False
     assert all(path in directory_crew.tasks[-1].description for path in directories)
+
+
+def test_combined_crew_task_order_and_prompts(monkeypatch):
+    from dsa import crews
+
+    fake = FakeLLM(
+        model="fake",
+        responses=[
+            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"invoice.pdf","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"/Clients/Acme","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+        ],
+    )
+    monkeypatch.setattr(crews, "llm_for", lambda _name: fake)
+    combined = crews.DocumentSortingAssistantCrew().combined_crew()
+    output = combined.kickoff(
+        inputs={"content": "ACME INVOICE 42", "directories": ["/Clients/Acme"]}
+    )
+    assert combined.tracing is False
+    # The last two tasks are filename then destination (in crew task order).
+    tasks_output = output.tasks_output
+    assert tasks_output[-2].pydantic.value == "invoice.pdf"
+    assert tasks_output[-1].pydantic.value == "/Clients/Acme"
+    # FakeLLM collected prompts (N6: prompts must be asserted).
+    assert len(fake.prompts) == 3
+    # At least the first prompt (analysis task) contains the content.
+    assert "ACME INVOICE 42" in fake.prompts[0]

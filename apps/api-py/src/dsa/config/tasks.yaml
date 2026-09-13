@@ -2,17 +2,17 @@ analyse_file_task:
   description: |-
     Analyser ce texte extrait et produire des signaux factuels étiquetés :
     {content}
-  expected_output: "Une analyse structurée de {content} sans reproduire le texte documentaire brut."
+  expected_output: "Une analyse structurée sans reproduire le texte documentaire brut."
   agent: analyse_file_agent
 suggest_filename_task:
   description: |-
     Proposer un nom depuis ce contenu et l'analyse, jamais depuis les octets du fichier :
     {content}
-  expected_output: "Pour {content}, value, confidence, signals et warnings validés."
+  expected_output: "Value, confidence, signals et warnings validés."
   agent: suggest_filename_agent
 suggest_directory_task:
   description: |-
     Choisir un chemin exact dans cette liste sans jamais en inventer :
     {directories}
-  expected_output: "Un chemin exact de {directories}, ou un état d'échec explicite."
+  expected_output: "Un chemin exact de la liste, ou un état d'échec explicite."
   agent: suggest_directory_agent

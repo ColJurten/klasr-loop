@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +11,18 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://postgres:postgres@localhost:5432/klasr",
         validation_alias=AliasChoices("KLASR_DATABASE_URL", "DATABASE_URL"),
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def rewrite_bare_postgresql_scheme(cls, v: str) -> str:
+        """Rewrite bare postgresql:// or postgres:// to use psycopg3 driver."""
+        if isinstance(v, str):
+            if v.startswith("postgresql://"):
+                return "postgresql+psycopg://" + v[len("postgresql://") :]
+            if v.startswith("postgres://"):
+                return "postgresql+psycopg://" + v[len("postgres://") :]
+        return v
+
     mongo_url: str = "mongodb://localhost:27017"
     mongo_database: str = "klasr"
     analyses_ttl_days: int = 30

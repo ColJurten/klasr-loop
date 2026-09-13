@@ -358,6 +358,7 @@ class Job(Base):
     retry_limit: Mapped[int] = mapped_column(Integer, server_default="2")
     run_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     leased_until: Mapped[datetime | None] = mapped_column(DateTime)
+    lease_token: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

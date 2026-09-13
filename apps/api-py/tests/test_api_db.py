@@ -42,7 +42,7 @@ def test_initial_revision_adopts_existing_tables(tmp_path, monkeypatch):
     assert set(inspect(engine).get_table_names()) == set(Base.metadata.tables) | {"alembic_version"}
 
 
-def test_prisma_postgresql_schema_contract():
+def test_prisma_schema_contract():
     prisma = (Path(__file__).parents[2] / "api/prisma/schema.prisma").read_text()
     enum_blocks = re.findall(r"enum (\w+) \{(.*?)\n\}", prisma, re.DOTALL)
     expected_enums = {
