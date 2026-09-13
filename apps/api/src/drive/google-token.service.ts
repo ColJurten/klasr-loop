@@ -14,11 +14,11 @@ export class GoogleTokenService {
     private readonly config: ConfigService,
   ) {}
 
-  async getAccessToken(organizationId: string): Promise<string> {
+  async getAccessToken(organizationId: string, userId = ''): Promise<string> {
     if (process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT === 'true') {
       return this.getServiceAccountAccessToken();
     }
-    const connection = await this.connections.findByOrganization(organizationId);
+    const connection = await this.connections.findByUser(organizationId, userId);
     if (!connection || connection.provider !== 'GOOGLE_DRIVE') {
       throw new UnauthorizedException('Google Drive is not connected');
     }

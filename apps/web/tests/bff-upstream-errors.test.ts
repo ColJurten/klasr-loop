@@ -10,7 +10,7 @@ const api = vi.hoisted(() => ({
   launchDriveItem: vi.fn(),
   listReferenceFolders: vi.fn(),
   listDriveItems: vi.fn(),
-  rejectProposal: vi.fn(),
+  ignoreProposal: vi.fn(),
   selectReferenceRoot: vi.fn(),
   startSync: vi.fn(),
   getDashboardData: vi.fn(),
@@ -45,15 +45,15 @@ describe('dashboard BFF routes preserve upstream status codes', () => {
   });
 
   it('maps true upstream 5xx errors to 502', async () => {
-    api.rejectProposal.mockRejectedValueOnce(Object.assign(new Error('provider unavailable'), { status: 500 }));
-    const { POST } = await import('@/app/api/proposals/[proposalId]/reject/route');
+    api.ignoreProposal.mockRejectedValueOnce(Object.assign(new Error('database unavailable'), { status: 500 }));
+    const { POST } = await import('@/app/api/proposals/[proposalId]/ignore/route');
 
-    const response = await POST(new Request('http://localhost/api/proposals/prop_1/reject', { method: 'POST' }), {
+    const response = await POST(new Request('http://localhost/api/proposals/prop_1/ignore', { method: 'POST' }), {
       params: { proposalId: 'prop_1' },
     });
 
     expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toEqual({ error: 'provider unavailable' });
+    await expect(response.json()).resolves.toEqual({ error: 'database unavailable' });
   });
 
   it('returns upstream 401 from sync instead of collapsing to 502', async () => {

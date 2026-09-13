@@ -166,43 +166,4 @@ describe('GoogleDriveExecutor', () => {
     );
   });
 
-  it('creates the deterministic holding folder when Google has none', async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ files: [] }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          id: 'holding',
-          name: 'À traiter manuellement',
-          mimeType: 'application/vnd.google-apps.folder',
-          parents: ['root'],
-        }),
-      });
-    const executor = new GoogleDriveExecutor(tokenService as never, folders as never);
-
-    await expect(executor.ensureHoldingFolder('org_1', 'root')).resolves.toEqual(
-      expect.objectContaining({ id: 'holding', parents: ['root'] }),
-    );
-
-    const searchUrl = new URL((global.fetch as jest.Mock).mock.calls[0][0]);
-    expect(searchUrl.origin + searchUrl.pathname).toBe('https://www.googleapis.com/drive/v3/files');
-    expect(searchUrl.searchParams.get('supportsAllDrives')).toBe('true');
-    expect(searchUrl.searchParams.get('includeItemsFromAllDrives')).toBe('true');
-    expect(searchUrl.searchParams.get('fields')).toBe('files(id,name,mimeType,parents)');
-    const createUrl = new URL((global.fetch as jest.Mock).mock.calls[1][0]);
-    expect(createUrl.toString()).toBe(
-      'https://www.googleapis.com/drive/v3/files?fields=id%2Cname%2CmimeType%2Cparents&supportsAllDrives=true',
-    );
-    expect(global.fetch).toHaveBeenLastCalledWith(
-      'https://www.googleapis.com/drive/v3/files?fields=id%2Cname%2CmimeType%2Cparents&supportsAllDrives=true',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          name: 'À traiter manuellement',
-          mimeType: 'application/vnd.google-apps.folder',
-          parents: ['root'],
-        }),
-      }),
-    );
-  });
 });

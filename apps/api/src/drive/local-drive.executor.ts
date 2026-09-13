@@ -29,11 +29,12 @@ export class LocalDriveExecutor implements DriveExecutor {
   ];
   private readonly moved = new Map<string, MoveRenameCommand>();
 
-  async listMetadata(organizationId = 'local'): Promise<DriveMetadataItem[]> {
+  async listMetadata(organizationId = 'local', userId = 'local'): Promise<DriveMetadataItem[]> {
+    void userId;
     return [...this.itemsFor(organizationId).values()];
   }
 
-  async listChildren(organizationId: string, parentId: string, pageToken?: string) {
+  async listChildren(organizationId: string, _userId: string, parentId: string, pageToken?: string) {
     const offset = pageToken ? Number(pageToken) : 0;
     const items = [...this.itemsFor(organizationId).values()].filter((item) =>
       parentId === 'root' ? item.parents.length === 0 : item.parents.includes(parentId),
@@ -42,7 +43,7 @@ export class LocalDriveExecutor implements DriveExecutor {
     return { items: page, nextPageToken: offset + page.length < items.length ? String(offset + page.length) : null };
   }
 
-  async download(_organizationId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>> {
+  async download(_organizationId: string, _userId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>> {
     const text = LOCAL_TEXTS.get(documentExternalId) ?? '';
     const bytes = documentExternalId === 'local_file_note_paie'
       ? renderPng(text)
@@ -64,23 +65,6 @@ export class LocalDriveExecutor implements DriveExecutor {
       if (command.rename !== false) item.name = command.newName;
     }
     this.moved.set(`${command.organizationId}:${command.documentExternalId}`, command);
-  }
-
-  async ensureHoldingFolder(_organizationId: string, referenceRootExternalId: string): Promise<DriveMetadataItem> {
-    const items = this.itemsFor(_organizationId);
-    const existing = [...items.values()].find(
-      (item) => item.mimeType === FOLDER_MIME && item.name === 'À traiter manuellement' && item.parents.includes(referenceRootExternalId),
-    );
-    if (existing) return existing;
-    const folder = {
-      id: `local_holding_${referenceRootExternalId}`,
-      name: 'À traiter manuellement',
-      mimeType: FOLDER_MIME,
-      sizeBytes: 0,
-      parents: [referenceRootExternalId],
-    };
-    items.set(folder.id, folder);
-    return folder;
   }
 
   private itemsFor(organizationId: string): Map<string, DriveMetadataItem> {

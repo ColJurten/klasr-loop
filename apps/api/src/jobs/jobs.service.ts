@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface AnalysisJob {
   organizationId: string;
+  userId: string;
   documentId: string;
 }
 

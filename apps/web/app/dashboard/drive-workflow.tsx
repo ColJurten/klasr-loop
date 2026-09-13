@@ -14,7 +14,7 @@ type DrivePath = Array<{ id: string; name: string }>;
 type DriveSelection = { selected: string; path: DrivePath };
 type LaunchSnapshot = { state: 'running' | 'done'; baseline: { outcomes: number; failures: number }; target: number | null; startedAt: number };
 
-export function DriveWorkflow({ data }: { data: DashboardView | null }) {
+export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardView | null; llmConfigured?: boolean }) {
   const router = useRouter();
   const [referenceState, setReferenceState] = useState<'idle' | 'running' | 'error'>('idle');
   const [launchState, setLaunchState] = useState<'idle' | 'running' | 'error' | 'done'>('idle');
@@ -108,7 +108,7 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
     setReferenceState('running');
     try {
       await selectReferenceRoot(folderExternalId);
-      reloadDashboard();
+      router.refresh();
     } catch {
       setReferenceState('error');
     }
@@ -205,7 +205,7 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
         {!data?.referenceRoot ? (
           <p className="mt-2 text-sm text-ink/60">Sélectionnez d&apos;abord un dossier de référence.</p>
         ) : data.mode !== 'local' ? (
-          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done'} selected={selectedInput} initialPath={restoredInputPath ?? undefined} onSelect={selectInput} onStaleSelection={clearInputSelection} onChoose={(item) => void launchItem(item.externalId)} />
+          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done' || !llmConfigured} describedBy={!llmConfigured ? 'llm-launch-help' : undefined} selected={selectedInput} initialPath={restoredInputPath ?? undefined} onSelect={selectInput} onStaleSelection={clearInputSelection} onChoose={(item) => void launchItem(item.externalId)} />
         ) : inputItems.length === 0 ? (
           <p className="mt-2 text-sm text-ink/60">Aucun fichier disponible.</p>
         ) : (
@@ -226,13 +226,14 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
               ))}
             </select>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="validate" disabled={!selectedInput || launchState === 'running' || launchState === 'done'} onClick={() => void launch()}>
+              <Button type="button" variant="validate" aria-describedby={!llmConfigured ? 'llm-launch-help' : undefined} disabled={!llmConfigured || !selectedInput || launchState === 'running' || launchState === 'done'} onClick={() => void launch()}>
                 <Play className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={1.5} />
                 Lancer l&apos;organisation
               </Button>
             </div>
           </>
         )}
+        {!llmConfigured && <p id="llm-launch-help" role="tooltip" className="mt-3 text-sm text-ink/70">L&apos;analyse est bloquée : configurez et validez une clé LLM.</p>}
         {(launchState === 'running' || launchState === 'done') && (
           <p role="status" className="mt-3 inline-flex items-center gap-2 text-sm text-ink/65">
             <RefreshCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -249,7 +250,7 @@ export function DriveWorkflow({ data }: { data: DashboardView | null }) {
   );
 }
 
-function DriveBrowser({ mode, busy, selected: selectedProp, initialPath, onSelect, onStaleSelection, onChoose }: { mode: 'folder' | 'input'; busy: boolean; selected?: string; initialPath?: DrivePath; onSelect?: (itemExternalId: string, path: DrivePath) => void; onStaleSelection?: () => void; onChoose: (item: DriveInputItemView) => void }) {
+function DriveBrowser({ mode, busy, describedBy, selected: selectedProp, initialPath, onSelect, onStaleSelection, onChoose }: { mode: 'folder' | 'input'; busy: boolean; describedBy?: string; selected?: string; initialPath?: DrivePath; onSelect?: (itemExternalId: string, path: DrivePath) => void; onStaleSelection?: () => void; onChoose: (item: DriveInputItemView) => void }) {
   const [path, setPath] = useState<DrivePath>([{ id: 'root', name: 'Mon Drive' }]);
   const [items, setItems] = useState<DriveInputItemView[]>([]);
   const [localSelected, setLocalSelected] = useState('');
@@ -303,7 +304,7 @@ function DriveBrowser({ mode, busy, selected: selectedProp, initialPath, onSelec
               ? item.type === 'folder' && (item.eligible || item.reason === 'reference-required')
               : item.eligible;
             return <li key={item.externalId} className="flex min-h-11 flex-col gap-2 rounded-lg border border-line bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
-              <button type="button" disabled={item.type !== 'folder' || item.reason === 'inside-holding-tree'} onClick={() => setPath([...path, { id: item.externalId, name: item.name }])} className="min-w-0 text-left font-mono text-sm disabled:cursor-default">
+              <button type="button" disabled={item.type !== 'folder'} onClick={() => setPath([...path, { id: item.externalId, name: item.name }])} className="min-w-0 text-left font-mono text-sm disabled:cursor-default">
                 {item.type === 'folder' && <Folder className="mr-2 inline h-4 w-4 text-lavender-deep" />}{item.name}
                 {!item.supported && <span className="ml-2 rounded bg-peach px-2 py-0.5 font-sans text-xs">Non supporté</span>}
               </button>
@@ -313,7 +314,7 @@ function DriveBrowser({ mode, busy, selected: selectedProp, initialPath, onSelec
         </ul>
       )}
       {nextPageToken && <Button type="button" variant="secondary" className="mt-3" disabled={state === 'loading'} onClick={() => load(parent.id, nextPageToken, true)}>Afficher la suite</Button>}
-      <Button type="button" variant="validate" className="mt-3 w-full sm:w-auto" disabled={!chosen || busy} onClick={() => chosen && onChoose(chosen)}>
+      <Button type="button" variant="validate" className="mt-3 w-full sm:w-auto" aria-describedby={describedBy} disabled={!chosen || busy} onClick={() => chosen && onChoose(chosen)}>
         {mode === 'folder' ? 'Choisir ce dossier' : <><Play className="mr-1.5 h-3.5 w-3.5" />Lancer l&apos;organisation</>}
       </Button>
     </div>
@@ -389,11 +390,6 @@ function isLaunchSnapshot(value: unknown): value is LaunchSnapshot {
   );
 }
 
-function reloadDashboard(): void {
-  if (process.env.NODE_ENV === 'test') return;
-  window.location.reload();
-}
-
 function FolderTree({ folders }: { folders: FolderChoiceView[] }) {
   if (folders.length === 0) {
     return <p className="mt-2 text-sm text-ink/60">Aucun descendant importé pour le moment.</p>;
@@ -411,7 +407,6 @@ function FolderTree({ folders }: { folders: FolderChoiceView[] }) {
 
 function reasonLabel(item: DriveInputItemView): string {
   if (item.reason === 'unsupported') return 'non supporté';
-  if (item.reason === 'inside-holding-tree') return 'zone de retrait exclue';
   if (item.reason === 'reference-root') return 'racine de référence exclue';
   return 'indisponible';
 }

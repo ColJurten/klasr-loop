@@ -57,6 +57,11 @@ describe('LlmSettingsService RED contract', () => {
     expect(repository.delete).toHaveBeenCalledWith('org-b');
   });
 
+  it('reports a stored but unvalidated configuration as missing', async () => {
+    repository.find.mockResolvedValueOnce({ provider: 'openai', model: 'model-a', baseUrl: 'https://api.openai.com/v1', validatedAt: new Date(), status: 'INVALID' });
+    await expect(service.get('org-b')).resolves.toEqual({ configured: false });
+  });
+
   it('rejects unsafe custom endpoints', async () => {
     await expect(service.discover({ provider: 'openai-compatible', apiKey: key, baseUrl: 'http://169.254.169.254/latest' })).rejects.toMatchObject({ response: { code: 'unsafe_endpoint' } });
     expect(providers.discover).not.toHaveBeenCalled();

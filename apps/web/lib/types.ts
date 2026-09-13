@@ -25,7 +25,6 @@ export interface FolderChoiceView {
   name: string;
   parentExternalId: string | null;
   path: string;
-  holding?: boolean;
 }
 
 export interface DriveInputItemView {
@@ -74,6 +73,7 @@ export interface DashboardView {
   proposals: ProposalView[];
   history: Array<{
     id: string;
+    action: 'MOVE' | 'RENAME' | 'MOVE_RENAME' | 'IGNORED';
     toName: string | null;
     toPath: string | null;
     executedAt: string;

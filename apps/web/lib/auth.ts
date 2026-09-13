@@ -6,6 +6,7 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 export type MembershipRole = 'ADMIN' | 'MEMBER';
 
 interface OnboardingResult {
+  userId: string;
   organizationId: string;
   membershipId: string;
   role: MembershipRole;
@@ -15,6 +16,7 @@ declare module 'next-auth' {
   interface Session {
     user: {
       organizationId: string;
+      userId: string;
       membershipId: string;
       role: MembershipRole;
     } & DefaultSession['user'];
@@ -24,6 +26,7 @@ declare module 'next-auth' {
 declare module 'next-auth/jwt' {
   interface JWT {
     organizationId: string;
+    userId: string;
     membershipId: string;
     role: MembershipRole;
   }
@@ -32,6 +35,7 @@ declare module 'next-auth/jwt' {
 // Matches apps/web/lib/api.ts's API_URL convention exactly.
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 const DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive';
+const INTERNAL_VERIFIED_PROVIDERS = new Set(['local-mvp', 'google-service-account-acceptance']);
 
 function localProviderEnabled(): boolean {
   if (process.env.KLASR_LOCAL_MVP !== 'true') return false;
@@ -72,6 +76,15 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.AZURE_AD_CLIENT_ID ?? '',
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET ?? '',
       tenantId: process.env.AZURE_AD_TENANT_ID ?? 'common',
+    }),
+    CredentialsProvider({
+      id: 'credentials', name: 'Compte klasr', credentials: { email: {}, password: {} },
+      async authorize(credentials) {
+        const response = await fetch(`${API_URL}/auth/credentials`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_API_SECRET ?? '' }, body: JSON.stringify({ email: credentials?.email, password: credentials?.password }) });
+        if (!response.ok) return null;
+        const identity = (await response.json()) as OnboardingResult | null;
+        return identity ? { id: identity.userId, email: credentials?.email, ...identity } : null;
+      },
     }),
     ...(acceptanceProviderEnabled()
       ? [
@@ -125,13 +138,24 @@ export const authOptions: NextAuthOptions = {
      * organizationId. If onboarding fails (non-2xx or network error), throw
      * so sign-in fails visibly instead of producing a tenant-less session.
      */
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, profile }) {
       if (!account) return token;
+
+      if (account.provider === 'credentials') {
+        const identity = user as typeof user & OnboardingResult;
+        token.organizationId = identity.organizationId; token.userId = identity.userId;
+        token.membershipId = identity.membershipId; token.role = identity.role;
+        return token;
+      }
 
       if (!user?.email) {
         throw new Error('OAuth sign-in did not return an email — cannot onboard the user');
       }
 
+      const serviceAccountAcceptance = account.provider === 'google-service-account-acceptance';
+      const emailVerified = INTERNAL_VERIFIED_PROVIDERS.has(account.provider)
+        || (account.provider === 'google' && (profile as { email_verified?: unknown } | undefined)?.email_verified === true);
+      if (!emailVerified) throw new Error('Provider cannot verify email ownership');
       const response = await fetch(`${API_URL}/auth/onboarding`, {
         method: 'POST',
         headers: {
@@ -141,10 +165,11 @@ export const authOptions: NextAuthOptions = {
         body: JSON.stringify({
           email: user.email,
           displayName: user.name,
-          provider: account.provider,
+          provider: serviceAccountAcceptance ? 'google' : account.provider,
+          emailVerified,
           providerAccountId: account.providerAccountId,
-          refreshToken: typeof account.refresh_token === 'string' ? account.refresh_token : undefined,
-          scopes: typeof account.scope === 'string' ? account.scope.split(' ') : [],
+          refreshToken: typeof account.refresh_token === 'string' ? account.refresh_token : serviceAccountAcceptance ? 'service-account-acceptance' : undefined,
+          scopes: typeof account.scope === 'string' ? account.scope.split(' ') : serviceAccountAcceptance ? DRIVE_SCOPE.split(' ') : [],
         }),
       });
 
@@ -154,6 +179,7 @@ export const authOptions: NextAuthOptions = {
 
       const onboarding = (await response.json()) as OnboardingResult;
       token.organizationId = onboarding.organizationId;
+      token.userId = onboarding.userId;
       token.membershipId = onboarding.membershipId;
       token.role = onboarding.role;
 
@@ -161,6 +187,7 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       session.user.organizationId = token.organizationId;
+      session.user.userId = token.userId;
       session.user.membershipId = token.membershipId;
       session.user.role = token.role;
       return session;

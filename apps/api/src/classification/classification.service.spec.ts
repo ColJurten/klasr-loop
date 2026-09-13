@@ -11,14 +11,13 @@ describe('ClassificationService.confirm (single-click flow)', () => {
       | 'claimPending'
       | 'restorePendingClaim'
       | 'confirmClaimedTransaction'
-      | 'rejectClaimedTransaction'
+      | 'ignoreClaimedTransaction'
       | 'findPending'
       | 'confirmTransaction'
-      | 'rejectTransaction'
       | 'listPending'
     >
   >;
-  let folders: jest.Mocked<Pick<FoldersRepository, 'findByExternalId' | 'findByPath' | 'getReferenceRoot' | 'upsertHoldingFolder'>>;
+  let folders: jest.Mocked<Pick<FoldersRepository, 'findByExternalId' | 'findByPath'>>;
   let driveExecutor: jest.Mocked<DriveExecutor>;
   let service: ClassificationService;
 
@@ -36,10 +35,9 @@ describe('ClassificationService.confirm (single-click flow)', () => {
       claimPending: jest.fn(),
       restorePendingClaim: jest.fn().mockResolvedValue(undefined),
       confirmClaimedTransaction: jest.fn().mockResolvedValue(undefined),
-      rejectClaimedTransaction: jest.fn().mockResolvedValue(undefined),
+      ignoreClaimedTransaction: jest.fn().mockResolvedValue(undefined),
       findPending: jest.fn(),
       confirmTransaction: jest.fn().mockResolvedValue(undefined),
-      rejectTransaction: jest.fn().mockResolvedValue(undefined),
       listPending: jest.fn(),
     };
     folders = {
@@ -47,24 +45,15 @@ describe('ClassificationService.confirm (single-click flow)', () => {
         externalId: 'folder_elec',
         path: '/Comptabilité/Électricité',
         inherited: true,
-        holding: false,
       }),
       findByPath: jest.fn().mockResolvedValue({
         externalId: 'folder_archives',
         path: '/Archives',
         inherited: true,
-        holding: false,
       }),
-      getReferenceRoot: jest.fn(),
-      upsertHoldingFolder: jest.fn(),
     };
     driveExecutor = {
       moveAndRename: jest.fn().mockResolvedValue(undefined),
-      ensureHoldingFolder: jest.fn().mockResolvedValue({
-        id: 'holding',
-        name: 'À traiter manuellement',
-        parents: ['root'],
-      }),
     } as never;
     service = new ClassificationService(
       proposals as unknown as ProposalsRepository,
@@ -114,7 +103,6 @@ describe('ClassificationService.confirm (single-click flow)', () => {
       externalId: 'folder_archives',
       path: '/Archives',
       inherited: true,
-      holding: false,
     } as never);
     await service.confirm('org_1', 'prop_1', { destinationFolderExternalId: 'folder_archives' });
     expect(proposals.confirmClaimedTransaction).toHaveBeenCalledWith(
@@ -149,7 +137,6 @@ describe('ClassificationService.confirm (single-click flow)', () => {
       externalId: 'folder_foreign',
       path: '/Autre tenant',
       inherited: false,
-      holding: false,
     } as never);
     await expect(service.confirm('org_1', 'prop_1', { destinationFolderExternalId: 'folder_foreign' })).rejects.toThrow(
       'Destination folder must belong to the inherited reference tree',
@@ -200,65 +187,43 @@ describe('ClassificationService.confirm (single-click flow)', () => {
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(2);
   });
 
-  it('rejects by moving the original file to the deterministic holding folder, then persists MANUAL state', async () => {
+  it('ignores without invoking any storage-provider method or recording a destination', async () => {
     proposals.claimPending.mockResolvedValue(pendingProposal as never);
-    folders.getReferenceRoot.mockResolvedValue({ externalId: 'root', name: 'Cabinet' });
-    folders.upsertHoldingFolder.mockResolvedValue({
-      externalId: 'holding',
-      path: '/À traiter manuellement',
-    } as never);
 
-    await expect(service.reject('org_1', 'prop_1')).resolves.toEqual({
-      executed: true,
-      destinationPath: '/À traiter manuellement',
+    await expect(service.ignore('org_1', 'prop_1')).resolves.toEqual({
+      ignored: true,
     });
 
-    expect(driveExecutor.moveAndRename).toHaveBeenCalledWith({
-      organizationId: 'org_1',
-      documentExternalId: 'gdrive_123',
-      newName: 'scan_001.pdf',
-      destinationPath: '/À traiter manuellement',
-      destinationFolderExternalId: 'holding',
-      rename: false,
-    });
-    expect(proposals.rejectClaimedTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ organizationId: 'org_1', destinationFolderExternalId: 'holding' }),
+    for (const providerMethod of Object.values(driveExecutor)) expect(providerMethod).not.toHaveBeenCalled();
+    expect(proposals.ignoreClaimedTransaction).toHaveBeenCalledWith(
+      expect.not.objectContaining({ destinationPath: expect.anything(), destinationFolderExternalId: expect.anything() }),
     );
   });
 
-  it('restores a reject claim to PENDING when SQL persistence fails after the provider succeeds', async () => {
+  it('restores an ignore claim to PENDING when SQL persistence fails', async () => {
     proposals.claimPending.mockResolvedValue(pendingProposal as never);
-    folders.getReferenceRoot.mockResolvedValue({ externalId: 'root', name: 'Cabinet' });
-    folders.upsertHoldingFolder.mockResolvedValue({
-      externalId: 'holding',
-      path: '/À traiter manuellement',
-    } as never);
-    proposals.rejectClaimedTransaction.mockRejectedValueOnce(new Error('database unavailable'));
+    proposals.ignoreClaimedTransaction.mockRejectedValueOnce(new Error('database unavailable'));
 
-    await expect(service.reject('org_1', 'prop_1')).rejects.toThrow('database unavailable');
+    await expect(service.ignore('org_1', 'prop_1')).rejects.toThrow('database unavailable');
 
-    expect(driveExecutor.moveAndRename).toHaveBeenCalledTimes(1);
-    expect(proposals.restorePendingClaim).toHaveBeenCalledWith('org_1', 'prop_1', 'REJECTING');
+    expect(driveExecutor.moveAndRename).not.toHaveBeenCalled();
+    expect(proposals.restorePendingClaim).toHaveBeenCalledWith('org_1', 'prop_1', 'IGNORING');
   });
 
-  it('lets exactly one concurrent reject claim execute the Drive provider', async () => {
+  it('lets exactly one concurrent ignore claim persist', async () => {
     let claimed = false;
     proposals.claimPending.mockImplementation(async () => {
       if (claimed) return null;
       claimed = true;
       return pendingProposal as never;
     });
-    folders.getReferenceRoot.mockResolvedValue({ externalId: 'root', name: 'Cabinet' });
-    folders.upsertHoldingFolder.mockResolvedValue({
-      externalId: 'holding',
-      path: '/À traiter manuellement',
-    } as never);
     const results = await Promise.allSettled([
-      service.reject('org_1', 'prop_1'),
-      service.reject('org_1', 'prop_1'),
+      service.ignore('org_1', 'prop_1'),
+      service.ignore('org_1', 'prop_1'),
     ]);
 
-    expect(driveExecutor.moveAndRename).toHaveBeenCalledTimes(1);
+    expect(driveExecutor.moveAndRename).not.toHaveBeenCalled();
+    expect(proposals.ignoreClaimedTransaction).toHaveBeenCalledTimes(1);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
   });

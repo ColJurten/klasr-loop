@@ -48,7 +48,7 @@ function normalized(input: SettingsInput): ProviderConfig {
   return { provider: input.provider, apiKey, model, baseUrl: input.baseUrl?.trim() };
 }
 function safe(row: { provider: string; model: string; baseUrl: string; validatedAt: Date; status: string } | null) {
-  return row ? { configured: true, provider: row.provider, model: row.model, baseUrl: row.baseUrl, validatedAt: row.validatedAt, status: row.status } : { configured: false };
+  return row?.status === 'VALID' ? { configured: true, provider: row.provider, model: row.model, baseUrl: row.baseUrl, validatedAt: row.validatedAt, status: row.status } : { configured: false };
 }
 function mapped(error: unknown): BadRequestException {
   const reason = error instanceof Error ? error.message : '';

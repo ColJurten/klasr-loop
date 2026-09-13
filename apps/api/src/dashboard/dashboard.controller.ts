@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Headers, Param, UseGuards } from '@nestjs/common';
 import { DriveConnectionsService } from '../drive/drive-connections.service';
 import { UsageMetricsRepository } from '../metrics/usage-metrics.repository';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
@@ -20,19 +20,19 @@ export class DashboardController {
   ) {}
 
   @Get()
-  async get(@Param('organizationId') organizationId: string) {
+  async get(@Param('organizationId') organizationId: string, @Headers('x-user-id') userId: string) {
     const localMode = process.env.KLASR_LOCAL_MVP === 'true';
     const serviceAccountMode = process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT === 'true';
     const [proposals, connection, totals, history, queue, analysisFailures, referenceRoot, folders, inputItems] = await Promise.all([
       this.classification.listPending(organizationId),
-      this.connections.findByOrganization(organizationId),
+      this.connections.findByUser(organizationId, userId),
       this.metrics.totals(organizationId),
       this.classification.listHistory(organizationId),
       this.jobs.queueState(),
       this.jobs.failedAnalysisCount(organizationId),
       this.folders.getReferenceRoot(organizationId),
       this.folders.listInherited(organizationId),
-      localMode ? this.sync.listInputItems(organizationId) : Promise.resolve([]),
+      localMode ? this.sync.listInputItems(organizationId, userId) : Promise.resolve([]),
     ]);
     return {
       mode: localMode ? 'local' : serviceAccountMode ? 'service-account-staging' : 'production',

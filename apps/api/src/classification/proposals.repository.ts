@@ -28,7 +28,7 @@ export class ProposalsRepository {
   async claimPending(
     organizationId: string,
     proposalId: string,
-    claimStatus: Extract<ProposalStatus, 'CONFIRMING' | 'REJECTING'>,
+    claimStatus: Extract<ProposalStatus, 'CONFIRMING' | 'IGNORING'>,
   ): Promise<ProposalWithDocument | null> {
     const claimed = await this.prisma.classificationProposal.updateMany({
       where: { id: proposalId, organizationId, status: 'PENDING' },
@@ -44,7 +44,7 @@ export class ProposalsRepository {
   async restorePendingClaim(
     organizationId: string,
     proposalId: string,
-    claimStatus: Extract<ProposalStatus, 'CONFIRMING' | 'REJECTING'>,
+    claimStatus: Extract<ProposalStatus, 'CONFIRMING' | 'IGNORING'>,
   ): Promise<void> {
     await this.prisma.classificationProposal.updateMany({
       where: { id: proposalId, organizationId, status: claimStatus },
@@ -156,24 +156,23 @@ export class ProposalsRepository {
     return this.confirmClaimedTransaction(params);
   }
 
-  rejectClaimedTransaction(params: {
+  ignoreClaimedTransaction(params: {
     organizationId: string;
     proposalId: string;
     documentId: string;
-    destinationPath: string;
-    destinationFolderExternalId: string;
     previousName: string;
     actorId?: string;
   }): Promise<void> {
     const { organizationId } = params;
     return this.prisma.$transaction(async (tx) => {
       const proposal = await tx.classificationProposal.updateMany({
-        where: { id: params.proposalId, organizationId, status: 'REJECTING' },
+        where: { id: params.proposalId, organizationId, status: 'IGNORING' },
         data: {
-          status: 'REJECTED',
+          status: 'IGNORED',
           decidedAt: new Date(),
-          finalDestinationPath: params.destinationPath,
-          finalDestinationFolderExternalId: params.destinationFolderExternalId,
+          finalName: null,
+          finalDestinationPath: null,
+          finalDestinationFolderExternalId: null,
         },
       });
       if (proposal.count !== 1) {
@@ -181,13 +180,12 @@ export class ProposalsRepository {
       }
       await tx.document.updateMany({
         where: { id: params.documentId, organizationId },
-        data: { status: 'MANUAL' },
+        data: { status: 'IGNORED' },
       });
       await tx.actionHistory.create({
         data: {
-          action: 'REJECT',
+          action: 'IGNORED',
           fromName: params.previousName,
-          toPath: params.destinationPath,
           documentId: params.documentId,
           organizationId,
           actorId: params.actorId,
@@ -196,15 +194,4 @@ export class ProposalsRepository {
     });
   }
 
-  rejectTransaction(params: {
-    organizationId: string;
-    proposalId: string;
-    documentId: string;
-    destinationPath: string;
-    destinationFolderExternalId: string;
-    previousName: string;
-    actorId?: string;
-  }): Promise<void> {
-    return this.rejectClaimedTransaction(params);
-  }
 }

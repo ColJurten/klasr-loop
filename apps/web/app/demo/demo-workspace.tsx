@@ -186,7 +186,7 @@ export function DemoWorkspace() {
             initialProposals={DEMO_PROPOSALS}
             folders={DEMO_FOLDERS}
             onConfirmProposal={confirmDemoProposal}
-            onRejectProposal={async () => undefined}
+            onIgnoreProposal={async () => undefined}
           />
         </div>
 

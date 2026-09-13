@@ -57,8 +57,8 @@ test('rejects a wrong key, then configures a tenant provider, drives analysis wi
     const organizationId = membership.organizationId;
 
     // 1. A wrong synthetic key must fail against the real fixture socket, with redacted French feedback and no row.
-    await page.getByLabel('Fournisseur').selectOption('openai-compatible');
-    await page.getByLabel('Adresse de base').fill('http://127.0.0.1:4310/v1');
+    await page.getByText('Compatible', { exact: true }).click();
+    await page.getByLabel('URL de base').fill('http://127.0.0.1:4310/v1');
     await page.getByLabel('Clé API').fill(wrongKey);
     const rejectedDiscovery = settingsCall(page, 'POST');
     await page.getByRole('button', { name: 'Découvrir les modèles' }).click();

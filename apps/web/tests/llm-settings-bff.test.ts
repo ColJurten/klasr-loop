@@ -7,7 +7,7 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 
 import { getServerSession } from 'next-auth';
 
-const session = { user: { name: 'Camille', email: 'camille@example.test', organizationId: 'org_session', membershipId: 'mem_1', role: 'ADMIN' } };
+const session = { user: { name: 'Camille', email: 'camille@example.test', organizationId: 'org_session', userId: 'user_session', membershipId: 'mem_1', role: 'ADMIN' } };
 
 interface UpstreamReply { status: number; body: string; contentType?: string }
 let reply: UpstreamReply = { status: 200, body: '{"configured":false}' };

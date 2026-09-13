@@ -2,8 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { Folder, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-const HOLDING_FOLDER_NAME = 'À traiter manuellement';
-
 export interface FolderMetadata {
   id: string;
   name: string;
@@ -15,7 +13,6 @@ export interface FolderChoice {
   name: string;
   parentExternalId: string | null;
   path: string;
-  holding: boolean;
 }
 
 export interface ReferenceRootView {
@@ -39,7 +36,7 @@ export class FoldersRepository {
 
   async listPaths(organizationId: string): Promise<string[]> {
     const folders = await this.prisma.folder.findMany({
-      where: { organizationId, inherited: true, holding: false },
+      where: { organizationId, inherited: true },
       select: { path: true },
       orderBy: { path: 'asc' },
     });
@@ -50,17 +47,16 @@ export class FoldersRepository {
     await this.importDescendants(organizationId, null, folders);
   }
 
-  async listInherited(organizationId: string, includeHolding = false): Promise<FolderChoice[]> {
+  async listInherited(organizationId: string): Promise<FolderChoice[]> {
     const folders = await this.prisma.folder.findMany({
-      where: { organizationId, inherited: true, ...(includeHolding ? {} : { holding: false }) },
+      where: { organizationId, inherited: true },
       orderBy: { path: 'asc' },
-      select: { externalId: true, name: true, path: true, holding: true, parent: { select: { externalId: true } } },
+      select: { externalId: true, name: true, path: true, parent: { select: { externalId: true } } },
     });
     return folders.map((folder) => ({
       externalId: folder.externalId,
       name: folder.name,
       path: folder.path,
-      holding: folder.holding,
       parentExternalId: folder.parent?.externalId ?? null,
     }));
   }
@@ -88,15 +84,14 @@ export class FoldersRepository {
       });
       await this.importDescendantsWithClient(tx, organizationId, root.externalId, metadataFolders);
       const folders = await tx.folder.findMany({
-        where: { organizationId, inherited: true, holding: false },
+        where: { organizationId, inherited: true },
         orderBy: { path: 'asc' },
-        select: { externalId: true, name: true, path: true, holding: true, parent: { select: { externalId: true } } },
+        select: { externalId: true, name: true, path: true, parent: { select: { externalId: true } } },
       });
       return folders.map((folder) => ({
         externalId: folder.externalId,
         name: folder.name,
         path: folder.path,
-        holding: folder.holding,
         parentExternalId: folder.parent?.externalId ?? null,
       }));
     });
@@ -108,28 +103,6 @@ export class FoldersRepository {
     folders: FolderMetadata[],
   ): Promise<void> {
     await this.importDescendantsWithClient(this.prisma, organizationId, rootExternalId, folders);
-  }
-
-  async upsertHoldingFolder(
-    organizationId: string,
-    folder: FolderMetadata,
-    referenceRootExternalId: string,
-  ): Promise<Folder> {
-    const parent = await this.findByExternalId(organizationId, referenceRootExternalId);
-    const path = '/À traiter manuellement';
-    return this.prisma.folder.upsert({
-      where: { organizationId_externalId: { organizationId, externalId: folder.id } },
-      create: {
-        organizationId,
-        externalId: folder.id,
-        name: folder.name,
-        path,
-        parentId: parent?.id,
-        inherited: true,
-        holding: true,
-      },
-      update: { name: folder.name, path, parentId: parent?.id, inherited: true, holding: true },
-    });
   }
 
   private async importDescendantsWithClient(
@@ -149,10 +122,10 @@ export class FoldersRepository {
     }
 
     const queue = rootExternalId
-      ? (childrenByParent.get(rootExternalId) ?? []).map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null, holding: folder.name === HOLDING_FOLDER_NAME }))
+      ? (childrenByParent.get(rootExternalId) ?? []).map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null }))
       : folders
           .filter((folder) => !(folder.parents ?? []).some((parent) => byId.has(parent)))
-          .map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null, holding: folder.name === HOLDING_FOLDER_NAME }));
+          .map((folder) => ({ folder, path: `/${folder.name}`, parentDbId: null as string | null }));
 
     const visited = new Set<string>();
     while (queue.length > 0) {
@@ -168,18 +141,16 @@ export class FoldersRepository {
           path: current.path,
           parentId: current.parentDbId,
           inherited: true,
-          holding: current.holding,
         },
         update: {
           name: current.folder.name,
           path: current.path,
           parentId: current.parentDbId,
           inherited: true,
-          holding: current.holding,
         },
       });
       for (const child of childrenByParent.get(current.folder.id) ?? []) {
-        queue.push({ folder: child, path: `${current.path}/${child.name}`.replace(/\/+/g, '/'), parentDbId: saved.id, holding: current.holding || child.name === HOLDING_FOLDER_NAME });
+        queue.push({ folder: child, path: `${current.path}/${child.name}`.replace(/\/+/g, '/'), parentDbId: saved.id });
       }
     }
   }

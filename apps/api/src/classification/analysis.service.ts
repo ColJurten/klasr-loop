@@ -15,7 +15,7 @@ import { applyRules } from './pipeline/prefilter';
 import { PipelineRule } from './pipeline/types';
 import { ProposalsRepository } from './proposals.repository';
 
-interface Downloader { download(organizationId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>>; }
+interface Downloader { download(organizationId: string, userId: string, documentExternalId: string): Promise<ReadableStream<Uint8Array>>; }
 
 @Injectable()
 export class AnalysisService implements OnModuleInit {
@@ -33,10 +33,10 @@ export class AnalysisService implements OnModuleInit {
 
   onModuleInit(): void { this.jobs.registerAnalysisHandler((job) => this.analyze(job)); }
 
-  async analyze(job: { organizationId: string; documentId: string }): Promise<void> {
+  async analyze(job: { organizationId: string; userId?: string; documentId: string }): Promise<void> {
     const document = await this.documents.findPending(job.organizationId, job.documentId); if (!document) return;
     let content: Buffer = Buffer.alloc(0); let readable = true;
-    try { content = await readDocumentBytes(await this.drive.download(job.organizationId, document.externalId)); }
+    try { content = await readDocumentBytes(await this.drive.download(job.organizationId, job.userId ?? '', document.externalId)); }
     catch { readable = false; }
     const input = { organizationId: job.organizationId, content, mimeType: readable ? document.mimeType : 'application/octet-stream', originalName: document.name };
     const extracted = readable ? await extract(input) : null;

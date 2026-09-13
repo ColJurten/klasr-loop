@@ -19,6 +19,6 @@ describe('SignOutButton', () => {
 
     fireEvent.click(screen.getByText('Se déconnecter'));
 
-    expect(signOut).toHaveBeenCalledWith({ callbackUrl: '/' });
+    expect(signOut).toHaveBeenCalledWith({ callbackUrl: '/login' });
   });
 });

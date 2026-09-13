@@ -13,8 +13,12 @@ describe('tenant LLM settings', () => {
       .mockResolvedValueOnce(response({ configured: true, provider: 'openai-compatible', model: 'fixture-z', baseUrl: 'http://127.0.0.1:4321/v1', validatedAt: '2026-08-16T12:00:00Z', status: 'VALID' }));
     vi.stubGlobal('fetch', fetchMock); render(<SettingsForm />);
     await screen.findByText(/Aucune clé configurée/);
-    fireEvent.change(screen.getByLabelText('Fournisseur'), { target: { value: 'openai-compatible' } });
-    fireEvent.change(screen.getByLabelText('Adresse de base'), { target: { value: 'http://127.0.0.1:4321/v1' } });
+    const providers = screen.getByRole('radiogroup', { name: 'Fournisseur' });
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+    const compatible = screen.getByRole('radio', { name: 'Compatible' });
+    fireEvent.click(compatible);
+    expect((compatible as HTMLInputElement).checked).toBe(true);
+    fireEvent.change(screen.getByLabelText('URL de base'), { target: { value: 'http://127.0.0.1:4321/v1' } });
     fireEvent.change(screen.getByLabelText('Clé API'), { target: { value: 'synthetic-fixture-token' } });
     fireEvent.click(screen.getByRole('button', { name: 'Découvrir les modèles' }));
     await screen.findByText('2 modèles disponibles.');
@@ -24,6 +28,21 @@ describe('tenant LLM settings', () => {
     expect((screen.getByLabelText('Clé API') as HTMLInputElement).value).toBe('');
     expect(screen.getByText('Compatible OpenAI · fixture-z')).toBeTruthy();
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ provider: 'openai-compatible', model: 'fixture-z' });
+    expect(providers).toBeTruthy();
+  });
+
+  it('moves provider selection with arrow keys and conditionally requires the compatible URL', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ configured: false })));
+    render(<SettingsForm />);
+    await screen.findByText(/Aucune clé configurée/);
+    const anthropic = screen.getByRole('radio', { name: 'Anthropic' });
+    anthropic.focus();
+    fireEvent.keyDown(anthropic, { key: 'ArrowRight' });
+    expect((screen.getByRole('radio', { name: 'OpenAI' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: 'Compatible' }));
+    expect((screen.getByLabelText('URL de base') as HTMLInputElement).required).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: 'Mistral' }));
+    expect(screen.queryByLabelText('URL de base')).toBeNull();
   });
 
   it('supports manual compatible model, actionable errors, loading locks, and delete', async () => {

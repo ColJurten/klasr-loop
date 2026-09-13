@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class OrganizationsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  createWithOwner(name: string, ownerEmail: string): Promise<Organization> {
+  createWithOwner(name: string, ownerEmail: string, user?: { name?: string; passwordHash?: string }): Promise<Organization> {
     const email = normalizeEmail(ownerEmail);
     return this.prisma.organization.create({
       data: {
@@ -16,15 +16,39 @@ export class OrganizationsRepository {
           create: {
             role: 'ADMIN',
             user: {
-              connectOrCreate: {
-                where: { email },
-                create: { email },
-              },
+              create: { email, ...user },
             },
           },
         },
       },
     });
+  }
+
+  findLocalIdentity(email: string) {
+    return this.prisma.user.findUnique({
+      where: { email: normalizeEmail(email) },
+      select: { id: true, email: true, name: true, passwordHash: true, memberships: { take: 1, orderBy: { id: 'asc' }, select: { id: true, organizationId: true, role: true } } },
+    });
+  }
+
+  findLocalIdentityById(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, passwordHash: true, memberships: { select: { id: true, organizationId: true, role: true } } },
+    });
+  }
+
+  async enrollLocalPassword(userId: string, organizationId: string, membershipId: string, passwordHash: string): Promise<number> {
+    const result = await this.prisma.user.updateMany({
+      where: {
+        id: userId,
+        passwordHash: null,
+        memberships: { some: { id: membershipId, organizationId, role: 'ADMIN' } },
+        driveConnection: { is: { organizationId, provider: 'GOOGLE_DRIVE', externalId: { not: 'acceptance' } } },
+      },
+      data: { passwordHash },
+    });
+    return result.count;
   }
 
   findById(organizationId: string): Promise<Organization | null> {

@@ -119,26 +119,30 @@ try {
     },
   );
   if (!correctResponse.ok) throw new Error(`HTTP correction failed: ${correctResponse.status}`);
-  const rejectResponse = await fetch(
-    `${apiBase}/organizations/${organizationId}/proposals/${paie.id}/reject`,
+  const ignoreResponse = await fetch(
+    `${apiBase}/organizations/${organizationId}/proposals/${paie.id}/ignore`,
     { method: 'POST', headers: { 'x-internal-secret': internalSecret } },
   );
-  if (!rejectResponse.ok) throw new Error(`HTTP reject failed: ${rejectResponse.status}`);
-  const archiveRejectResponse = await fetch(
-    `${apiBase}/organizations/${organizationId}/proposals/${archive.id}/reject`,
+  if (!ignoreResponse.ok) throw new Error(`HTTP ignore failed: ${ignoreResponse.status}`);
+  const archiveIgnoreResponse = await fetch(
+    `${apiBase}/organizations/${organizationId}/proposals/${archive.id}/ignore`,
     { method: 'POST', headers: { 'x-internal-secret': internalSecret } },
   );
-  if (!archiveRejectResponse.ok) throw new Error(`HTTP archive reject failed: ${archiveRejectResponse.status}`);
+  if (!archiveIgnoreResponse.ok) throw new Error(`HTTP archive ignore failed: ${archiveIgnoreResponse.status}`);
 
   const history = await prisma.actionHistory.findMany({ where: { organizationId } });
-  if (history.length !== 4 || history.filter((item) => item.action === 'REJECT').length !== 2) {
+  const ignoredHistory = history.filter((item) => item.action === 'IGNORED');
+  if (history.length !== 4 || ignoredHistory.length !== 2 || ignoredHistory.some((item) => item.toPath !== null || item.toName !== null)) {
     throw new Error('Decisions did not persist action history');
   }
-  const rejected = await prisma.document.findUniqueOrThrow({
+  const ignored = await prisma.document.findUniqueOrThrow({
     where: { organizationId_externalId: { organizationId, externalId: 'local_file_note_paie' } },
   });
-  if (rejected.status !== 'MANUAL') {
-    throw new Error('Rejected document was not marked MANUAL');
+  if (ignored.status !== 'IGNORED') {
+    throw new Error('Ignored document was not marked IGNORED');
+  }
+  if (await prisma.classificationProposal.count({ where: { organizationId, status: 'PENDING' } }) !== 0) {
+    throw new Error('Ignored proposals remained in the review list');
   }
   const relaunch = await fetch(`${apiBase}/organizations/${organizationId}/drive/launch`, {
     method: 'POST',
@@ -147,7 +151,7 @@ try {
   });
   const relaunchPayload = await relaunch.json();
   if (relaunchPayload.enqueued !== 0) {
-    throw new Error(`Rejected/proposed/classified items were resubmitted: ${JSON.stringify(relaunchPayload)}`);
+    throw new Error(`Ignored/proposed/classified items were resubmitted: ${JSON.stringify(relaunchPayload)}`);
   }
 
   const jobStates = await prisma.$queryRaw`
@@ -161,7 +165,7 @@ try {
     throw new Error(`Analysis jobs did not all complete: ${JSON.stringify(jobStates)}`);
   }
 
-  console.log('integration ok: reference tree -> selected Drive launch -> pg-boss analysis -> Mongo/PostgreSQL assertions -> confirm/correct/reject');
+  console.log('integration ok: ignored state terminal; pending review count 0; re-analysis enqueued 0; IGNORED history has null destination/name');
 } finally {
   stopApi();
   stopProcess(providerFixture);
@@ -274,6 +278,7 @@ async function onboardLocalTenant() {
     headers: { 'content-type': 'application/json', 'x-internal-secret': internalSecret },
     body: JSON.stringify({
       email,
+      emailVerified: true,
       displayName: 'Camille Local',
       provider: 'google',
       providerAccountId: 'local-google-account',

@@ -16,6 +16,7 @@ const session = {
     name: 'Camille',
     email: 'camille@example.test',
     organizationId: 'org_session',
+    userId: 'user_session',
     membershipId: 'mem_1',
     role: 'ADMIN',
   },
@@ -37,11 +38,11 @@ describe('web BFF API client', () => {
     await listDriveItems('folder_1', 'page_2');
     expect(global.fetch).toHaveBeenCalledWith(
       'http://api.local/api/v1/organizations/org_session/drive/items?parentId=folder_1&pageToken=page_2',
-      expect.objectContaining({ headers: { 'x-internal-secret': 'test-secret' }, cache: 'no-store' }),
+      expect.objectContaining({ headers: { 'x-internal-secret': 'test-secret', 'x-user-id': 'user_session' }, cache: 'no-store' }),
     );
   });
 
-  it('derives dashboard organizationId from the server session and sends only the internal secret header', async () => {
+  it('derives dashboard tenant and user identity from the server session', async () => {
     process.env.INTERNAL_API_SECRET = 'test-secret';
     process.env.API_URL = 'http://api.local/api/v1';
 
@@ -50,7 +51,7 @@ describe('web BFF API client', () => {
     expect(global.fetch).toHaveBeenCalledWith(
       'http://api.local/api/v1/organizations/org_session/dashboard',
       expect.objectContaining({
-        headers: { 'x-internal-secret': 'test-secret' },
+        headers: { 'x-internal-secret': 'test-secret', 'x-user-id': 'user_session' },
         cache: 'no-store',
       }),
     );

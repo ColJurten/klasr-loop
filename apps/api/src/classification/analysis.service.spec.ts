@@ -35,7 +35,7 @@ describe('AnalysisService', () => {
     expect(suggestions.suggestFilename).not.toHaveBeenCalled();
   });
 
-  it('turns a failed Drive download into a non-executable manual-review proposal', async () => {
+  it('turns a failed Drive download into a review-required proposal', async () => {
     const documents = { findPending: jest.fn().mockResolvedValue({ id: 'doc_1', externalId: 'native_1', name: 'native.gdoc', mimeType: 'application/vnd.google-apps.document' }), markProposed: jest.fn() };
     const drive = { download: jest.fn().mockRejectedValue(new Error('not_downloadable')) }; const rules = { listOrdered: jest.fn().mockResolvedValue([]) }; const folders = { listInherited: jest.fn().mockResolvedValue([]) };
     const proposals = { createPending: jest.fn() }; const analyses = { record: jest.fn() }; const metrics = { increment: jest.fn() };

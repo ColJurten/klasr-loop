@@ -1,13 +1,8 @@
 import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
 import { FoldersRepository } from '../drive/folders.repository';
-import { DriveMetadataItem } from '../drive/google-drive.executor';
 import { ConfirmProposalDto } from './dto/confirm-proposal.dto';
 import { DRIVE_EXECUTOR, DriveExecutor } from './drive-executor.port';
 import { ProposalsRepository, ProposalWithDocument } from './proposals.repository';
-
-interface HoldingFolderExecutor extends DriveExecutor {
-  ensureHoldingFolder(organizationId: string, referenceRootExternalId: string): Promise<DriveMetadataItem>;
-}
 
 @Injectable()
 export class ClassificationService {
@@ -47,7 +42,7 @@ export class ClassificationService {
           : proposal.destinationFolderExternalId
             ? await this.folders.findByExternalId(organizationId, proposal.destinationFolderExternalId)
             : await this.folders.findByPath(organizationId, proposal.destinationPath);
-      if (!destination || !destination.inherited || destination.holding) {
+      if (!destination || !destination.inherited) {
         throw new BadRequestException('Destination folder must belong to the inherited reference tree');
       }
       const corrected = finalName !== proposal.proposedName || destination.path !== proposal.destinationPath;
@@ -55,6 +50,7 @@ export class ClassificationService {
       // 1. Execute in the Drive first — if the provider call fails, nothing terminal is recorded.
       await this.driveExecutor.moveAndRename({
         organizationId,
+        ...(actorId ? { userId: actorId } : {}),
         documentExternalId: proposal.document.externalId,
         newName: finalName,
         destinationPath: destination.path,
@@ -83,46 +79,24 @@ export class ClassificationService {
     }
   }
 
-  async reject(
+  async ignore(
     organizationId: string,
     proposalId: string,
     actorId?: string,
-  ): Promise<{ executed: true; destinationPath: string }> {
-    const proposal = await this.proposals.claimPending(organizationId, proposalId, 'REJECTING');
+  ): Promise<{ ignored: true }> {
+    const proposal = await this.proposals.claimPending(organizationId, proposalId, 'IGNORING');
     if (!proposal) throw new ConflictException('Pending proposal not found or already decided');
     try {
-      const reference = await this.folders.getReferenceRoot(organizationId);
-      if (!reference) throw new BadRequestException('Reference root is required before reject');
-      const holdingMetadata = await (this.driveExecutor as HoldingFolderExecutor).ensureHoldingFolder(
-        organizationId,
-        reference.externalId,
-      );
-      const holding = await this.folders.upsertHoldingFolder(organizationId, {
-        id: holdingMetadata.id,
-        name: holdingMetadata.name,
-        parents: holdingMetadata.parents,
-      }, reference.externalId);
-      await this.driveExecutor.moveAndRename({
-        organizationId,
-        documentExternalId: proposal.document.externalId,
-        newName: proposal.document.name,
-        destinationPath: holding.path,
-        destinationFolderExternalId: holding.externalId,
-        rename: false,
-      });
-      await this.proposals.rejectClaimedTransaction({
+      await this.proposals.ignoreClaimedTransaction({
         organizationId,
         proposalId,
         documentId: proposal.documentId,
-        destinationPath: holding.path,
-        destinationFolderExternalId: holding.externalId,
         previousName: proposal.document.name,
         actorId,
       });
-      return { executed: true, destinationPath: holding.path };
+      return { ignored: true };
     } catch (error) {
-      // Holding-folder creation and the final stable-ID move are idempotent enough to retry visibly.
-      await this.proposals.restorePendingClaim(organizationId, proposalId, 'REJECTING');
+      await this.proposals.restorePendingClaim(organizationId, proposalId, 'IGNORING');
       throw error;
     }
   }
