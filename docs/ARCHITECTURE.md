@@ -102,7 +102,7 @@ C3/C6 au lieu d'exister à côté.
 
 ### ADR-002 — PostgreSQL source de vérité + MongoDB volontairement minimal
 **Contexte.** « Pourquoi plusieurs bases ? » — question légitime.
-**Décision.** PostgreSQL porte tout le modèle métier (12 entités, Prisma). MongoDB est
+**Décision.** PostgreSQL porte tout le modèle métier (14 modèles, Prisma). MongoDB est
 réduit à UNE collection `analyses` (métadonnées d'analyse OCR/LLM redactées, schéma
 variable selon le fournisseur, sans texte documentaire) avec index TTL.
 **Justification.**
@@ -179,19 +179,28 @@ de file supplémentaire n'est introduit.
 - Planification : une insertion SQL crée le travail `analysis` et sa date
   d'exécution.
 - Reprise : `retryLimit = 2` est conservé ; après un échec, le travail redevient
-  disponible avec un délai exponentiel (le délai fixe reste une évolution possible
-  si l'exploitation le justifie), puis passe à l'état `failed` après deux reprises.
-- Déduplication : la clé singleton `organisation:document` est portée par une
-  contrainte unique ; un travail actif identique ne peut donc pas être inséré deux
-  fois.
-- Observation : les agrégats d'état (`queued`, `ready`, `active`, `failed`) et le
-  nombre d'analyses échouées par organisation conservent la parité fonctionnelle
+  immédiatement disponible, comme avec les valeurs pg-boss actuelles
+  (`retry_delay = 0`, `retry_backoff = false`), puis passe à l'état `failed` après
+  deux reprises.
+- Déduplication : le pg-boss actuel ne déduplique pas les envois, car
+  `singletonKey` est utilisé sans politique singleton. La cible introduit
+  délibérément une déduplication limitée aux états `queued`, `ready` et `active`,
+  par index unique partiel sur `organisation:document` : elle bloque les doublons
+  simultanés, mais libère la clé à la fin du travail afin qu'une synchronisation
+  Drive puisse réanalyser un document terminé.
+- Bail : la table porte `leased_until`. Lorsqu'un worker réclame un travail, il le
+  passe à `active`, fixe ce bail à 15 minutes et le prolonge pendant le traitement.
+  Un reaper remet immédiatement à `ready` tout travail dont le bail a expiré, pour
+  reproduire la récupération des travaux actifs expirés de pg-boss.
+- Observation : les agrégats d'état (`queued`, `ready`, `active`, `failed`),
+  `inlineWorker`, `consuming` et le nombre d'analyses échouées par organisation
+  conservent la parité fonctionnelle
   avec `queueState()` et `failedAnalysisCount()` de
   `apps/api/src/jobs/jobs.service.ts`.
 
 **ORM et migrations.** SQLAlchemy 2 et Alembic ciblent le **même schéma** et la
 même base PostgreSQL. La révision Alembic initiale reproduit exactement le schéma
-Prisma courant — ses 15 modèles contractuels, ses enums, contraintes, index et
+Prisma courant — ses 14 modèles, ses 8 enums, contraintes, index et
 relations. Elle adopte les tables déjà présentes : aucune table métier n'est
 supprimée ou recréée et aucune donnée n'est perdue. Au cutover seulement, les tables
 `pgboss` sont remplacées par `jobs` ; elles ne sont pas conservées comme seconde
@@ -208,7 +217,10 @@ flux documentaire nécessaire et les paramètres métier non secrets.
 de migration. Jusqu'à la phase 3, le backend NestJS reste runnable. La bascule de
 phase 3 branche le web sur FastAPI puis supprime NestJS ; le retour arrière consiste
 à appliquer `git revert` aux commits de phase concernés, dans l'ordre inverse. Il
-n'exige ni restauration de tables métier ni perte de données.
+n'exige ni restauration de tables métier ni perte de données métier. La suppression
+de l'historique `pgboss.job`, conservé 14 jours aujourd'hui, remet toutefois à zéro
+le compteur `analysisFailures` du dashboard ; cette perte d'observabilité temporaire
+est une conséquence acceptée du cutover.
 
 **Impact REAC et continuité des preuves.** Les contrats HTTP, scénarios, migrations,
 tests et traces d'exploitation sont portés, pas abandonnés : les preuves présentées
@@ -220,7 +232,7 @@ au jury survivent à la migration.
 | C2 — interfaces | `apps/web` consommant l'API NestJS | `apps/web` inchangé, consommant FastAPI |
 | C3 — composants métier | `apps/api/src/classification`, `apps/api/src/analysis` | `apps/api/src/classification`, `apps/api/src/dsa` |
 | C4 — gestion de projet | commits, issues et phases de migration | mêmes preuves, commits par phase et handoffs |
-| C5 — besoins et maquettage | contrats REST et `apps/web` | contrats REST et `apps/web` inchangés |
+| C5 — besoins et maquettage | wireframes, `PROMPT_DESIGN_KLASR.md`, personas | mêmes wireframes, prompt de design et personas |
 | C6 — architecture | modules NestJS et Jest | modules FastAPI, ADR et pytest |
 | C7 — base relationnelle | `apps/api/prisma/schema.prisma`, migrations Prisma | `apps/api/src/db`, modèles SQLAlchemy 2, révisions Alembic |
 | C8 — accès SQL/NoSQL | repositories Prisma, `apps/api/src/analyses` MongoDB | repositories SQLAlchemy, `apps/api/src/analyses` MongoDB TTL |
@@ -243,7 +255,7 @@ arrière par commit.
 | C4 | Contribuer à la gestion d'un projet informatique | Issues GitHub, `docs/STATE.md`, branching GitFlow, PR templates, boucle de triage |
 | C5 | Analyser les besoins et maquetter une application | Wireframes Claude Design/Figma, `PROMPT_DESIGN_KLASR.md`, personas, dossier de conception |
 | C6 | Définir l'architecture logicielle | Ce document (ADR), couches NestJS strictes, diagrammes |
-| C7 | Concevoir et mettre en place une base de données relationnelle | `apps/api/prisma/schema.prisma` (12 entités), migrations, MCD dans le dossier |
+| C7 | Concevoir et mettre en place une base de données relationnelle | `apps/api/prisma/schema.prisma` (14 modèles), migrations, MCD dans le dossier |
 | C8 | Développer des composants d'accès aux données SQL et NoSQL | Repositories Prisma (SQL) + `apps/api/src/analyses` (MongoDB, TTL) |
 | C9 | Préparer et exécuter les plans de tests | Jest (unités API), Vitest/Testing Library (web), plan de tests documenté, suites d'isolation multi-tenant |
 | C10 | Préparer et documenter le déploiement | Dockerfiles, `docs/BOOTSTRAP.md`, `docs/BRANCHING.md` (releases SemVer), images ghcr |
