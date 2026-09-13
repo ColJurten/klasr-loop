@@ -13,6 +13,7 @@ dependencies = [
   "pydantic-settings==2.15.0",
   "sqlalchemy==2.0.52",
   "alembic==1.20.0",
+  "psycopg[binary]==3.2.10",
   "crewai==1.15.21",
   "crewai-tools==1.15.21",
   "docling==2.126.0",

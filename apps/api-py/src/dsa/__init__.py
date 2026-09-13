@@ -7,11 +7,11 @@ from .tools import extract_bytes, extract_document
 CONFIDENCE_THRESHOLD = 0.5
 
 
-def _extract(file: str | Path | bytes | BinaryIO) -> ExtractionResult:
+def _extract(file: str | Path | bytes | BinaryIO, suffix: str = ".pdf") -> ExtractionResult:
     if isinstance(file, (str, Path)):
         return extract_document(str(file))
     if isinstance(file, bytes):
-        return extract_bytes(file, ".pdf")
+        return extract_bytes(file, suffix)
     name = getattr(file, "name", "document.pdf")
     return extract_bytes(file.read(), Path(name).suffix)
 
@@ -54,8 +54,10 @@ def _both_decisions(
 
 
 def _validated_destination(result: DecisionResult, directories: list[str]) -> DecisionResult:
+    if result.value is None:
+        return result
     allowed = {path.rstrip("/") or "/" for path in directories}
-    value = result.value.rstrip("/") if result.value else None
+    value = result.value.rstrip("/")
     if value not in allowed:
         return DecisionResult(
             value=None,
@@ -70,8 +72,8 @@ def _validated_destination(result: DecisionResult, directories: list[str]) -> De
     return result.model_copy(update={"value": value})
 
 
-def suggest_filename(file: str | Path | bytes | BinaryIO) -> DecisionResult:
-    extraction = _extract(file)
+def suggest_filename(file: str | Path | bytes | BinaryIO, suffix: str = ".pdf") -> DecisionResult:
+    extraction = _extract(file, suffix)
     result = _decision("filename", extraction, [])
     if result.confidence < CONFIDENCE_THRESHOLD:
         return result.model_copy(
@@ -81,13 +83,17 @@ def suggest_filename(file: str | Path | bytes | BinaryIO) -> DecisionResult:
 
 
 def suggest_directory(
-    file: str | Path | bytes | BinaryIO, directories: list[str]
+    file: str | Path | bytes | BinaryIO, directories: list[str], suffix: str = ".pdf"
 ) -> DecisionResult:
-    return _validated_destination(_decision("directory", _extract(file), directories), directories)
+    return _validated_destination(
+        _decision("directory", _extract(file, suffix), directories), directories
+    )
 
 
-def suggest(file: str | Path | bytes | BinaryIO, directories: list[str]) -> SuggestionResult:
-    extraction = _extract(file)
+def suggest(
+    file: str | Path | bytes | BinaryIO, directories: list[str], suffix: str = ".pdf"
+) -> SuggestionResult:
+    extraction = _extract(file, suffix)
     filename, destination = _both_decisions(extraction, directories)
     if filename.confidence < CONFIDENCE_THRESHOLD:
         filename = filename.model_copy(

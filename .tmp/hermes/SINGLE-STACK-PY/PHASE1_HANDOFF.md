@@ -22,7 +22,7 @@ où NestJS sera supprimé.
 
 - fastapi 0.141.1; uvicorn 0.52.4; pydantic 2.12.5;
   pydantic-settings 2.15.0; sqlalchemy 2.0.52; alembic 1.20.0.
-- crewai 1.15.21; crewai-tools 1.15.21; docling 2.126.0.
+- crewai 1.15.21; crewai-tools 1.15.21; docling 2.126.0; psycopg 3.2.10.
 - google-auth 2.58.0; google-api-python-client 2.200.0.
 - motor 3.7.1; pymongo 4.18.1; httpx 0.28.1;
   python-multipart 0.0.32.
@@ -35,7 +35,9 @@ où NestJS sera supprimé.
 - `apps/api-py/.venv/bin/pip install -e 'apps/api-py[dev]'` : PASS.
 - `KLASR_DATABASE_URL=sqlite:////tmp/... apps/api-py/.venv/bin/alembic upgrade head` :
   PASS, 14 tables métier + `jobs` + `alembic_version`.
-- `pnpm api:test` : PASS, 16 tests, appels LLM réels : 0.
+- `KLASR_DATABASE_URL=postgresql+psycopg://... alembic upgrade head` sur une base
+  PostgreSQL 16 jetable : PASS, 16 tables dont `alembic_version`, 8 enums Prisma.
+- `pnpm api:test` : PASS, 21 tests, appels LLM réels : 0.
 - `pnpm api:lint` : PASS (`black --check`, `flake8`).
 - `pnpm --filter @klasr/api build` : PASS, NestJS reste runnable.
 - `docker build -t klasr-api-py-phase1 apps/api-py` : PASS.
@@ -44,9 +46,9 @@ SQLite est choisi pour le contrôle autonome de migration, faute de PostgreSQL d
 jetable. Les variantes PostgreSQL `TEXT[]`, `JSONB`, enums natifs et `TIMESTAMP(3)`
 sont définies dans les modèles.
 
-CrewAI 1.15.21 n'expose pas de paramètre `Crew(telemetry=False)`. Son mécanisme
-supporté, vérifié dans le paquet installé, est `CREWAI_DISABLE_TELEMETRY=true` et
-`OTEL_SDK_DISABLED=true`; les deux sont forcés avant import et dans le conteneur.
+CrewAI 1.15.21 expose `Crew(tracing=False)`, appliqué aux trois crews. Les variables
+`CREWAI_DISABLE_TELEMETRY=true` et `OTEL_SDK_DISABLED=true` sont aussi écrasées
+avant l'import : tracing et télémétrie restent deux invariants distincts.
 
 ## Invariants
 
@@ -55,7 +57,8 @@ supporté, vérifié dans le paquet installé, est `CREWAI_DISABLE_TELEMETRY=tru
 - MongoDB refuse tout champ hors métadonnées et pose son index TTL.
 - Les tâches n'ont aucun `output_file`; le verbose est désactivé par défaut et forcé
   à faux en conteneur; les sorties CLI sont des objets Pydantic JSON validés.
-- Les agents de décision reçoivent l'analyse et l'arborescence, jamais les octets.
+- Les descriptions CrewAI rendent explicitement le contenu extrait et, pour le
+  classement, chaque chemin candidat; les agents ne reçoivent jamais les octets.
 - Une destination absente de l'arborescence fournie échoue fermée.
 
 ## REAC
@@ -64,13 +67,21 @@ supporté, vérifié dans le paquet installé, est `CREWAI_DISABLE_TELEMETRY=tru
 - C3/C6 : composant métier DSA et architecture FastAPI/worker modulaire.
 - C7 : modèles relationnels et migration Alembic.
 - C8 : accès SQLAlchemy et MongoDB metadata-only avec TTL.
-- C9 : tests pytest déterministes avec LLM stub.
+- C9 : tests pytest déterministes avec un faux `BaseLLM` exécutant réellement les crews,
+  le rendu YAML et la validation Pydantic.
 - C10/C11 : Dockerfile, santé, migration et commandes uniformes.
 
 ## Compromis connus
 
 - Audit de migration exécuté sur SQLite autonome, pas sur PostgreSQL : la parité
   PostgreSQL devra être rejouée avec la base d'intégration disponible avant cutover.
+- La concurrence PostgreSQL (`SKIP LOCKED`, index unique partiel) reste non couverte
+  par SQLite et exige un test d'intégration PostgreSQL avant cutover.
+- `inline_worker` et `consuming` sont des indicateurs de phase 2 fournis au constructeur,
+  pas encore dérivés d'un worker actif. La garde NestJS interdisant
+  `KLASR_INLINE_WORKER` en production sera portée avec le worker en phase 2.
+- Les identifiants Python utilisent `uuid4().hex` plutôt que les `cuid()` Prisma : choix
+  accepté pour éviter une dépendance; les deux restent des chaînes uniques opaques.
 - Les avertissements de dépréciation TestClient/Alembic proviennent des versions
   épinglées et n'affectent pas les contrôles.
 - Vérification UI non applicable : aucune interface n'est modifiée en phase 1.

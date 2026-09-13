@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,20 +44,38 @@ class JobsService:
         if job:
             job.status = JobStatus.ACTIVE
             job.leased_until = now + LEASE
+            job.updated_at = now
             self.session.flush()
         return job
 
-    def complete(self, job: Job) -> None:
-        job.status = JobStatus.COMPLETED
-        job.leased_until = None
-        self.session.flush()
+    def complete(self, job: Job) -> bool:
+        return self._finish(job, status=JobStatus.COMPLETED)
 
-    def fail(self, job: Job) -> None:
-        job.retry_count += 1
-        job.status = JobStatus.FAILED if job.retry_count >= job.retry_limit else JobStatus.READY
-        job.leased_until = None
-        job.run_at = datetime.now(timezone.utc)
-        self.session.flush()
+    def fail(self, job: Job) -> bool:
+        retry_count = job.retry_count + 1
+        return self._finish(
+            job,
+            status=JobStatus.FAILED if retry_count > job.retry_limit else JobStatus.READY,
+            retry_count=retry_count,
+            run_at=datetime.now(timezone.utc),
+        )
+
+    def _finish(self, job: Job, **values) -> bool:
+        lease = job.leased_until
+        now = datetime.now(timezone.utc)
+        result = self.session.execute(
+            update(Job)
+            .where(
+                Job.id == job.id,
+                Job.status == JobStatus.ACTIVE,
+                Job.leased_until == lease,
+            )
+            .values(**values, leased_until=None, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount:
+            self.session.expire(job)
+        return bool(result.rowcount)
 
     def reap_expired(self) -> int:
         jobs = self.session.scalars(
@@ -66,9 +84,7 @@ class JobsService:
                 Job.leased_until < datetime.now(timezone.utc),
             )
         ).all()
-        for job in jobs:
-            self.fail(job)
-        return len(jobs)
+        return sum(self.fail(job) for job in jobs)
 
     def work_once(self, handler: Callable[[dict], None]) -> bool:
         job = self.claim()

@@ -1,7 +1,7 @@
 import os
 
-os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
-os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+os.environ["OTEL_SDK_DISABLED"] = "true"
 
 from crewai import Agent, Crew, LLM, Process, Task
 from crewai.project import CrewBase, agent, crew, task
@@ -86,6 +86,7 @@ class DocumentSortingAssistantCrew:
             tasks=[self.analyse_file_task(), self.suggest_filename_task()],
             process=Process.sequential,
             verbose=verbose_enabled(),
+            tracing=False,
         )
 
     @crew
@@ -95,6 +96,7 @@ class DocumentSortingAssistantCrew:
             tasks=[self.analyse_file_task(), self.suggest_directory_task()],
             process=Process.sequential,
             verbose=verbose_enabled(),
+            tracing=False,
         )
 
     @crew
@@ -112,4 +114,5 @@ class DocumentSortingAssistantCrew:
             ],
             process=Process.sequential,
             verbose=verbose_enabled(),
+            tracing=False,
         )

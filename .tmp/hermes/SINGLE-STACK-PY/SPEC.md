@@ -70,8 +70,9 @@ Redis, no broker.
 - config/agents.yaml: analyse_file_agent (holds Docling tools), suggest_filename_agent,
   suggest_directory_agent (forbidden from inventing directories).
 - config/tasks.yaml: three tasks, single bound agent each.
-- crews.py: @CrewBase DocumentSortingAssistantCrew, two sequential crews
-  (analysis→naming, analysis→destination); decision agents never touch file bytes.
+- crews.py: @CrewBase DocumentSortingAssistantCrew, two single-purpose sequential crews
+  plus `combined_crew` pour que `suggest()` conserve une seule passe d'analyse. Cette
+  troisième composition réutilise les mêmes trois tâches; decision agents never touch file bytes.
 - tools.py: DoclingMarkdownTool, DoclingTextTool as BaseTool with Pydantic args_schema;
   PDF, PNG, JPG/JPEG, TIFF, GIF, BMP.
 - __init__.py public surface: suggest_filename(file), suggest_directory(file, directories),

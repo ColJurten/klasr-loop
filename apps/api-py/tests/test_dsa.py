@@ -3,6 +3,7 @@ import types
 from pathlib import Path
 
 import pytest
+from crewai import BaseLLM
 from pydantic import ValidationError
 
 import dsa
@@ -53,7 +54,7 @@ def test_corrupted_empty_sparse_and_schema(monkeypatch, tmp_path):
 def test_filename_destination_and_single_analysis(monkeypatch):
     calls = {"extract": 0}
 
-    def extraction(_file):
+    def extraction(_file, _suffix=".pdf"):
         calls["extract"] += 1
         return ExtractionResult(text="redacted in test", quality="ok")
 
@@ -84,7 +85,7 @@ def test_destination_outside_tree_fails_closed(monkeypatch, value):
     monkeypatch.setattr(
         dsa,
         "_extract",
-        lambda _: ExtractionResult(text="enough extracted content for analysis", quality="ok"),
+        lambda *_: ExtractionResult(text="enough extracted content for analysis", quality="ok"),
     )
     monkeypatch.setattr(
         dsa,
@@ -97,7 +98,7 @@ def test_destination_outside_tree_fails_closed(monkeypatch, value):
 
 def test_no_credible_match_and_low_confidence(monkeypatch):
     monkeypatch.setattr(
-        dsa, "_extract", lambda _: ExtractionResult(text="sparse", quality="sparse")
+        dsa, "_extract", lambda *_: ExtractionResult(text="sparse", quality="sparse")
     )
     monkeypatch.setattr(
         dsa,
@@ -122,7 +123,7 @@ def test_filename_business_cases(monkeypatch, value, signals):
     monkeypatch.setattr(
         dsa,
         "_extract",
-        lambda _: ExtractionResult(text="synthetic extracted fields", quality="ok"),
+        lambda *_: ExtractionResult(text="synthetic extracted fields", quality="ok"),
     )
     monkeypatch.setattr(
         dsa,
@@ -136,7 +137,7 @@ def test_destination_no_credible_match(monkeypatch):
     monkeypatch.setattr(
         dsa,
         "_extract",
-        lambda _: ExtractionResult(text="synthetic extracted fields", quality="sparse"),
+        lambda *_: ExtractionResult(text="synthetic extracted fields", quality="sparse"),
     )
     monkeypatch.setattr(
         dsa,
@@ -157,3 +158,63 @@ def test_temp_file_deleted(monkeypatch):
     monkeypatch.setattr("dsa.tools.extract_document", inspect_temp)
     extract_bytes(b"synthetic", ".png")
     assert observed and not Path(observed[0]).exists()
+
+
+def test_bytes_suffix_is_forwarded(monkeypatch):
+    monkeypatch.setattr(
+        dsa,
+        "extract_bytes",
+        lambda _data, suffix: ExtractionResult(text=suffix, quality="ok"),
+    )
+    assert dsa._extract(b"image", ".png").text == ".png"
+
+
+def test_empty_destination_keeps_extraction_warning():
+    result = DecisionResult(
+        value=None, confidence=0, signals=["extraction:empty"], warnings=["no_text"]
+    )
+    validated = dsa._validated_destination(result, ["/allowed"])
+    assert validated == result and "destination_outside_tree" not in validated.warnings
+
+
+class FakeLLM(BaseLLM):
+    responses: list[str]
+    prompts: list[str] = []
+
+    def call(self, messages, **_kwargs):
+        prompt = (
+            messages
+            if isinstance(messages, str)
+            else "\n".join(str(message["content"]) for message in messages)
+        )
+        self.prompts.append(prompt)
+        return self.responses.pop(0)
+
+
+def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
+    monkeypatch.setenv("CREWAI_DISABLE_TELEMETRY", "false")
+    from dsa import crews
+
+    fake = FakeLLM(
+        model="fake",
+        responses=[
+            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"invoice.pdf","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"/Clients/Acme","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+        ],
+    )
+    monkeypatch.setattr(crews, "llm_for", lambda _name: fake)
+    crew = crews.DocumentSortingAssistantCrew().naming_crew()
+    output = crew.kickoff(inputs={"content": "ACME INVOICE 42", "directories": []})
+    assert crew.tracing is False
+    assert crews.os.environ["CREWAI_DISABLE_TELEMETRY"] == "true"
+    assert isinstance(output.pydantic, DecisionResult)
+    assert output.pydantic.value == "invoice.pdf"
+    assert all("ACME INVOICE 42" in task.description for task in crew.tasks)
+
+    directory_crew = crews.DocumentSortingAssistantCrew().destination_crew()
+    directories = ["/Clients/Acme", "/Archive/2026"]
+    directory_crew.kickoff(inputs={"content": "ACME INVOICE 42", "directories": directories})
+    assert directory_crew.tracing is False
+    assert all(path in directory_crew.tasks[-1].description for path in directories)
