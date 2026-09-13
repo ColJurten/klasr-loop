@@ -189,9 +189,10 @@ de file supplémentaire n'est introduit.
   simultanés, mais libère la clé à la fin du travail afin qu'une synchronisation
   Drive puisse réanalyser un document terminé.
 - Bail : la table porte `leased_until`. Lorsqu'un worker réclame un travail, il le
-  passe à `active`, fixe ce bail à 15 minutes et le prolonge pendant le traitement.
-  Un reaper remet immédiatement à `ready` tout travail dont le bail a expiré, pour
-  reproduire la récupération des travaux actifs expirés de pg-boss.
+  passe à `active` et fixe ce bail absolu à 15 minutes, sans renouvellement. Lorsqu'un
+  reaper trouve un bail expiré, il consomme une reprise en incrémentant le compteur :
+  le travail retourne à `ready` tant qu'il reste des reprises, sinon il passe à
+  `failed`, conformément à pg-boss.
 - Observation : les agrégats d'état (`queued`, `ready`, `active`, `failed`),
   `inlineWorker`, `consuming` et le nombre d'analyses échouées par organisation
   conservent la parité fonctionnelle

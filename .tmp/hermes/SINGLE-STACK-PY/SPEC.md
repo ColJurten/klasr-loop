@@ -46,8 +46,8 @@ change must be listed in this SPEC with web-side impact.
   ActionHistory, Notification, UsageMetric, Subscription + enums). REAC C7/C8 (SQL).
 - MongoDB `analyses` collection, TTL-purged, metadata only — REAC C8 NoSQL. Now via motor/pymongo.
 - pg-boss queue `analysis` (retryLimit 2, singletonKey org:doc), job states observed via
-  pgboss.job — replaced by a Python PostgreSQL-backed job mechanism (see ADR decision:
-  APScheduler with SQLAlchemyJobStore or a minimal SKIP LOCKED table; decision recorded in ADR).
+  pgboss.job — replaced by a Python PostgreSQL-backed `jobs` table consumed with
+  `SELECT ... FOR UPDATE SKIP LOCKED` (see ADR-007).
 - Google Drive: drive-connections, google-token (encrypted refresh), google-drive.executor,
   local-drive.executor — reimplemented with google-api-python-client / google-auth. Token
   storage/refresh/scopes/revocation equivalent. No credential reaches dsa/.
@@ -60,10 +60,10 @@ change must be listed in this SPEC with web-side impact.
 
 pg-boss is Node-only. Replacement: **PostgreSQL-backed Python jobs with a
 `SKIP LOCKED` polling worker** (single table `jobs`, stdlib+SQLAlchemy only, no new
-dependency/broker) OR APScheduler SQLAlchemyJobStore — final choice and semantics
-(retries: retryLimit 2 preserved; singleton dedupe via unique key; observability endpoint
-matching queueState/failedAnalysisCount) recorded in the ADR. Queue stays on the existing
-PostgreSQL instance. No Redis, no broker.
+dependency/broker), with semantics recorded in ADR-007 (retryLimit 2 preserved;
+singleton dedupe via unique key; observability endpoint matching
+queueState/failedAnalysisCount). Queue stays on the existing PostgreSQL instance. No
+Redis, no broker.
 
 ## dsa/ module shape (from Foxon-Consulting/dsa_backend, defects fixed)
 
@@ -120,6 +120,7 @@ browser visual verification of OCR review flow.
 
 ## REAC mapping (to be completed in ADR/docs)
 
-C1-C2: cadrage, ADR; C3: maquettage/UI unchanged; C4/C5: web app + API dev (FastAPI);
-C6: tests (pytest/Vitest); C7/C8: PostgreSQL (SQLAlchemy/Alembic) + MongoDB TTL;
-C9: déploiement docker/CI; C10/C11: veille/qualité, doc jury.
+C1: environnement; C2: interfaces utilisateur; C3: composants métier;
+C4: gestion de projet; C5: besoins et maquettage; C6: architecture logicielle;
+C7: base de données relationnelle; C8: accès aux données SQL et NoSQL;
+C9: plans de tests; C10: déploiement; C11: démarche DevOps.
