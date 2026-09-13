@@ -1,0 +1,99 @@
+from pathlib import Path
+from typing import BinaryIO
+
+from .schemas import DecisionResult, ExtractionResult, SuggestionResult
+from .tools import extract_bytes, extract_document
+
+CONFIDENCE_THRESHOLD = 0.5
+
+
+def _extract(file: str | Path | bytes | BinaryIO) -> ExtractionResult:
+    if isinstance(file, (str, Path)):
+        return extract_document(str(file))
+    if isinstance(file, bytes):
+        return extract_bytes(file, ".pdf")
+    name = getattr(file, "name", "document.pdf")
+    return extract_bytes(file.read(), Path(name).suffix)
+
+
+def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> DecisionResult:
+    """Production CrewAI seam; tests replace this with a deterministic stub LLM."""
+    if analysis.quality in {"empty", "failed"}:
+        return DecisionResult(
+            value=None,
+            confidence=0,
+            signals=[f"extraction:{analysis.quality}"],
+            warnings=analysis.warnings,
+        )
+    from .crews import DocumentSortingAssistantCrew
+
+    assistant = DocumentSortingAssistantCrew()
+    crew = assistant.naming_crew() if kind == "filename" else assistant.destination_crew()
+    output = crew.kickoff(inputs={"content": analysis.text, "directories": directories})
+    return DecisionResult.model_validate(output.pydantic or output.to_dict())
+
+
+def _both_decisions(
+    analysis: ExtractionResult, directories: list[str]
+) -> tuple[DecisionResult, DecisionResult]:
+    if analysis.quality in {"empty", "failed"}:
+        failure = _decision("filename", analysis, directories)
+        return failure, failure.model_copy(deep=True)
+    from .crews import DocumentSortingAssistantCrew
+
+    output = (
+        DocumentSortingAssistantCrew()
+        .combined_crew()
+        .kickoff(inputs={"content": analysis.text, "directories": directories})
+    )
+    filename, destination = output.tasks_output[-2:]
+    return (
+        DecisionResult.model_validate(filename.pydantic or filename.to_dict()),
+        DecisionResult.model_validate(destination.pydantic or destination.to_dict()),
+    )
+
+
+def _validated_destination(result: DecisionResult, directories: list[str]) -> DecisionResult:
+    allowed = {path.rstrip("/") or "/" for path in directories}
+    value = result.value.rstrip("/") if result.value else None
+    if value not in allowed:
+        return DecisionResult(
+            value=None,
+            confidence=0,
+            signals=result.signals,
+            warnings=[*result.warnings, "destination_outside_tree"],
+        )
+    if result.confidence < CONFIDENCE_THRESHOLD:
+        return result.model_copy(
+            update={"value": None, "warnings": [*result.warnings, "low_confidence"]}
+        )
+    return result.model_copy(update={"value": value})
+
+
+def suggest_filename(file: str | Path | bytes | BinaryIO) -> DecisionResult:
+    extraction = _extract(file)
+    result = _decision("filename", extraction, [])
+    if result.confidence < CONFIDENCE_THRESHOLD:
+        return result.model_copy(
+            update={"value": None, "warnings": [*result.warnings, "low_confidence"]}
+        )
+    return result
+
+
+def suggest_directory(
+    file: str | Path | bytes | BinaryIO, directories: list[str]
+) -> DecisionResult:
+    return _validated_destination(_decision("directory", _extract(file), directories), directories)
+
+
+def suggest(file: str | Path | bytes | BinaryIO, directories: list[str]) -> SuggestionResult:
+    extraction = _extract(file)
+    filename, destination = _both_decisions(extraction, directories)
+    if filename.confidence < CONFIDENCE_THRESHOLD:
+        filename = filename.model_copy(
+            update={"value": None, "warnings": [*filename.warnings, "low_confidence"]}
+        )
+    destination = _validated_destination(destination, directories)
+    return SuggestionResult(
+        filename=filename, destination=destination, extraction_quality=extraction.quality
+    )

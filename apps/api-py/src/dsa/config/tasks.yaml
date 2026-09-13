@@ -1,0 +1,12 @@
+analyse_file_task:
+  description: "Analyser le texte extrait et produire des signaux factuels étiquetés."
+  expected_output: "Une analyse structurée sans texte documentaire brut."
+  agent: analyse_file_agent
+suggest_filename_task:
+  description: "Proposer un nom depuis l'analyse, jamais depuis les octets du fichier."
+  expected_output: "value, confidence, signals et warnings validés."
+  agent: suggest_filename_agent
+suggest_directory_task:
+  description: "Choisir un chemin exact dans directories sans jamais en inventer."
+  expected_output: "Un chemin fourni, ou un état d'échec explicite."
+  agent: suggest_directory_agent

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "klasr-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn==0.52.4",
+  "pydantic==2.12.5",
+  "pydantic-settings==2.15.0",
+  "sqlalchemy==2.0.52",
+  "alembic==1.20.0",
+  "crewai==1.15.21",
+  "crewai-tools==1.15.21",
+  "docling==2.126.0",
+  "google-auth==2.58.0",
+  "google-api-python-client==2.200.0",
+  "motor==3.7.1",
+  "pymongo==4.18.1",
+  "httpx==0.28.1",
+  "python-multipart==0.0.32",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "black==26.5.1",
+  "flake8==7.3.0",
+]
+
+[project.scripts]
+suggest_filename = "dsa.cli:filename_main"
+suggest_directory = "dsa.cli:directory_main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dsa = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]

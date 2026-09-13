@@ -9,9 +9,13 @@
     "build": "pnpm --recursive --if-present run build",
     "test:integration": "pnpm --filter @klasr/api exec node ../../scripts/local-mvp-integration.mjs",
     "test:e2e": "pnpm --filter @klasr/web exec playwright test",
-    "test:live-google-sa": "node scripts/live-google-service-account.mjs"
-    ,"dsa:filename": "pnpm --filter @klasr/api dsa:filename"
-    ,"dsa:destination": "pnpm --filter @klasr/api dsa:destination"
+    "test:live-google-sa": "node scripts/live-google-service-account.mjs",
+    "api:install": "python3 -m venv apps/api-py/.venv && apps/api-py/.venv/bin/pip install -e 'apps/api-py[dev]'",
+    "api:test": "cd apps/api-py && .venv/bin/pytest",
+    "api:lint": "cd apps/api-py && .venv/bin/black --check src tests alembic && .venv/bin/flake8 src tests alembic",
+    "api:migrate": "cd apps/api-py && .venv/bin/alembic upgrade head",
+    "dsa:filename": "pnpm --filter @klasr/api dsa:filename",
+    "dsa:destination": "pnpm --filter @klasr/api dsa:destination"
   },
   "packageManager": "pnpm@10.15.1"
 }
