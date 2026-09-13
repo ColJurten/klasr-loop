@@ -24,30 +24,35 @@ Les octets restent en mémoire entre le téléchargement Drive et l'extraction. 
                                        │ REST (JWT, scope organisation)
                     ┌──────────────────▼───────────────────────────┐
                     │                 apps/api                     │
-                    │   NestJS — monolithe modulaire en couches    │
-                    │   Controller → Service → Repository          │
+                    │   FastAPI · Python — monolithe modulaire     │
+                    │   Route → Service → Repository SQLAlchemy    │
                     │   ┌────────────────────────────────────────┐ │
-                    │   │ Worker (même code, 2e processus)       │ │
-                    │   │ file de jobs pg-boss :                 │ │
-                    │   │ sync Drive → pré-filtre règles → OCR   │ │
-                    │   │ (tesseract) → cascade LLM → proposition│ │
+                    │   │ Worker (même code, processus séparé)   │ │
+                    │   │ table `jobs` PostgreSQL, SKIP LOCKED   │ │
+                    │   │ sync → règles → dsa/ → proposition     │ │
+                    │   │ dsa/ : CrewAI + Docling, appel direct  │ │
                     │   └────────────────────────────────────────┘ │
                     └───────┬──────────────────┬───────────────────┘
-                            │ Prisma           │ driver MongoDB
+                            │ SQLAlchemy 2      │ driver Python MongoDB
                     ┌───────▼───────┐  ┌───────▼───────────────────┐
                     │  PostgreSQL   │  │  MongoDB (1 collection)   │
-                    │  12 entités   │  │  `analyses` : métadonnées │
-                    │  + file jobs  │  │  OCR/LLM redactées,       │
-                    │  (pg-boss)    │  │  index TTL (purge RGPD)   │
+                    │  schéma métier│  │  `analyses` : métadonnées │
+                    │  + `jobs`     │  │  OCR/LLM expurgées,       │
+                    │  (Alembic)    │  │  index TTL (purge RGPD)   │
                     └───────────────┘  └───────────────────────────┘
 
-   Externes : Google Drive / Microsoft Graph API (OAuth) · API Anthropic/OpenAI (HTTPS)
+   Externes : Google Drive (OAuth) · API LLM configurée (HTTPS)
+   Hors périmètre : scripts/agent reste en Node.js.
    Invariant : les fichiers ne quittent JAMAIS le Drive de l'utilisateur.
 ```
 
-Stack final : **TypeScript partout · Next.js 14 · NestJS · PostgreSQL (Prisma) ·
-MongoDB (accès NoSQL ciblé) · pg-boss · Docker · GitHub Actions**.
-Supprimés par rapport à la conception initiale : **Python/FastAPI, Redis, MinIO**.
+Stack cible : **Next.js 14 côté web · FastAPI/Python côté API et traitement documentaire ·
+PostgreSQL (SQLAlchemy 2/Alembic) · MongoDB (accès NoSQL ciblé) · Docker · GitHub Actions**.
+Redis, MinIO, broker dédié, sidecar documentaire et saut HTTP interne sont absents.
+
+> **État de migration.** Ce diagramme décrit la cible décidée. Jusqu'à la bascule de
+> phase 3, NestJS/Prisma/pg-boss reste la référence exécutable ; il n'est supprimé
+> qu'à cette phase, après le portage et les vérifications de parité.
 
 ## 1.1. MVP réel local et chemin Google
 
@@ -147,6 +152,86 @@ CCP3 exige de préparer, documenter et automatiser le déploiement — pas d'op�
 cluster. Compose suffit pour la soutenance ; les manifests Kubernetes (force DevOps
 de Louis) sont un différenciateur présenté en ouverture, pas une dépendance de démo.
 CI GitHub Actions (équivalence GitLab CI documentée dans BRANCHING.md).
+
+### ADR-007 — Backend Python unique et migration sans rupture (2026-09-13)
+
+**Statut.** Acceptée pour la cible ; ADR-001, ADR-004 et ADR-005 sont remplacées à
+la bascule de phase 3. Avant cette bascule, elles continuent de décrire le système
+exécuté.
+
+**Contexte.** Le backend mélange aujourd'hui la logique métier NestJS et un besoin
+de traitement documentaire porté nativement par l'écosystème Python : CrewAI,
+Docling et, plus largement, les outils LLM. Maintenir un pont entre les deux coûte
+plus qu'il n'apporte : modèles, validation et tests dupliqués, frontière de
+sérialisation fragile et deux chaînes de dépendances pour une seule équipe.
+
+**Décision de stack unique.** FastAPI/Python remplace entièrement NestJS. Le pipeline
+CrewAI + Docling devient le module `apps/api/src/dsa/` du même backend Python : ni
+sidecar ni appel HTTP interne. `apps/web` reste en Next.js, sans changement de stack
+ni de design system. `scripts/agent` reste en Node.js et hors périmètre. NestJS ne
+sera pas laissé dormant : ses sources seront supprimées à la phase 3.
+
+**File de travaux.** `pg-boss` étant réservé à Node.js, il est remplacé sur
+l'instance PostgreSQL existante par une table minimale `jobs`, consommée avec
+SQLAlchemy et `SELECT ... FOR UPDATE SKIP LOCKED`. Aucun Redis, broker ou dépendance
+de file supplémentaire n'est introduit.
+
+- Planification : une insertion SQL crée le travail `analysis` et sa date
+  d'exécution.
+- Reprise : `retryLimit = 2` est conservé ; après un échec, le travail redevient
+  disponible avec un délai exponentiel (le délai fixe reste une évolution possible
+  si l'exploitation le justifie), puis passe à l'état `failed` après deux reprises.
+- Déduplication : la clé singleton `organisation:document` est portée par une
+  contrainte unique ; un travail actif identique ne peut donc pas être inséré deux
+  fois.
+- Observation : les agrégats d'état (`queued`, `ready`, `active`, `failed`) et le
+  nombre d'analyses échouées par organisation conservent la parité fonctionnelle
+  avec `queueState()` et `failedAnalysisCount()` de
+  `apps/api/src/jobs/jobs.service.ts`.
+
+**ORM et migrations.** SQLAlchemy 2 et Alembic ciblent le **même schéma** et la
+même base PostgreSQL. La révision Alembic initiale reproduit exactement le schéma
+Prisma courant — ses 15 modèles contractuels, ses enums, contraintes, index et
+relations. Elle adopte les tables déjà présentes : aucune table métier n'est
+supprimée ou recréée et aucune donnée n'est perdue. Au cutover seulement, les tables
+`pgboss` sont remplacées par `jobs` ; elles ne sont pas conservées comme seconde
+file active.
+
+**Google OAuth et Drive.** Le port utilise les bibliothèques officielles
+`google-auth` et `google-api-python-client`. Le stockage chiffré du jeton de
+rafraîchissement, son renouvellement serveur, les scopes, la révocation et les
+erreurs gardent le même comportement. Les identifiants et jetons restent dans les
+modules `auth`/`drive` : aucun credential n'entre dans `dsa/`, qui ne reçoit que le
+flux documentaire nécessaire et les paramètres métier non secrets.
+
+**Migration et retour arrière.** Chaque phase produit un commit isolé sur la branche
+de migration. Jusqu'à la phase 3, le backend NestJS reste runnable. La bascule de
+phase 3 branche le web sur FastAPI puis supprime NestJS ; le retour arrière consiste
+à appliquer `git revert` aux commits de phase concernés, dans l'ordre inverse. Il
+n'exige ni restauration de tables métier ni perte de données.
+
+**Impact REAC et continuité des preuves.** Les contrats HTTP, scénarios, migrations,
+tests et traces d'exploitation sont portés, pas abandonnés : les preuves présentées
+au jury survivent à la migration.
+
+| Compétence | Emplacement NestJS / actuel | Emplacement Python / cible |
+|---|---|---|
+| C1 — environnement | `apps/api/package.json`, `docker-compose.yml`, `docs/BOOTSTRAP.md` | `apps/api/pyproject.toml`, mêmes Compose et documentation |
+| C2 — interfaces | `apps/web` consommant l'API NestJS | `apps/web` inchangé, consommant FastAPI |
+| C3 — composants métier | `apps/api/src/classification`, `apps/api/src/analysis` | `apps/api/src/classification`, `apps/api/src/dsa` |
+| C4 — gestion de projet | commits, issues et phases de migration | mêmes preuves, commits par phase et handoffs |
+| C5 — besoins et maquettage | contrats REST et `apps/web` | contrats REST et `apps/web` inchangés |
+| C6 — architecture | modules NestJS et Jest | modules FastAPI, ADR et pytest |
+| C7 — base relationnelle | `apps/api/prisma/schema.prisma`, migrations Prisma | `apps/api/src/db`, modèles SQLAlchemy 2, révisions Alembic |
+| C8 — accès SQL/NoSQL | repositories Prisma, `apps/api/src/analyses` MongoDB | repositories SQLAlchemy, `apps/api/src/analyses` MongoDB TTL |
+| C9 — tests | spécifications Jest API, Vitest web | pytest API, Vitest web et tests de parité |
+| C10 — déploiement | Dockerfile NestJS, Compose, CI | Dockerfile FastAPI, mêmes Compose et CI adaptés |
+| C11 — DevOps | workflows, santé API, états pg-boss | workflows, santé API, états `jobs` et compteurs d'échec |
+
+**Conséquences.** Une seule chaîne backend porte désormais les contrats, la logique
+métier et le document-AI. Le coût est un portage contrôlé des routes et tests ; il
+est borné par les phases, la coexistence temporaire avant bascule et le retour
+arrière par commit.
 
 ## 3. Cartographie REAC → artefacts du dépôt
 
