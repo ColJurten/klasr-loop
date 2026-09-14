@@ -293,6 +293,29 @@ async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant):
 
 
 @pytest.mark.asyncio
+async def test_analysis_uses_local_provider_when_environment_value_is_empty(tenant, monkeypatch):
+    _, app, engine, identity, _ = tenant
+    monkeypatch.setenv("KLASR_LLM_PROVIDER", "")
+    with Session(engine, expire_on_commit=False) as session:
+        doc = pending(session, identity["organizationId"])
+        service = AnalysisService(
+            session,
+            app.state.settings,
+            types.SimpleNamespace(download=AsyncMock(return_value=b"synthetic invoice content")),
+            types.SimpleNamespace(completion=AsyncMock()),
+            MetadataSink(),
+        )
+        await service.analyze(
+            dict(
+                organizationId=identity["organizationId"],
+                userId=identity["userId"],
+                documentId=doc.id,
+            )
+        )
+        assert session.scalar(select(ClassificationProposal)).model_used == "local/deterministic"
+
+
+@pytest.mark.asyncio
 async def test_dsa_real_crew_callable_pipeline_no_replay_content(tenant, monkeypatch, tmp_path):
     _, app, engine, identity, _ = tenant
     from crewai.memory.storage.kickoff_task_outputs_storage import KickoffTaskOutputsSQLiteStorage

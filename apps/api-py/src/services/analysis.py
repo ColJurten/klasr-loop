@@ -311,7 +311,10 @@ class AnalysisService:
             destination = filename
         else:
             config = LlmSettingsService(self.session, self.settings, self.providers).resolve(org)
-            if config is None and os.getenv("KLASR_LLM_PROVIDER", "local") in ("local", "fake"):
+            if config is None and (os.getenv("KLASR_LLM_PROVIDER") or "local") in (
+                "local",
+                "fake",
+            ):
                 result = local_suggestion(extraction, paths)
                 model_used = "local/deterministic"
             else:

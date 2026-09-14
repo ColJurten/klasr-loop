@@ -1,6 +1,7 @@
 """Standalone: python -m worker. The HTTP process may opt into this same loop."""
 
 import asyncio
+import logging
 import signal
 
 import httpx
@@ -12,6 +13,8 @@ from mongo.analyses import AnalysesRepository
 from services.analysis import AnalysisService
 from services.drive import LocalDriveExecutor, drive_executor
 from services.llm_settings import ProviderClientService
+
+logger = logging.getLogger(__name__)
 
 
 async def work_once(session, handler):
@@ -28,10 +31,11 @@ async def work_once(session, handler):
             session.commit()
         else:
             session.rollback()
-    except Exception:
+    except Exception as exc:
         session.rollback()
         jobs.fail(job)
         session.commit()
+        logger.error("job handler failed: %s", type(exc).__name__)
     return True
 
 
