@@ -431,3 +431,19 @@ def test_mechanical_low_confidence_on_failed_extraction(monkeypatch):
     assert result.destination.confidence == 0
     assert result.filename.value is None
     assert result.destination.value is None
+
+
+def test_pdf_pipeline_options_are_wired_correctly():
+    # Regression: PdfPipelineOptions must be wrapped in PdfFormatOption keyed by
+    # InputFormat.PDF; the flat {"pdf": options} form builds but fails at convert
+    # time with AttributeError, silently degrading every PDF to extraction_failed.
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.base_models import InputFormat
+
+    from dsa.tools import _build_converter
+
+    converter = _build_converter()
+    assert isinstance(converter, DocumentConverter)
+    option = converter.format_to_options.get(InputFormat.PDF)
+    assert option is not None and isinstance(option, PdfFormatOption)
+    assert option.pipeline_options.do_ocr is True

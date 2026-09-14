@@ -64,7 +64,9 @@ def _build_converter():
     from docling.document_converter import DocumentConverter
 
     try:
+        from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import PdfFormatOption
 
         pdf_options = PdfPipelineOptions(
             do_ocr=True,
@@ -72,7 +74,9 @@ def _build_converter():
             document_timeout=_DOCLING_TIMEOUT,
             force_backend_text=False,
         )
-        return DocumentConverter(format_options={"pdf": pdf_options})
+        return DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)}
+        )
     except (ImportError, TypeError, ValueError):
         return DocumentConverter()
 
