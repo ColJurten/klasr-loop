@@ -70,10 +70,10 @@ def _build_converter():
 
         pdf_options = PdfPipelineOptions(
             do_ocr=True,
-            ocr_options={"lang": ["fra", "eng"]},
             document_timeout=_DOCLING_TIMEOUT,
             force_backend_text=False,
         )
+        pdf_options.ocr_options.lang = ["fra", "eng"]
         return DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)}
         )
