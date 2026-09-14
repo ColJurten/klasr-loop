@@ -26,6 +26,13 @@ from services.llm_settings import ProviderClientService
 from worker import work_once, run_worker
 
 
+def test_drive_connection_upsert_rebinds_user_to_organization():
+    row = types.SimpleNamespace(user_id="user", organization_id="old")
+    session = types.SimpleNamespace(scalar=lambda _: row, flush=lambda: None)
+    saved = DriveConnectionsRepository(session).upsert("new", "user", "account", "token", [])
+    assert saved.organization_id == "new"
+
+
 @pytest.mark.asyncio
 async def test_google_transport_pagination_download_and_confirm_only(tenant):
     _, app, engine, identity, _ = tenant

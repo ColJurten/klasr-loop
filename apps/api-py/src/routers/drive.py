@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from routers.dependencies import context
 from routers.dto import RootDTO, LaunchDTO
 
@@ -35,12 +35,16 @@ async def input_items(
 
 @router.get("/items")
 async def items(
+    request: Request,
     organization_id: str,
     parentId: str = Query(default="root", min_length=1, max_length=512),
     pageToken: str | None = Query(default=None, min_length=1, max_length=2048),
     x_user_id: str = Header(default=""),
     ctx=Depends(context, scope="function"),
 ):
+    unknown = set(request.query_params) - {"parentId", "pageToken"}
+    if unknown:
+        raise HTTPException(400, [f"property {name} should not exist" for name in sorted(unknown)])
     return await ctx.sync.items(organization_id, x_user_id, parentId, pageToken)
 
 

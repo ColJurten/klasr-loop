@@ -2,6 +2,7 @@
 # ADR-007 : la file de jobs est en PostgreSQL (SKIP LOCKED, sans pg-boss ni Redis).
 services:
   api:
+    profiles: [api]
     build:
       context: apps/api-py
     ports:
@@ -9,8 +10,14 @@ services:
     environment:
       KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/klasr
       KLASR_MONGO_URL: mongodb://mongo:27017
-      KLASR_ENV: development
-      KLASR_INTERNAL_API_SECRET: replace-with-a-local-shared-secret
+      NODE_ENV: development
+      INTERNAL_API_SECRET: replace-with-a-local-shared-secret
+      TOKEN_ENCRYPTION_KEY: replace-with-32-byte-key
+      GOOGLE_CLIENT_ID: replace-with-google-client-id
+      GOOGLE_CLIENT_SECRET: replace-with-google-client-secret
+      KLASR_LOCAL_MVP: 'true'
+      KLASR_INLINE_WORKER: 'true'
+    command: ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 3001 --app-dir src"]
     depends_on:
       - postgres
       - mongo

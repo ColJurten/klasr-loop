@@ -196,6 +196,7 @@ def test_local_drive_all_routes_sync_and_document_queries(tenant):
     root = next(row for row in root_page["items"] if row["externalId"] == "local_root_cabinet")
     assert root["reason"] == "reference-root" and root["eligible"] is False
     assert client.get(base + "/drive/items?pageToken=").status_code == 400
+    assert client.get(base + "/drive/items?unknown=1").status_code == 400
     assert (
         client.post(
             base + "/drive/launch", json={"itemExternalId": "local_root_cabinet"}

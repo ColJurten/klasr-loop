@@ -97,9 +97,11 @@ def create_app(settings=None) -> FastAPI:
         except Exception:
             return error(request, 500, "Internal server error")
 
-    @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    for prefix in ("", "/api/v1"):
+        app.add_api_route(prefix + "/health", health, methods=["GET"])
 
     for module in (
         auth,

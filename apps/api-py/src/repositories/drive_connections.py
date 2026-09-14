@@ -16,10 +16,11 @@ class DriveConnectionsRepository:
         )
 
     def upsert(self, organization_id, user_id, external_id, encrypted_token, scopes):
-        row = self.find(organization_id, user_id)
+        row = self.session.scalar(select(DriveConnection).where(DriveConnection.user_id == user_id))
         if not row:
-            row = DriveConnection(organization_id=organization_id, user_id=user_id)
+            row = DriveConnection(user_id=user_id)
             self.session.add(row)
+        row.organization_id = organization_id
         row.provider = "GOOGLE_DRIVE"
         row.external_id = external_id
         row.encrypted_token = encrypted_token

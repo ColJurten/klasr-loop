@@ -17,8 +17,6 @@ dependencies = [
   "crewai==1.15.21",
   "crewai-tools==1.15.21",
   "docling==2.126.0",
-  "google-auth==2.58.0",
-  "google-api-python-client==2.200.0",
   "motor==3.7.1",
   "pymongo==4.18.1",
   "httpx==0.28.1",

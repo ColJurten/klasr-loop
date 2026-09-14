@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-08-12 (OCR suggestion quality)
+> Last updated: 2026-09-13 (Python backend migration review)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-09-13 — Migration backend Python unique : squelette FastAPI/Alembic (`fa3cd3e`), port domaine et tests de parité (`4be7798`), corrections de revue (`c183b8c`), cutover et suppression NestJS (`41ea3a9`), puis qualité de suggestion Docling (`c27ebf1`). État courant : FastAPI/SQLAlchemy, table PostgreSQL `jobs` avec worker inline optionnel, MongoDB limité aux métadonnées TTL, routes disponibles avec et sans `/api/v1`, et schéma Prisma final conservé comme fixture de parité. Écarts assumés : `queueState` est désormais tenant-scoped (corrige la fuite globale NestJS) ; les deux préfixes doublent la surface historique. La CI exécute pytest deux fois et son job d'intégration dépend implicitement de Node pour le test crypto ; `test:integration` désigne désormais pytest, pas l'ancien harness complet. Aucun chemin de révocation n'existe dans l'ancien ou le nouveau backend : la parité est une absence partagée.
 
 - [x] UX clarity Item 1 — SSO marqué et compte local : chaîne acceptée `t_9570e0af` → `t_4245d6fd`. Revue code `claude-opus-5` approuvée (`providerAccepted=false`) dans `.tmp/hermes/ux-clarity/evidence/item-1/claude-review-attempt5f-direct.json` ; revue fournisseur finale `claude-opus-5` approuvée (`approved=true`, `providerAccepted=true`, `reviewerEditedFiles=false`) dans `.tmp/hermes/ux-clarity/evidence/item-1/claude-service-account-final-review.json`. Le manifeste attempt 67 est PASS (`f5fda516`), avec les 16 résultats fournisseur/navigateur/workflow vrais, Drive service-account réel, desktop + 390 px, assertions mutation/ignorer et restauration exacte sans orphelin ; OAuth consumer n’est pas le gate d’acceptation de cette route hors production.
 - [x] UX clarity Item 2 — Onboarding clé LLM et sélecteur visuel : `t_8f8b2279`, revue exacte `claude-opus-5` approuvée (`approved=true`, `reviewerEditedFiles=false`) ; lint/typecheck/build verts, 358/358 tests sans skip, API ciblée 8/8, intégration fournisseur 18/18, cinq captures 1280 px, zéro violation axe, RED→GREEN, liaison à l’arbre et nettoyage vérifiés.

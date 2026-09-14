@@ -166,7 +166,7 @@ plus qu'il n'apporte : modèles, validation et tests dupliqués, frontière de
 sérialisation fragile et deux chaînes de dépendances pour une seule équipe.
 
 **Décision de stack unique.** FastAPI/Python remplace entièrement NestJS. Le pipeline
-CrewAI + Docling devient le module `apps/api/src/dsa/` du même backend Python : ni
+CrewAI + Docling devient le module `apps/api-py/src/dsa/` du même backend Python : ni
 sidecar ni appel HTTP interne. `apps/web` reste en Next.js, sans changement de stack
 ni de design system. `scripts/agent` reste en Node.js et hors périmètre. NestJS ne
 sera pas laissé dormant : ses sources seront supprimées à la phase 3.
@@ -207,8 +207,9 @@ supprimée ou recréée et aucune donnée n'est perdue. Au cutover seulement, le
 `pgboss` sont remplacées par `jobs` ; elles ne sont pas conservées comme seconde
 file active.
 
-**Google OAuth et Drive.** Le port utilise les bibliothèques officielles
-`google-auth` et `google-api-python-client`. Le stockage chiffré du jeton de
+**Google OAuth et Drive.** Le port conserve délibérément l'implémentation HTTP/JWT
+NestJS avec `httpx` et `cryptography`, afin de prouver un comportement réseau
+identique. Le stockage chiffré du jeton de
 rafraîchissement, son renouvellement serveur, les scopes, la révocation et les
 erreurs gardent le même comportement. Les identifiants et jetons restent dans les
 modules `auth`/`drive` : aucun credential n'entre dans `dsa/`, qui ne reçoit que le
@@ -229,14 +230,14 @@ au jury survivent à la migration.
 
 | Compétence | Emplacement NestJS / actuel | Emplacement Python / cible |
 |---|---|---|
-| C1 — environnement | `apps/api/package.json`, `docker-compose.yml`, `docs/BOOTSTRAP.md` | `apps/api/pyproject.toml`, mêmes Compose et documentation |
+| C1 — environnement | `apps/api/package.json`, `docker-compose.yml`, `docs/BOOTSTRAP.md` | `apps/api-py/pyproject.toml`, mêmes Compose et documentation |
 | C2 — interfaces | `apps/web` consommant l'API NestJS | `apps/web` inchangé, consommant FastAPI |
-| C3 — composants métier | `apps/api/src/classification`, `apps/api/src/analysis` | `apps/api/src/classification`, `apps/api/src/dsa` |
+| C3 — composants métier | `apps/api/src/classification`, `apps/api/src/analysis` | `apps/api-py/src/services/classification.py`, `apps/api-py/src/dsa` |
 | C4 — gestion de projet | commits, issues et phases de migration | mêmes preuves, commits par phase et handoffs |
 | C5 — besoins et maquettage | wireframes, `PROMPT_DESIGN_KLASR.md`, personas | mêmes wireframes, prompt de design et personas |
 | C6 — architecture | modules NestJS et Jest | modules FastAPI, ADR et pytest |
-| C7 — base relationnelle | `apps/api/prisma/schema.prisma`, migrations Prisma | `apps/api/src/db`, modèles SQLAlchemy 2, révisions Alembic |
-| C8 — accès SQL/NoSQL | repositories Prisma, `apps/api/src/analyses` MongoDB | repositories SQLAlchemy, `apps/api/src/analyses` MongoDB TTL |
+| C7 — base relationnelle | `apps/api/prisma/schema.prisma`, migrations Prisma | `apps/api-py/src/db/models.py`, modèles SQLAlchemy 2, révisions Alembic |
+| C8 — accès SQL/NoSQL | repositories Prisma, `apps/api/src/analyses` MongoDB | repositories SQLAlchemy, `apps/api-py/src/mongo/analyses.py` MongoDB TTL |
 | C9 — tests | spécifications Jest API, Vitest web | pytest API, Vitest web et tests de parité |
 | C10 — déploiement | Dockerfile NestJS, Compose, CI | Dockerfile FastAPI, mêmes Compose et CI adaptés |
 | C11 — DevOps | workflows, santé API, états pg-boss | workflows, santé API, états `jobs` et compteurs d'échec |
@@ -252,13 +253,13 @@ arrière par commit.
 |---|---|---|
 | C1 | Installer et configurer son environnement de travail | `docs/BOOTSTRAP.md`, `docker-compose.yml`, `.env.example`, monorepo outillé |
 | C2 | Développer des interfaces utilisateur | `apps/web` : Next.js 14, charte Klasr, flux de validation 1-clic, accessibilité (RGAA : focus visible, navigation clavier) |
-| C3 | Développer des composants métier | `apps/api/src/classification` : pipeline pré-filtre → OCR → cascade LLM, port `DriveExecutor`, transaction de confirmation |
+| C3 | Développer des composants métier | `apps/api-py/src/services/classification.py` et `apps/api-py/src/dsa` : pipeline pré-filtre → OCR → cascade LLM, port `DriveExecutor`, transaction de confirmation |
 | C4 | Contribuer à la gestion d'un projet informatique | Issues GitHub, `docs/STATE.md`, branching GitFlow, PR templates, boucle de triage |
 | C5 | Analyser les besoins et maquetter une application | Wireframes Claude Design/Figma, `PROMPT_DESIGN_KLASR.md`, personas, dossier de conception |
-| C6 | Définir l'architecture logicielle | Ce document (ADR), couches NestJS strictes, diagrammes |
-| C7 | Concevoir et mettre en place une base de données relationnelle | `apps/api/prisma/schema.prisma` (14 modèles), migrations, MCD dans le dossier |
-| C8 | Développer des composants d'accès aux données SQL et NoSQL | Repositories Prisma (SQL) + `apps/api/src/analyses` (MongoDB, TTL) |
-| C9 | Préparer et exécuter les plans de tests | Jest (unités API), Vitest/Testing Library (web), plan de tests documenté, suites d'isolation multi-tenant |
+| C6 | Définir l'architecture logicielle | Ce document (ADR), couches FastAPI/service/repository, diagrammes |
+| C7 | Concevoir et mettre en place une base de données relationnelle | `apps/api-py/src/db/models.py` (14 modèles), migrations Alembic, MCD dans le dossier |
+| C8 | Développer des composants d'accès aux données SQL et NoSQL | Repositories SQLAlchemy + `apps/api-py/src/mongo/analyses.py` (MongoDB, TTL) |
+| C9 | Préparer et exécuter les plans de tests | pytest (API), Vitest/Testing Library (web), plan de tests documenté, suites d'isolation multi-tenant |
 | C10 | Préparer et documenter le déploiement | Dockerfiles, `docs/BOOTSTRAP.md`, `docs/BRANCHING.md` (releases SemVer), images ghcr |
 | C11 | Contribuer à la mise en production dans une démarche DevOps | `.github/workflows/*` (CI lint/test/build, release taguée), gate SonarQube, monitoring en backlog |
 

@@ -14,7 +14,7 @@ compatibilité temporaire, pas le contrat du pipeline.
 pnpm api:install
 pnpm api:start
 suggest_filename --file <chemin-fichier>
-suggest_directory --file <chemin-fichier> --dir /Comptabilite/Factures --dir /Juridique/Contrats
+suggest_directory -f <chemin> -d '["/Comptabilite/Factures","/Juridique/Contrats"]'
 ```
 
 La CLI n'affiche ni texte extrait ni clé. PDF, PNG, JPEG, TIFF et texte sont
@@ -50,7 +50,7 @@ humaine authentifiée prouve le chemin Google réel.
 
 - Node.js 20 (compatible avec les versions pinnees du monorepo).
 - `pnpm@10.15.1` exactement, comme declare dans `package.json`.
-- Python 3.11+ pour le backend FastAPI (`apps/api-py`).
+- Python 3.12+ pour le backend FastAPI (`apps/api-py`).
 - Docker avec Compose v2.
 - Chromium installe par Playwright si `pnpm test:e2e` le demande.
 
@@ -75,7 +75,7 @@ cp apps/web/.env.example apps/web/.env.local
 Valeurs a remplacer pour un developpement local complet :
 
 - `INTERNAL_API_SECRET` : meme valeur jetable dans API et web.
-- `KLASR_TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
+- `TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
 - `NEXTAUTH_SECRET` : valeur locale jetable.
 - `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : seulement pour tester OAuth Google reel.
 
@@ -96,6 +96,13 @@ est `apps/api-py` (port 3001).
 ```bash
 docker compose up -d --force-recreate --wait
 docker compose ps
+```
+
+Cette commande démarre seulement PostgreSQL et MongoDB. Pour démarrer aussi l'API
+(migrations Alembic et worker inline inclus), utiliser :
+
+```bash
+docker compose --profile api up -d --force-recreate --wait
 ```
 
 Deployer les migrations Alembic :
@@ -156,7 +163,7 @@ Pour tester Google Drive reel :
    `NEXTAUTH_SECRET=<secret-placeholder>`,
    `API_URL=http://localhost:3001/api/v1`,
    `INTERNAL_API_SECRET=<secret-local-identique>` et
-   `KLASR_TOKEN_ENCRYPTION_KEY=<cle-placeholder>`.
+   `TOKEN_ENCRYPTION_KEY=<cle-placeholder>`.
 7. Verifier que le scope Drive est autorise :
    `https://www.googleapis.com/auth/drive`.
 

@@ -59,7 +59,10 @@ def test_every_domain_route_fails_closed_before_body_or_database(api):
             client.get("/organizations/org", headers={"x-internal-secret": supplied}).status_code
             == 401
         )
-    assert client.get("/health", headers={"x-internal-secret": ""}).json() == {"status": "ok"}
+    for prefix in ("", "/api/v1"):
+        assert client.get(prefix + "/health", headers={"x-internal-secret": ""}).json() == {
+            "status": "ok"
+        }
 
 
 def test_encryption_node_interoperability_and_tampering():

@@ -14,7 +14,7 @@
     "api:lint": "cd apps/api-py && .venv/bin/black --check src tests alembic && .venv/bin/flake8 src tests alembic",
     "api:migrate": "cd apps/api-py && .venv/bin/alembic upgrade head",
     "api:start": "cd apps/api-py && .venv/bin/uvicorn main:app --host 0.0.0.0 --port 3001 --app-dir src",
-    "api:worker": "cd apps/api-py && KLASR_WORKER=true .venv/bin/python -m src.worker"
+    "api:worker": "cd apps/api-py/src && KLASR_WORKER=true ../.venv/bin/python -m worker"
   },
   "packageManager": "pnpm@10.15.1"
 }
