@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 
@@ -37,6 +38,31 @@ def test_supported_file_types_and_quality(tmp_path, stub_docling):
         result = extract_document(str(path))
         assert result.quality == "ok" and "Acme" in result.text
     assert extract_document(str(tmp_path / "bad.docx")).quality == "failed"
+
+
+def test_offline_cli_filename_and_directory(monkeypatch, tmp_path, stub_docling, capsys):
+    from dsa.cli import directory_main, filename_main
+
+    path = tmp_path / "synthetic.pdf"
+    path.write_bytes(b"synthetic")
+    monkeypatch.setenv("KLASR_LLM_PROVIDER", "local")
+    monkeypatch.delenv("KLASR_LLM_MODEL", raising=False)
+
+    monkeypatch.setattr(sys, "argv", ["suggest_filename", "-f", str(path)])
+    filename_main()
+    filename = DecisionResult.model_validate_json(capsys.readouterr().out)
+
+    directories = ["/Clients/Acme", "/Archive/2026"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["suggest_directory", "-f", str(path), "-d", json.dumps(directories)],
+    )
+    directory_main()
+    destination = DecisionResult.model_validate_json(capsys.readouterr().out)
+
+    assert filename.value and filename.signals == ["provider:local"]
+    assert destination.value == "/Clients/Acme"
 
 
 def test_corrupted_empty_sparse_and_schema(monkeypatch, tmp_path):

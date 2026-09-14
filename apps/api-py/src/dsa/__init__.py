@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import BinaryIO
 
@@ -5,6 +6,14 @@ from .schemas import DecisionResult, ExtractionResult, SuggestionResult
 from .tools import extract_bytes, extract_document
 
 CONFIDENCE_THRESHOLD = 0.5
+
+
+def _local_suggestion(analysis: ExtractionResult, directories: list[str]):
+    provider = os.getenv("KLASR_LLM_PROVIDER") or "local"
+    if provider in {"local", "fake"} and not os.getenv("KLASR_LLM_MODEL"):
+        from services.analysis import local_suggestion
+
+        return local_suggestion(analysis, directories)
 
 
 def _extract(file: str | Path | bytes | BinaryIO, suffix: str = ".pdf") -> ExtractionResult:
@@ -25,6 +34,8 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
             signals=[f"extraction:{analysis.quality}"],
             warnings=analysis.warnings,
         )
+    if local := _local_suggestion(analysis, directories):
+        return local.filename if kind == "filename" else local.destination
     from .crews import DocumentSortingAssistantCrew
 
     assistant = DocumentSortingAssistantCrew()
@@ -39,6 +50,8 @@ def _both_decisions(
     if analysis.quality in {"empty", "failed"}:
         failure = _decision("filename", analysis, directories)
         return failure, failure.model_copy(deep=True)
+    if local := _local_suggestion(analysis, directories):
+        return local.filename, local.destination
     from .crews import DocumentSortingAssistantCrew
 
     output = (
