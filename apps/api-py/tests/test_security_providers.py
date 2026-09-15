@@ -249,7 +249,7 @@ async def test_provider_bounds_discovery_anthropic_and_network_errors():
 
 @pytest.mark.asyncio
 async def test_custom_endpoint_rejects_private_addresses_and_redirects(monkeypatch):
-    settings = Settings(NODE_ENV="production")
+    settings = Settings(NODE_ENV="production", local_mvp=False)
     async with httpx.AsyncClient() as client:
         provider = ProviderClientService(settings, client)
         for url in [
