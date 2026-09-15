@@ -50,14 +50,33 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 10.15.1 }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with: { node-version: 20, cache: pnpm }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @klasr/api prisma:deploy
+      - name: Install Python API dependencies
+        run: |
+          python -m venv apps/api-py/.venv
+          apps/api-py/.venv/bin/pip install -e 'apps/api-py[dev]'
+      - name: Run Alembic migrations
+        working-directory: apps/api-py
         env:
-          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/klasr
-      - run: pnpm test:integration
-      - run: pnpm test:integration
+          KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/klasr
+        run: .venv/bin/alembic upgrade head
+      - name: Run pytest
+        working-directory: apps/api-py
+        env:
+          KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/klasr
+          KLASR_MONGO_URL: mongodb://127.0.0.1:27017
+        run: .venv/bin/pytest
+      - name: Run black check
+        working-directory: apps/api-py
+        run: .venv/bin/black --check src tests alembic
+      - name: Run flake8
+        working-directory: apps/api-py
+        run: .venv/bin/flake8 src tests alembic
+      - name: Integration test
+        run: pnpm test:integration
 
   e2e:
     runs-on: ubuntu-latest
@@ -67,7 +86,11 @@ jobs:
         with: { version: 10.15.1 }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 20, cache: pnpm }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
       - run: pnpm install --frozen-lockfile
+      - run: pnpm api:install
       - run: pnpm --filter @klasr/web exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
