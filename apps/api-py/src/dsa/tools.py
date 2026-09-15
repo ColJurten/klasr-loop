@@ -77,7 +77,7 @@ def _build_converter():
         return DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)}
         )
-    except (ImportError, TypeError, ValueError):
+    except (AttributeError, ImportError, TypeError, ValueError):
         return DocumentConverter()
 
 

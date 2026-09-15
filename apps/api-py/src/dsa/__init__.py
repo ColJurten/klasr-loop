@@ -45,12 +45,12 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
 
 
 def _both_decisions(
-    analysis: ExtractionResult, directories: list[str]
+    analysis: ExtractionResult, directories: list[str], allow_local: bool = True
 ) -> tuple[DecisionResult, DecisionResult]:
     if analysis.quality in {"empty", "failed"}:
         failure = _decision("filename", analysis, directories)
         return failure, failure.model_copy(deep=True)
-    if local := _local_suggestion(analysis, directories):
+    if allow_local and (local := _local_suggestion(analysis, directories)):
         return local.filename, local.destination
     from .crews import DocumentSortingAssistantCrew
 
@@ -126,7 +126,7 @@ def suggest_text(
 
     token = provider_factory.set(llm_factory)
     try:
-        filename, destination = _both_decisions(extraction, directories)
+        filename, destination = _both_decisions(extraction, directories, allow_local=False)
         if filename.confidence < CONFIDENCE_THRESHOLD:
             filename = filename.model_copy(
                 update={"value": None, "warnings": [*filename.warnings, "low_confidence"]}

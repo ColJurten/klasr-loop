@@ -1,7 +1,7 @@
 import asyncio
 import json
 import types
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from core.security import TokenEncryptionService, decode
-from db.models import Document, ClassificationProposal, Job, Folder, UsageMetric
+from db.models import Document, ClassificationProposal, Job, Folder, LlmSetting, UsageMetric
 from jobs.service import JobsService
 from repositories.drive_connections import DriveConnectionsRepository
 from repositories.rules import RulesRepository
@@ -313,6 +313,55 @@ async def test_analysis_uses_local_provider_when_environment_value_is_empty(tena
             )
         )
         assert session.scalar(select(ClassificationProposal)).model_used == "local/deterministic"
+
+
+@pytest.mark.asyncio
+async def test_configured_provider_bypasses_offline_shortcut(tenant, monkeypatch):
+    _, app, engine, identity, _ = tenant
+    monkeypatch.delenv("KLASR_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("KLASR_LLM_MODEL", raising=False)
+    responses = [
+        dict(value="analysis", confidence=1, signals=["kind:invoice"]),
+        dict(value="invoice.txt", confidence=0.9, signals=["kind:invoice"]),
+        dict(value=None, confidence=0, signals=[]),
+    ]
+    providers = types.SimpleNamespace(
+        completion=AsyncMock(side_effect=lambda *_: json.dumps(responses.pop(0)))
+    )
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            LlmSetting(
+                organization_id=identity["organizationId"],
+                provider="openai",
+                model="configured-model",
+                base_url="https://api.openai.com/v1",
+                encrypted_api_key=TokenEncryptionService(
+                    app.state.settings.token_encryption_key
+                ).encrypt("synthetic-key"),
+                status="VALID",
+                validated_at=datetime.now(timezone.utc),
+            )
+        )
+        doc = pending(session, identity["organizationId"])
+        session.commit()
+        service = AnalysisService(
+            session,
+            app.state.settings,
+            types.SimpleNamespace(download=AsyncMock(return_value=b"synthetic invoice content")),
+            providers,
+            MetadataSink(),
+        )
+        await service.analyze(
+            dict(
+                organizationId=identity["organizationId"],
+                userId=identity["userId"],
+                documentId=doc.id,
+            )
+        )
+        row = session.scalar(select(ClassificationProposal))
+        assert providers.completion.await_count > 0
+        assert row.llm_calls_used > 0
+        assert row.model_used == "openai/configured-model"
 
 
 @pytest.mark.asyncio
