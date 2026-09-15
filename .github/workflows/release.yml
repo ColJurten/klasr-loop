@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           - name: api
-            context: apps/api
+            context: apps/api-py
           - name: web
             context: apps/web
     steps:
