@@ -72,7 +72,7 @@ class GoogleTokenService:
             if not isinstance(token, str) or not token:
                 raise ValueError
             return token
-        except (httpx.HTTPError, ValueError, TypeError):
+        except httpx.HTTPError, ValueError, TypeError:
             raise HTTPException(401, message) from None
 
     async def service_account_token(self):
@@ -83,7 +83,7 @@ class GoogleTokenService:
             raise RuntimeError("KLASR_GOOGLE_SERVICE_ACCOUNT_FILE must be an absolute path")
         try:
             credential = json.loads(path.read_text())
-        except (OSError, ValueError):
+        except OSError, ValueError:
             raise RuntimeError("Google service-account credential is not valid JSON") from None
         if credential.get("type") != "service_account" or not all(
             credential.get(k) for k in ("client_email", "private_key", "token_uri")
