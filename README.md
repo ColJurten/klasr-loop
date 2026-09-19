@@ -50,7 +50,7 @@ humaine authentifiée prouve le chemin Google réel.
 
 - Node.js 20 (compatible avec les versions pinnees du monorepo).
 - `pnpm@10.15.1` exactement, comme declare dans `package.json`.
-- Python 3.12+ pour le backend FastAPI (`apps/api-py`).
+- Python 3.14+ pour le backend FastAPI (`apps/api-py`).
 - Docker avec Compose v2.
 - Chromium installe par Playwright si `pnpm test:e2e` le demande.
 
