@@ -165,7 +165,7 @@ Docling et, plus largement, les outils LLM. Maintenir un pont entre les deux co�
 plus qu'il n'apporte : modèles, validation et tests dupliqués, frontière de
 sérialisation fragile et deux chaînes de dépendances pour une seule équipe.
 
-**Décision de stack unique.** FastAPI/Python remplace entièrement NestJS. Le pipeline
+**Décision de stack unique.** FastAPI/Python 3.14+ remplace entièrement NestJS. Le pipeline
 CrewAI + Docling devient le module `apps/api-py/src/dsa/` du même backend Python : ni
 sidecar ni appel HTTP interne. `apps/web` reste en Next.js, sans changement de stack
 ni de design system. `scripts/agent` reste en Node.js et hors périmètre. NestJS ne
