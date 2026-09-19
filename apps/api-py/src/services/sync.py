@@ -103,17 +103,6 @@ class SyncService:
             (item for item in metadata if item["id"] == external_id),
             None,
         )
-        if external_id == "all":
-            selected = next(
-                (
-                    item
-                    for item in metadata
-                    if item["mimeType"] == FOLDER_MIME
-                    and not item["parents"]
-                    and item["id"] != reference["externalId"]
-                ),
-                None,
-            ) or next((item for item in metadata if item["mimeType"] != FOLDER_MIME), None)
         if not selected:
             raise HTTPException(404, "Drive input item not found")
         if selected["id"] == reference["externalId"]:

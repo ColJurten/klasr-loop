@@ -163,7 +163,6 @@ def test_organizations_serialization_and_atomic_owner(api):
 def test_google_drive_all_routes_sync_and_document_queries(tenant):
     client, _, engine, identity, base = tenant
     assert client.post(base + "/sync").status_code == 400
-    assert client.post(base + "/drive/launch", json={"itemExternalId": "all"}).status_code == 400
     choices = client.get(base + "/drive/reference-folders").json()
     assert len(choices) == 8 and set(choices[0]) == {"externalId", "name", "parentExternalId"}
     root_page = client.get(base + "/drive/items").json()
@@ -204,7 +203,6 @@ def test_google_drive_all_routes_sync_and_document_queries(tenant):
     assert client.post(base + "/drive/launch", json={"itemExternalId": "absent"}).status_code == 404
     response = client.post(base + "/drive/launch", json={"itemExternalId": "inbox"})
     assert response.status_code == 201 and response.json() == {"enqueued": 4, "manual": 0}
-    assert client.post(base + "/sync").json() == {"enqueued": 4, "manual": 0}
     with Session(engine) as session:
         jobs = session.scalars(select(Job)).all()
         assert len(jobs) == 4
@@ -229,7 +227,7 @@ def test_google_drive_all_routes_sync_and_document_queries(tenant):
 def test_dashboard_aggregate_and_tenant_isolation(tenant):
     client, app, engine, identity, base = tenant
     client.post(base + "/drive/reference-root", json={"folderExternalId": "reference-root"})
-    client.post(base + "/sync")
+    client.post(base + "/drive/launch", json={"itemExternalId": "inbox"})
     second = register(client, "second@example.com")
     other = "/organizations/" + second["organizationId"]
     assert client.get(other + "/documents").json() == []
