@@ -36,7 +36,7 @@ class EmailDTO(DTO):
                 or not re.fullmatch(r"[A-Za-z]{2,}|xn--[A-Za-z0-9-]+", labels[-1])
             ):
                 raise ValueError
-        except ValueError, UnicodeError:
+        except (ValueError, UnicodeError):
             raise ValueError("email must be an email") from None
         return value
 
