@@ -30,9 +30,9 @@
 
 ## Done
 
-- [x] 2026-09-19 — Backend recalé sur Python 3.13 : CrewAI 1.15.21 / ChromaDB 1.1.1 ne sont pas prêts pour Python 3.14 (`pydantic.v1 ConfigError` sur `chroma_server_nofile`). L’import des deux bibliothèques est validé sous Python 3.13 ; le backend et les environnements locaux doivent donc utiliser Python 3.13.
+- [x] 2026-09-19 — Backend recalé sur Python 3.13 : CrewAI 1.15.21 / ChromaDB 1.1.1 ne sont pas prêts pour Python 3.14 (`pydantic.v1 ConfigError` sur `chroma_server_nofile`). L’import des deux bibliothèques est validé sous Python 3.13 ; le backend et les environnements locaux doivent donc utiliser Python 3.13. Gate en attente : la suite pytest complète n’a pas encore été exécutée sous Python 3.13 réel (le venv local est en 3.14 ; l’utilisateur l’exécute localement en 3.13).
 
-- [x] 2026-09-19 — Plancher Python 3.14 appliqué (`bce6da7`) ; la suite pytest complète sous Python 3.14 réel s’exécute sur la machine de l’utilisateur (Python local 3.14.6).
+- [x] 2026-09-19 — Plancher Python 3.14 tenté (`bce6da7`) puis abandonné : CrewAI / ChromaDB ne sont pas compatibles avec Python 3.14 ; voir le recalage sur Python 3.13 ci-dessus.
 
 - [x] 2026-09-13 — Migration backend Python unique : squelette FastAPI/Alembic (`fa3cd3e`), port domaine et tests de parité (`4be7798`), corrections de revue (`c183b8c`), cutover et suppression NestJS (`41ea3a9`), puis qualité de suggestion Docling (`c27ebf1`). État courant : FastAPI/SQLAlchemy, table PostgreSQL `jobs` avec worker inline optionnel, MongoDB limité aux métadonnées TTL, routes disponibles avec et sans `/api/v1`, et schéma Prisma final conservé comme fixture de parité. Écarts assumés : `queueState` est désormais tenant-scoped (corrige la fuite globale NestJS) ; les deux préfixes doublent la surface historique. La CI exécute pytest deux fois et son job d'intégration dépend implicitement de Node pour le test crypto ; `test:integration` désigne désormais pytest, pas l'ancien harness complet. Aucun chemin de révocation n'existe dans l'ancien ou le nouveau backend : la parité est une absence partagée.
 
