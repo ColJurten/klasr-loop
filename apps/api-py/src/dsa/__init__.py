@@ -1,3 +1,4 @@
+import core.py314_compat  # noqa: F401 — PEP 649 shim for pydantic.v1 on 3.14
 import os
 from pathlib import Path
 from typing import BinaryIO

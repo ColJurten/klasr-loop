@@ -1,3 +1,4 @@
+import core.py314_compat  # noqa: F401 — PEP 649 shim for pydantic.v1 on 3.14
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session

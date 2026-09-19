@@ -1,5 +1,7 @@
 """Secret-bearing LLM construction lives here; DSA sees only a callable adapter."""
 
+import core.py314_compat  # noqa: F401 — PEP 649 shim for pydantic.v1 on 3.14
+
 import asyncio
 import os
 
