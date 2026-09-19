@@ -17,7 +17,6 @@ from routers import (
     documents,
     drive,
     proposals,
-    sync,
     rules,
     llm_settings,
 )
@@ -106,7 +105,6 @@ def create_app(settings=None) -> FastAPI:
         documents,
         drive,
         proposals,
-        sync,
         rules,
         llm_settings,
     ):

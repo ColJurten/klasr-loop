@@ -26,7 +26,6 @@ ROUTES = [
     ("GET", "/organizations/org/proposals"),
     ("POST", "/organizations/org/proposals/proposal/confirm"),
     ("POST", "/organizations/org/proposals/proposal/ignore"),
-    ("POST", "/organizations/org/sync"),
     ("GET", "/organizations/org/rules"),
     ("POST", "/organizations/org/rules"),
     ("GET", "/organizations/org/llm-settings"),

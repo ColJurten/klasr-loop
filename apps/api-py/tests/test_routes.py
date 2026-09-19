@@ -162,7 +162,6 @@ def test_organizations_serialization_and_atomic_owner(api):
 
 def test_google_drive_all_routes_sync_and_document_queries(tenant):
     client, _, engine, identity, base = tenant
-    assert client.post(base + "/sync").status_code == 400
     choices = client.get(base + "/drive/reference-folders").json()
     assert len(choices) == 8 and set(choices[0]) == {"externalId", "name", "parentExternalId"}
     root_page = client.get(base + "/drive/items").json()

@@ -94,7 +94,7 @@ class SyncService:
             nextPageToken=page["nextPageToken"],
         )
 
-    async def launch(self, organization_id, user_id, external_id="all"):
+    async def launch(self, organization_id, user_id, external_id):
         reference = self.folders.root(organization_id)
         if not reference:
             raise HTTPException(400, "Reference root is required before launch")

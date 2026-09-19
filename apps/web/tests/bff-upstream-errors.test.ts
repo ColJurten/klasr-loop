@@ -12,7 +12,6 @@ const api = vi.hoisted(() => ({
   listDriveItems: vi.fn(),
   ignoreProposal: vi.fn(),
   selectReferenceRoot: vi.fn(),
-  startSync: vi.fn(),
   getDashboardData: vi.fn(),
 }));
 
@@ -54,16 +53,6 @@ describe('dashboard BFF routes preserve upstream status codes', () => {
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({ error: 'database unavailable' });
-  });
-
-  it('returns upstream 401 from sync instead of collapsing to 502', async () => {
-    api.startSync.mockRejectedValueOnce(Object.assign(new Error('Missing authenticated organization'), { status: 401 }));
-    const { POST } = await import('@/app/api/sync/route');
-
-    const response = await POST();
-
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: 'Missing authenticated organization' });
   });
 
   it('exposes guarded reference folder listing through the browser BFF', async () => {
