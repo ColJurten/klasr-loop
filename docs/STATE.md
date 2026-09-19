@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-09-19 (Python 3.14 floor)
+> Last updated: 2026-09-19 (Python 3.13 floor)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-09-19 — Backend recalé sur Python 3.13 : CrewAI 1.15.21 / ChromaDB 1.1.1 ne sont pas prêts pour Python 3.14 (`pydantic.v1 ConfigError` sur `chroma_server_nofile`). L’import des deux bibliothèques est validé sous Python 3.13 ; le backend et les environnements locaux doivent donc utiliser Python 3.13.
 
 - [x] 2026-09-19 — Plancher Python 3.14 appliqué (`bce6da7`) ; la suite pytest complète sous Python 3.14 réel s’exécute sur la machine de l’utilisateur (Python local 3.14.6).
 

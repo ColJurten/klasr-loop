@@ -3,7 +3,7 @@
 Backend FastAPI temporairement situé dans `apps/api-py` afin de conserver le backend
 NestJS de `apps/api` exécutable jusqu'à la bascule de phase 3.
 
-Prérequis : Python 3.14+.
+Prérequis : Python 3.13+.
 
 ```sh
 pnpm api:install
