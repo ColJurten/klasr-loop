@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-09-13 (Python backend migration review)
+> Last updated: 2026-09-19 (Python 3.14 floor)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-09-19 — Plancher Python 3.14 appliqué (`bce6da7`) ; la suite pytest complète sous Python 3.14 réel s’exécute sur la machine de l’utilisateur (Python local 3.14.6).
 
 - [x] 2026-09-13 — Migration backend Python unique : squelette FastAPI/Alembic (`fa3cd3e`), port domaine et tests de parité (`4be7798`), corrections de revue (`c183b8c`), cutover et suppression NestJS (`41ea3a9`), puis qualité de suggestion Docling (`c27ebf1`). État courant : FastAPI/SQLAlchemy, table PostgreSQL `jobs` avec worker inline optionnel, MongoDB limité aux métadonnées TTL, routes disponibles avec et sans `/api/v1`, et schéma Prisma final conservé comme fixture de parité. Écarts assumés : `queueState` est désormais tenant-scoped (corrige la fuite globale NestJS) ; les deux préfixes doublent la surface historique. La CI exécute pytest deux fois et son job d'intégration dépend implicitement de Node pour le test crypto ; `test:integration` désigne désormais pytest, pas l'ancien harness complet. Aucun chemin de révocation n'existe dans l'ancien ou le nouveau backend : la parité est une absence partagée.
 
