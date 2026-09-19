@@ -11,7 +11,7 @@ from db.session import make_engine
 from jobs.service import JobsService
 from mongo.analyses import AnalysesRepository
 from services.analysis import AnalysisService
-from services.drive import LocalDriveExecutor, drive_executor
+from services.drive import drive_executor
 from services.llm_settings import ProviderClientService
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,8 @@ async def work_once(session, handler):
     return True
 
 
-async def run_worker(settings, engine, stop, local=None, analyses=None):
+async def run_worker(settings, engine, stop, analyses=None):
     settings.validate_runtime()
-    local = local or LocalDriveExecutor()
     owned = analyses is None
     analyses = analyses or AnalysesRepository(
         settings.mongo_url, settings.mongo_database, settings.analyses_ttl_days
@@ -51,7 +50,7 @@ async def run_worker(settings, engine, stop, local=None, analyses=None):
         async with httpx.AsyncClient() as client:
             while not stop.is_set():
                 with Session(engine, expire_on_commit=False) as session:
-                    drive = drive_executor(session, settings, client, local)
+                    drive = drive_executor(session, settings, client)
                     handler = AnalysisService(
                         session, settings, drive, ProviderClientService(settings, client), analyses
                     )

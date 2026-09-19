@@ -49,11 +49,6 @@ export default async function DashboardPage() {
         <p className="mt-1 text-sm text-ink/60">
           Les propositions, métriques et historiques viennent de la base de données.
         </p>
-        {data?.mode === 'local' && (
-          <p className="mt-3 inline-flex rounded-lg border border-peach-deep/35 bg-peach/30 px-3 py-1 text-xs font-medium">
-            Mode local
-          </p>
-        )}
         {data?.mode === 'service-account-staging' && (
           <p className="mt-3 inline-flex rounded-lg border border-lavender-deep/35 bg-lavender/30 px-3 py-1 text-xs font-medium">
             Validation staging · identité de service Google

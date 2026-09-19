@@ -10,9 +10,11 @@ from services.llm_settings import ProviderClientService
 
 async def context(request: Request, session=Depends(get_session, scope="function")):
     settings = request.app.state.settings
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(
+        transport=getattr(request.app.state, "http_transport", None)
+    ) as client:
         drive = getattr(request.app.state, "drive", None) or drive_executor(
-            session, settings, client, request.app.state.local_drive
+            session, settings, client
         )
         jobs = JobsService(
             session, settings.inline_worker, settings.inline_worker or settings.worker

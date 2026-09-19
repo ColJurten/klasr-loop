@@ -18,13 +18,9 @@ class DashboardService:
         return serialize(
             dict(
                 mode=(
-                    "local"
-                    if self.settings.local_mvp
-                    else (
-                        "service-account-staging"
-                        if self.settings.acceptance_google_service_account
-                        else "production"
-                    )
+                    "service-account-staging"
+                    if self.settings.acceptance_google_service_account
+                    else "production"
                 ),
                 connection=(
                     dict(
@@ -40,11 +36,7 @@ class DashboardService:
                 analysisFailures=self.jobs.failed_analysis_count(organization_id),
                 referenceRoot=self.folders.root(organization_id),
                 folders=self.folders.inherited(organization_id),
-                inputItems=(
-                    await self.sync.input_items(organization_id, user_id)
-                    if self.settings.local_mvp
-                    else []
-                ),
+                inputItems=[],
                 proposals=self.proposals.list(organization_id),
                 history=self.proposals.list(organization_id, history=True),
             )

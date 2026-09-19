@@ -87,7 +87,7 @@ class ProviderClientService:
                 local = ip.is_loopback
             except ValueError:
                 local = host == "localhost"
-            if not (local and (self.settings.node_env == "test" or self.settings.local_mvp)):
+            if not (local and self.settings.node_env == "test"):
                 origin = f"{url.scheme}://{url.netloc}"
                 if (
                     url.scheme != "https"

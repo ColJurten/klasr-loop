@@ -41,16 +41,11 @@ reglementees. Le flux reel est volontairement explicite :
 6. executer le renommage/deplacement uniquement apres `Valider`, `Corriger` ou
    `Retirer`.
 
-`/demo` est une maquette fictive. Elle ne prouve ni Google Drive ni le flux de
-production. Les tests unitaires prouvent les contrats isolés ; l'adaptateur
-local prouve une régression intégrée sans fournisseur ; seule une vérification
-humaine authentifiée prouve le chemin Google réel.
-
 ## Prerequis
 
 - Node.js 20 (compatible avec les versions pinnees du monorepo).
 - `pnpm@10.15.1` exactement, comme declare dans `package.json`.
-- Python 3.13+ pour le backend FastAPI (`apps/api-py`).
+- Python 3.14 pour le backend FastAPI (`apps/api-py`).
 - Docker avec Compose v2.
 - Chromium installe par Playwright si `pnpm test:e2e` le demande.
 
@@ -77,15 +72,10 @@ Valeurs a remplacer pour un developpement local complet :
 - `INTERNAL_API_SECRET` : meme valeur jetable dans API et web.
 - `TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
 - `NEXTAUTH_SECRET` : valeur locale jetable.
-- `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : seulement pour tester OAuth Google reel.
-
-Pour le mode local sans identifiants externes, activer :
-
-```dotenv
-KLASR_LOCAL_MVP=true
-KLASR_INLINE_WORKER=true
-NEXT_PUBLIC_KLASR_LOCAL_MVP=true
-```
+- `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : client OAuth Google Cloud requis.
+- `DATABASE_URL` et `MONGO_URL` : PostgreSQL et MongoDB locaux.
+- Variables LLM : choisir le fournisseur, le modèle et la clé dans les réglages,
+  ou définir les variables `KLASR_LLM_*` décrites dans `.env.example`.
 
 ## Services locaux
 
@@ -119,21 +109,8 @@ pnpm api:worker       # Worker Python (KLASR_WORKER=true)
 pnpm --filter @klasr/web dev   # Next.js (port 3000)
 ```
 
-En mode local avec `KLASR_INLINE_WORKER=true`, le worker se lance dans l'API et
-`api:worker` n'est pas necessaire.
-
-## Validation locale sans credentials
-
-Chemin le plus simple :
-
-```bash
-docker compose up -d --force-recreate --wait
-pnpm api:install
-pnpm api:migrate
-pnpm api:test
-pnpm test
-pnpm test:e2e
-```
+L'application exige une connexion OAuth Google autorisée. Le worker doit être
+lancé séparément avec `pnpm api:worker` en développement.
 
 ## OCR et qualite des suggestions
 
@@ -148,7 +125,7 @@ sortie inventee ou dangereuse est rejetee et retombe vers la revue manuelle.
 
 ## Configuration Google OAuth / Drive
 
-Pour tester Google Drive reel :
+Pour utiliser Klasr localement avec Google Drive réel :
 
 1. Creer un projet Google Cloud.
 2. Activer Google Drive API.
@@ -167,9 +144,8 @@ Pour tester Google Drive reel :
 7. Verifier que le scope Drive est autorise :
    `https://www.googleapis.com/auth/drive`.
 
-Frontiere connue : sans credentials Google fournis par l'evaluateur, le depot ne
-peut pas executer une operation sur un Drive de production. Le mode local couvre
-le meme contrat applicatif sans OAuth externe.
+Sans client OAuth Google et consentement utilisateur, aucun parcours Drive n'est
+disponible. Aucun secret réel ne doit être ajouté au dépôt.
 
 ### Éligibilité et vérification Google réelle
 
@@ -195,28 +171,6 @@ leurs métadonnées de staging selon la procédure d'exploitation. Aucun compte,
 cookie, jeton, texte OCR ou contenu ne doit figurer dans une capture, un log ou
 un rapport.
 
-## Script manuel de validation locale (ne prouve pas Google)
-
-1. Demarrer PostgreSQL et MongoDB :
-   `docker compose up -d --force-recreate --wait`.
-2. Installer et migrer :
-   `pnpm api:install && pnpm api:migrate`.
-3. Demarrer API et web : `pnpm api:start` et `pnpm --filter @klasr/web dev`.
-4. Ouvrir `http://localhost:3000/login`.
-5. Cliquer `Mode local`.
-6. Sur le dashboard, choisir `Cabinet de demonstration`.
-7. Verifier l'affichage de branches imbriquees :
-   `/Comptabilite/Banque`, `/Comptabilite/Electricite`, `/Social/Paie`.
-8. Dans `Fichiers a organiser`, choisir `Dossier - A classer`.
-9. Cliquer `Lancer l'organisation`.
-10. Verifier plusieurs propositions, les badges de confiance, les cartes "a
-    verifier" et `Tout valider` qui ignore ces cartes faibles.
-11. Valider une proposition telle quelle.
-12. Corriger un nom de fichier.
-13. Corriger une destination avec le select de dossiers herites.
-14. Ignorer une proposition.
-15. Recharger : l'historique doit conserver les decisions ; les fichiers
-    ignores restent à leur place et ne sont pas reenfiles.
 
 ## Checks automatises
 

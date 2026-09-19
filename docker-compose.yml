@@ -15,8 +15,6 @@ services:
       TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       GOOGLE_CLIENT_ID: replace-with-google-client-id
       GOOGLE_CLIENT_SECRET: replace-with-google-client-secret
-      KLASR_LOCAL_MVP: 'true'
-      KLASR_INLINE_WORKER: 'true'
     command: ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 3001 --app-dir src"]
     depends_on:
       - postgres

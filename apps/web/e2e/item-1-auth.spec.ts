@@ -81,7 +81,7 @@ async function captureLogin(page: import('@playwright/test').Page, viewport: str
   await expect(page).toHaveURL(/\/login/);
   await page.getByRole('button', { name: 'Continuer avec Google' }).focus();
   await page.keyboard.press('Tab');
-  await expect(page.locator(':focus')).toHaveText('Mode local');
+  await expect(page.locator(':focus')).toContainText('Continuer avec Microsoft');
   await page.screenshot({ path: `${evidence}/login-${viewport}-color.png`, fullPage: true });
   await page.evaluate(() => { document.documentElement.style.filter = 'grayscale(1)'; });
   await page.screenshot({ path: `${evidence}/login-${viewport}-grayscale.png`, fullPage: true });

@@ -262,9 +262,4 @@ describe('DriveWorkflow production browser', () => {
     await waitFor(() => expect(window.sessionStorage.getItem(selectionKey)).toBeNull());
     expect(screen.getAllByLabelText(/sélectionner/i).some((choice) => (choice as HTMLInputElement).checked)).toBe(false);
   });
-  it('keeps the deterministic one-click option only in local mode', () => {
-    render(<DriveWorkflow data={{ ...baseDashboard, mode: 'local', connection: null }} />);
-    expect(screen.getByRole('button', { name: /cabinet de démonstration/i })).toBeDefined();
-    expect(clientApi.listDriveItems).not.toHaveBeenCalled();
-  });
 });

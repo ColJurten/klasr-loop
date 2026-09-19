@@ -70,10 +70,9 @@ du fichier sont consommés en stream par l'OCR puis jetés. La mutation Drive
 (`PATCH files`) n'est appelée que depuis `ClassificationService.confirm()`, après
 validation explicite. Microsoft reste authentification-only dans ce MVP.
 
-Le mode `KLASR_LOCAL_MVP=true` est un simulateur d'arêtes externes
-Google/OCR uniquement : Next.js, NestJS HTTP, PostgreSQL, MongoDB, Prisma,
-repositories, services et pg-boss restent réels. Il refuse de démarrer en
-production, comme `KLASR_INLINE_WORKER=true`.
+Le produit n'expose aucun simulateur Drive : toute navigation, lecture et
+mutation passe par Google OAuth et l'API Google Drive. Les tests interceptent le
+transport HTTP du client réel, sans jeton ni document client.
 
 Le pipeline OCR/document-understanding garde les octets en mémoire bornée
 pendant l'analyse, privilégie la couche texte PDF native, OCR seulement les pages
