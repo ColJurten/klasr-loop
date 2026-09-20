@@ -1,9 +1,11 @@
 import json
 import sys
 import types
+from io import BytesIO
 
 import pytest
 from crewai import BaseLLM
+from PIL import Image, ImageDraw
 from pydantic import ValidationError
 
 import dsa
@@ -473,3 +475,18 @@ def test_pdf_pipeline_options_are_wired_correctly():
     option = converter.format_to_options.get(InputFormat.PDF)
     assert option is not None and isinstance(option, PdfFormatOption)
     assert option.pipeline_options.do_ocr is True
+
+
+def test_scanned_pdf_is_extracted_with_ocr():
+    image = Image.new("RGB", (1600, 1000), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((100, 100), "FACTURE INV-2026-042", fill="black", font_size=80)
+    draw.text((100, 250), "DATE 2026-09-20", fill="black", font_size=80)
+    draw.text((100, 400), "TOTAL 1 234,56 EUR", fill="black", font_size=80)
+    scanned_pdf = BytesIO()
+    image.save(scanned_pdf, format="PDF", resolution=200)
+
+    result = extract_bytes(scanned_pdf.getvalue(), ".pdf")
+
+    assert result.quality in {"ok", "sparse"}
+    assert result.text
