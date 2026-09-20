@@ -37,9 +37,9 @@ export function assertTreeBinding(expected, actual) {
 export function parseObservedRecord(text, tree) {
   let value; try { value = JSON.parse(text); } catch { throw new Error('observed_record_malformed'); }
   const keys = Object.keys(value).sort().join(',');
-  if (keys !== 'modelCount,modelUsed,schema,selectedModelId,stage,tree' || value.schema !== 'klasr-live-observed-v1' || value.stage !== 'settings-deleted'
-    || !Number.isInteger(value.modelCount) || value.modelCount < 1 || !/^[a-z0-9._-]{1,200}$/i.test(value.selectedModelId ?? '')
-    || !/^[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(value.modelUsed)
+  if (keys !== 'modelUsed,schema,selectedModelId,stage,tree' || value.schema !== 'klasr-live-observed-v1' || value.stage !== 'env-llm-verified'
+    || !/^[a-z0-9._-]{1,200}$/i.test(value.selectedModelId ?? '')
+    || !/^[a-z0-9._:-]+(?:\/[a-z0-9._:-]+){1,2}$/i.test(value.modelUsed)
     || !value.modelUsed.endsWith(`/${value.selectedModelId}`)) throw new Error('observed_record_schema');
   assertTreeBinding(tree, value.tree); return value;
 }

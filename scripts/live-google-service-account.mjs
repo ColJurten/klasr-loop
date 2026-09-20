@@ -132,12 +132,12 @@ mkdirSync(path.dirname(item5ProofPath), { recursive: true });
 
 if (process.argv.includes('--evidence-self-check')) {
   const tree = { schema: 'klasr-tree-v1', mode: 'worktree', head: lineage.sha, digest: 'b'.repeat(64) };
-  const observed = { schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: 'claude-safe', modelCount: 2, modelUsed: 'anthropic/claude-safe', tree };
+  const observed = { schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: 'claude-safe', modelUsed: 'anthropic/claude-safe', tree };
   const raw = {
     serviceAccountAuth: 'PASS', realDriveListing: 'PASS', realDriveDownloadOcr: 'PASS', realProposalReview: 'PASS',
     realDriveConfirmMutation: 'PASS', realDriveCorrectMutation: 'PASS', realDriveIgnoreNoMutation: 'PASS', terminalNoReenqueue: 'PASS',
     desktopBrowser: 'PASS', mobile390Browser: 'PASS', launchCompletion: 'PASS', freshProviderMetadata: 'PASS',
-    anthropicDiscovery: 'PASS', anthropicSettingSaved: 'PASS', anthropicClassification: 'PASS', anthropicSettingRemoved: 'PASS',
+    llmClassification: 'PASS',
   };
   const proof = { fixtureRestored: true, createdItemsRemoved: true, tenantCleaned: true, appsStopped: true, noOrphans: true };
   const complete = sanitizedManifest(raw, proof, lineage, tree, observed, true);
@@ -150,15 +150,13 @@ if (process.argv.includes('--evidence-self-check')) {
   for (const bad of [{ ...item4, task: 't_wrong' }, { ...item4, attempt: 2 }, { ...item4, tree: { ...tree, digest: 'c'.repeat(64) } }]) {
     assertThrows(() => assertItem4Proof(bad, evidenceTask, lineage, tree), 'Item 4 proof lineage mismatch must fail closed');
   }
-  const item3 = sanitizedItem3Proof({ serviceAccountIdentity: 'service@example.test', grantedScopes: ['https://www.googleapis.com/auth/drive'], driveConnectionPresent: true, lastSyncAt: '2026-08-30T00:00:00.000Z', realSyncObserved: true, fileBrowserVisible: true }, evidenceTask, lineage, tree);
+  const item3 = sanitizedItem3Proof({ serviceAccountIdentityVerified: true, grantedScopes: ['https://www.googleapis.com/auth/drive'], driveConnectionPresent: true, lastSyncAt: '2026-08-30T00:00:00.000Z', realSyncObserved: true, fileBrowserVisible: true }, evidenceTask, lineage, tree);
   assertItem3Proof(item3, evidenceTask, lineage, tree, true);
   for (const bad of [{ ...item3, task: 't_wrong' }, { ...item3, attempt: 2 }, { ...item3, sha: '1'.repeat(40) }, { ...item3, tree: { ...tree, digest: 'c'.repeat(64) } }, { ...item3, assertions: { ...item3.assertions, lastSyncAt: null } }]) assertThrows(() => assertItem3Proof(bad, evidenceTask, lineage, tree, true), 'Item 3 proof mismatch must fail closed');
   assert(complete.status === 'PASS' && incomplete.status === 'FAIL', 'Evidence self-check must fail incomplete runs');
   const markdown = realAcceptanceMarkdown(complete, evidenceTask, undefined);
   assert(markdown.includes(`Task: \`${evidenceTask}\``) && markdown.includes(`Attempt: \`${lineage.attempt}\``) && markdown.includes(`SHA: \`${lineage.sha}\``), 'REAL_ACCEPTANCE lineage must use current runner inputs');
-  for (const key of ['anthropicDiscovery', 'anthropicSettingSaved', 'anthropicClassification', 'anthropicSettingRemoved']) {
-    assert(sanitizedManifest({ ...raw, [key]: 'FAIL' }, proof, lineage, tree, observed, true).status === 'FAIL', `${key} must bind manifest PASS`);
-  }
+  assert(sanitizedManifest({ ...raw, llmClassification: 'FAIL' }, proof, lineage, tree, observed, true).status === 'FAIL', 'LLM classification must bind manifest PASS');
   const borrowedProof = Object.fromEntries(Object.keys(item5ProofTemplate()).map((key) => [key, !['originalExactNameCount', 'originalPdfCount', 'createdRunnerOwned', 'createdInAuthorizedRoot', 'finalExactNameCount', 'finalPdfCount'].includes(key)]));
   for (const key of ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount']) borrowedProof[key] = 0;
   const issue21 = { ...lineage, issue: 21 };
@@ -174,8 +172,9 @@ if (process.argv.includes('--evidence-self-check')) {
   for (const key of ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount']) runnerProof[key] = 0;
   const runnerItem5 = sanitizedItem5Proof(runnerProof, evidenceTask, lineage, tree);
   assertItem5Proof(runnerItem5, evidenceTask, lineage, tree, true, false);
-  assertThrows(() => assertItem5Proof(sanitizedItem5Proof({ ...runnerProof, originalExactNameCount: 1, finalExactNameCount: 1 }, evidenceTask, lineage, tree), evidenceTask, lineage, tree, true, false), 'Completed runner-owned nonzero Item 5 counts must fail closed');
-  assert(sanitizedManifest(raw, proof, issue21, tree, observed, true, borrowedProof, true).status === 'PASS', 'Issue 21 borrowed manifest must pass from complete truth');
+  assertItem5Proof(sanitizedItem5Proof({ ...runnerProof, originalExactNameCount: 1, originalPdfCount: 1, finalExactNameCount: 1, finalPdfCount: 1 }, evidenceTask, lineage, tree), evidenceTask, lineage, tree, true, false);
+  assertThrows(() => assertItem5Proof(sanitizedItem5Proof({ ...runnerProof, originalExactNameCount: 1 }, evidenceTask, lineage, tree), evidenceTask, lineage, tree, true, false), 'Runner-owned Item 5 counts must be restored');
+  assert(sanitizedManifest(raw, proof, issue21, tree, observed, true, borrowedProof, true).status === 'FAIL', 'Borrowed mode must not claim full-path PASS');
   assert(sanitizedManifest(raw, proof, issue21, tree, undefined, true, borrowedProof, true).status === 'FAIL', 'Borrowed manifest must require observed truth');
   assert(sanitizedManifest({ ...raw, realDriveListing: 'FAIL' }, proof, issue21, tree, observed, true, borrowedProof, true).status === 'FAIL', 'Borrowed manifest must require every result');
   process.stdout.write('live evidence schema check PASS\n');
@@ -223,7 +222,7 @@ const evidence = {
   realProposalReview: 'FAIL', realDriveConfirmMutation: 'FAIL', realDriveCorrectMutation: 'FAIL',
   realDriveIgnoreNoMutation: 'FAIL', terminalNoReenqueue: 'FAIL', desktopBrowser: 'FAIL',
   mobile390Browser: 'FAIL', launchCompletion: 'FAIL', freshProviderMetadata: 'FAIL',
-  anthropicDiscovery: 'FAIL', anthropicSettingSaved: 'FAIL', anthropicClassification: 'FAIL', anthropicSettingRemoved: 'FAIL', cleanup: 'FAIL',
+  llmClassification: 'FAIL', cleanup: 'FAIL',
 };
 let llmProvider;
 let selectedLlmModel;
@@ -239,7 +238,7 @@ let legacyFolderSnapshot;
 let ignoreMutationCount;
 let ignoreWindowOpen = false;
 const item4Proof = { oneLegacyFolderQuarantined: false, quarantinedOutsideReference: false, absentDuringAcceptance: false, ignoredNameIdentical: false, ignoredParentsIdentical: false, ignoreFilesUpdateOrMoveCount: null, setupOutsideIgnoreWindow: false, restorationOutsideIgnoreWindow: false, restoredNameExact: false, restoredParentsExact: false, freshRestorationReadback: false };
-const item3Proof = { serviceAccountIdentity: null, grantedScopes: [], driveConnectionPresent: false, lastSyncAt: null, realSyncObserved: false, fileBrowserVisible: false };
+const item3Proof = { serviceAccountIdentityVerified: false, grantedScopes: [], driveConnectionPresent: false, lastSyncAt: null, realSyncObserved: false, fileBrowserVisible: false };
 const item5Proof = item5ProofTemplate();
 let syntheticReviewFixtureId;
 let syncBaseline;
@@ -293,7 +292,7 @@ try {
   failureStage = 'auth';
   accessToken = await serviceAccountToken();
   item3Proof.grantedScopes = await providerTokenInfo();
-  item3Proof.serviceAccountIdentity = await providerDriveIdentity();
+  item3Proof.serviceAccountIdentityVerified = Boolean(await providerDriveIdentity());
   evidence.serviceAccountAuth = 'PASS';
   failureStage = 'recovery';
   await recoverMarkedFixtures();
@@ -319,7 +318,7 @@ try {
   if (!quotaSafeMode) await quarantineLegacyFolder(reference.id);
   evidence.realDriveListing = 'PASS';
 
-  // fixtureNames order is contractual: invoice drives OCR/confirm; review drives extraction failure/ignore/correct.
+  // fixtureNames order is contractual: invoice drives OCR/confirm; review drives manual review/ignore/correct.
   const [invoiceFixture] = supplied ?? [];
   failureStage = 'app-start';
   await ensureApps();
@@ -348,8 +347,6 @@ try {
   await resetTenantData(organizationId);
   assert(await db('count', organizationId, 'rules') === 0, 'Acceptance tenant must have zero rules');
   failureStage = 'anthropic-server-setup';
-  evidence.anthropicDiscovery = 'PASS';
-  evidence.anthropicSettingSaved = 'PASS';
   failureStage = 'settings-verification';
   assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
   failureStage = 'dashboard-resume';
@@ -397,7 +394,7 @@ try {
     assert(item5Proof.anthropicProvenance, 'Current Item 5 proposal lacks Anthropic provenance');
     assert(item5Proof.noDestinationMatch && item5Proof.notExtractionFailed, 'Current Item 5 proposal is not review-required for no_destination_match');
     observedModelUsed = liveProposal.modelUsed;
-    evidence.anthropicClassification = 'PASS';
+    evidence.llmClassification = 'PASS';
     evidence.realDriveDownloadOcr = 'PASS';
     evidence.realProposalReview = 'PASS';
     failureStage = 'ui-decisions-provider-metadata';
@@ -427,8 +424,6 @@ try {
     item5Proof.correctedParentExact = sameParents(correctedMeta.parents, [destinations.meetings.id]);
     assert(item5Proof.correctedNameExact && item5Proof.correctedParentExact, 'Direct correction metadata mismatch');
     evidence.realDriveCorrectMutation = 'PASS';
-    evidence.realDriveConfirmMutation = 'PASS';
-    evidence.realDriveIgnoreNoMutation = 'PASS';
     evidence.freshProviderMetadata = 'PASS';
     await expect(page.getByText('Classés', { exact: true }).locator('..').getByText('1', { exact: true })).toBeVisible();
     item5Proof.browserKpiUpdated = true;
@@ -505,7 +500,7 @@ try {
   const anthropicProof = await db('proposal', organizationId, invoiceFixture.id);
   assert(anthropicProof?.modelUsed === `${llmProvider}/${selectedLlmModel}`, 'LLM provider/model provenance is missing');
   observedModelUsed = anthropicProof.modelUsed;
-  evidence.anthropicClassification = 'PASS';
+  evidence.llmClassification = 'PASS';
   failureStage = 'ui-decisions-provider-metadata';
   const proposals = [];
   for (const fixture of supplied) {
@@ -527,6 +522,10 @@ try {
   const confirmedCard = confirmed.card;
   const ignoredCard = ignored.card;
   await expectReviewRequiredProposal(proposals.find(({ reviewRequired }) => reviewRequired).card);
+  const reviewProof = await db('proposal', organizationId, reviewFixture.id);
+  item5Proof.noDestinationMatch = reviewProof?.reviewReason === 'no_destination_match';
+  item5Proof.notExtractionFailed = reviewProof?.reviewReason !== 'extraction_failed';
+  assert(item5Proof.noDestinationMatch && item5Proof.notExtractionFailed, 'Review fixture did not extract into no_destination_match review');
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-review.png'), fullPage: true });
@@ -598,6 +597,10 @@ try {
 
   failureStage = 'correction-relaunch';
   await restoreFixtures(false);
+  if (reviewFixture.id !== syntheticReviewFixtureId) {
+    await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
+    await replaceBytes(reviewFixture.id, reviewBytes);
+  }
   if (reviewFixture.id === syntheticReviewFixtureId) await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
   await resetTenantData(organizationId);
   assert(await db('count', organizationId, 'rules') === 0, 'Correction run must have zero rules');
@@ -635,8 +638,7 @@ try {
   }
   failureStage = 'settings-delete';
   assert(await db('count', organizationId, 'settings') === 0, 'tenant_setting_absent');
-  evidence.anthropicSettingRemoved = 'PASS';
-  writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: selectedLlmModel, modelCount: 1, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
+  writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: selectedLlmModel, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
   runCompleted = true;
 } catch (error) {
   failureStageAtFailure = failureStage;
@@ -721,8 +723,7 @@ function realAcceptanceMarkdown(manifest, task, model, provider = 'llm') {
 }
 function sanitizedManifest(raw, proof, manifestLineage, tree, observed, completed, item5Assertions, borrowedMode = false) {
   const results = {
-    anthropic_discovery: raw.anthropicDiscovery === 'PASS', anthropic_setting_saved: raw.anthropicSettingSaved === 'PASS',
-    anthropic_classification: raw.anthropicClassification === 'PASS', anthropic_setting_removed: raw.anthropicSettingRemoved === 'PASS',
+    llm_classification: raw.llmClassification === 'PASS',
     service_account_auth: raw.serviceAccountAuth === 'PASS', drive_listing: raw.realDriveListing === 'PASS',
     drive_download_ocr: raw.realDriveDownloadOcr === 'PASS', proposal_review: raw.realProposalReview === 'PASS',
     confirm_mutation: raw.realDriveConfirmMutation === 'PASS', correction_mutation: raw.realDriveCorrectMutation === 'PASS',
@@ -732,14 +733,8 @@ function sanitizedManifest(raw, proof, manifestLineage, tree, observed, complete
   };
   const cleanupResult = { fixture_restored: proof.fixtureRestored, created_items_removed: proof.createdItemsRemoved, tenant_cleaned: proof.tenantCleaned };
   const processes = { apps_stopped: proof.appsStopped, no_orphans: proof.noOrphans };
-  const item5Required = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'headedBrowser', 'noDestinationMatch', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
-  const item5Passed = borrowedMode && completed && observed && item5Assertions
-    && item5Assertions.originalExactNameCount === 0 && item5Assertions.originalPdfCount === 0
-    && item5Assertions.finalExactNameCount === 0 && item5Assertions.finalPdfCount === 0
-    && item5Assertions.createdRunnerOwned === false && item5Assertions.createdInAuthorizedRoot === false
-    && item5Required.every((key) => item5Assertions[key] === true)
+  const passed = !borrowedMode && completed && observed
     && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
-  const passed = item5Passed || (!borrowedMode && completed && observed && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true));
   return {
     version: 1,
     identity: 'Google service account non-production acceptance',
@@ -753,8 +748,8 @@ function parseLineage(env) {
   return value;
 }
 function fixtureMode(env, issue) {
-  if (Object.hasOwn(env, 'KLASR_LIVE_FIXTURE_MODE')) assert(env.KLASR_LIVE_FIXTURE_MODE === 'borrowed-carrier', 'Live fixture mode is invalid');
-  return env.KLASR_LIVE_FIXTURE_MODE ?? (issue === 5 ? 'borrowed-carrier' : 'runner-owned');
+  if (Object.hasOwn(env, 'KLASR_LIVE_FIXTURE_MODE')) assert(['runner-owned', 'borrowed-carrier'].includes(env.KLASR_LIVE_FIXTURE_MODE), 'Live fixture mode is invalid');
+  return env.KLASR_LIVE_FIXTURE_MODE ?? 'runner-owned';
 }
 function assertProviderMutationAllowed(mode, route, init) {
   assert(!(mode === 'borrowed-carrier' && init.method === 'POST' && /^\/(?:upload\/)?drive\/v3\/files(?:[/?]|$)/.test(route)), 'Borrowed carrier mode forbids provider file creates');
@@ -763,7 +758,7 @@ function parseEvidenceTask(env) { assert(/^t_[a-z0-9]+$/.test(env.KLASR_EVIDENCE
 function assertManifest(manifest) {
   const keys = (value) => Object.keys(value).sort().join(',');
   assert(keys(manifest) === 'attempt,cleanup,identity,issue,observed,processes,results,sha,status,tree,version', 'Sanitized manifest top-level schema mismatch');
-  assert(keys(manifest.results) === 'anthropic_classification,anthropic_discovery,anthropic_setting_removed,anthropic_setting_saved,confirm_mutation,correction_mutation,desktop_browser,drive_download_ocr,drive_listing,fresh_provider_metadata,launch_completion,mobile_390_browser,proposal_review,reject_mutation,service_account_auth,terminal_no_reenqueue', 'Sanitized manifest result schema mismatch');
+  assert(keys(manifest.results) === 'confirm_mutation,correction_mutation,desktop_browser,drive_download_ocr,drive_listing,fresh_provider_metadata,launch_completion,llm_classification,mobile_390_browser,proposal_review,reject_mutation,service_account_auth,terminal_no_reenqueue', 'Sanitized manifest result schema mismatch');
   assert(keys(manifest.cleanup) === 'created_items_removed,fixture_restored,tenant_cleaned', 'Sanitized manifest cleanup schema mismatch');
   assert(keys(manifest.processes) === 'apps_stopped,no_orphans', 'Sanitized manifest process schema mismatch');
   assert(/^[0-9a-f]{40}$/.test(manifest.sha) && Number.isInteger(manifest.issue) && manifest.issue > 0 && Number.isInteger(manifest.attempt) && manifest.attempt > 0, 'Sanitized manifest lineage is invalid');
@@ -787,12 +782,12 @@ function assertItem3Proof(proof, task, proofLineage, tree, requireComplete = fal
   const keys = (value) => Object.keys(value).sort().join(',');
   assert(keys(proof) === 'assertions,attempt,issue,schema,sha,task,tree' && proof.schema === 'klasr-item3-provider-proof-v1', 'Item 3 proof schema mismatch');
   assert(proof.task === task && proof.issue === proofLineage.issue && proof.attempt === proofLineage.attempt && proof.sha === proofLineage.sha, 'Item 3 proof lineage mismatch');
-  assert(keys(proof.assertions) === 'driveConnectionPresent,fileBrowserVisible,grantedScopes,lastSyncAt,realSyncObserved,serviceAccountIdentity', 'Item 3 proof assertion schema mismatch');
-  assert(proof.assertions.serviceAccountIdentity === null || /^[^\s@]+@[^\s@]+$/.test(proof.assertions.serviceAccountIdentity), 'Item 3 identity read-back invalid');
+  assert(keys(proof.assertions) === 'driveConnectionPresent,fileBrowserVisible,grantedScopes,lastSyncAt,realSyncObserved,serviceAccountIdentityVerified', 'Item 3 proof assertion schema mismatch');
+  assert(typeof proof.assertions.serviceAccountIdentityVerified === 'boolean', 'Item 3 identity read-back invalid');
   assert(Array.isArray(proof.assertions.grantedScopes) && proof.assertions.grantedScopes.every((scope) => typeof scope === 'string'), 'Item 3 granted-scope read-back invalid');
   assert(proof.assertions.lastSyncAt === null || !Number.isNaN(Date.parse(proof.assertions.lastSyncAt)), 'Item 3 lastSyncAt invalid');
   assert(typeof proof.assertions.driveConnectionPresent === 'boolean' && typeof proof.assertions.realSyncObserved === 'boolean' && typeof proof.assertions.fileBrowserVisible === 'boolean', 'Item 3 boolean assertion invalid');
-  if (requireComplete) assert(proof.assertions.serviceAccountIdentity && proof.assertions.grantedScopes.includes('https://www.googleapis.com/auth/drive') && proof.assertions.driveConnectionPresent && proof.assertions.lastSyncAt && proof.assertions.realSyncObserved && proof.assertions.fileBrowserVisible, 'Item 3 proof assertions incomplete');
+  if (requireComplete) assert(proof.assertions.serviceAccountIdentityVerified && proof.assertions.grantedScopes.includes('https://www.googleapis.com/auth/drive') && proof.assertions.driveConnectionPresent && proof.assertions.lastSyncAt && proof.assertions.realSyncObserved && proof.assertions.fileBrowserVisible, 'Item 3 proof assertions incomplete');
   assertTreeBinding(tree, proof.tree);
 }
 function sanitizedItem5Proof(assertions, task, proofLineage, tree) {
@@ -812,7 +807,7 @@ function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = fal
       && proof.assertions.finalExactNameCount === 0 && proof.assertions.finalPdfCount === 0
       && proof.assertions.createdRunnerOwned === false && proof.assertions.createdInAuthorizedRoot === false
       && requiredTrue.every((key) => proof.assertions[key] === true), 'Item 5 borrowed-carrier proof assertions incomplete');
-  } else if (requireComplete) assert(proof.assertions.originalExactNameCount === 0 && proof.assertions.originalPdfCount === 0 && proof.assertions.finalExactNameCount === 0 && proof.assertions.finalPdfCount === 0, 'Item 5 proof assertions incomplete');
+  } else if (requireComplete) assert(proof.assertions.finalExactNameCount === proof.assertions.originalExactNameCount && proof.assertions.finalPdfCount === proof.assertions.originalPdfCount, 'Item 5 proof assertions incomplete');
   assertTreeBinding(tree, proof.tree);
 }
 function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) throw new Error('Live app URLs must use loopback'); return value.replace(/\/$/, ''); }
@@ -973,7 +968,15 @@ function syntheticInvoicePdf(reference) {
   const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(pdf);
 }
-function reviewRequiredPdf() { return Buffer.from('%PDF-1.4\n%%EOF\n'); }
+function reviewRequiredPdf() {
+  const text = 'Contract REF-ZEPHYR-742 dated 2026-08-15 from Zephyr Research. Archived research memorandum without a matching destination.';
+  const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>', `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+  let pdf = '%PDF-1.4\n'; const offsets = [0];
+  objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = Buffer.byteLength(pdf); pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf);
+}
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
 function selectFixtures(items) {
@@ -1011,7 +1014,7 @@ async function ensureApps() {
   children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'ignore', env: common }), url: `${apiBase}/health` });
   await waitReachable(`${apiBase}/health`);
   children.push({ child: spawn(python, ['src/worker.py'], { cwd: path.join(root, 'apps/api-py'), detached: true, stdio: 'ignore', env: { ...common, KLASR_WORKER: 'true' } }) });
-  children.push({ child: spawn('pnpm', ['--filter', '@klasr/web', 'exec', 'next', 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
+  children.push({ child: spawn(process.execPath, [requireWeb.resolve('next/dist/bin/next'), 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: path.join(root, 'apps/web'), detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
   await waitReachable(`${webBase}/login`);
 }
 function assertPythonRuntime() {
@@ -1056,7 +1059,7 @@ async function lifecycleCheck() {
 async function tenantRecord() { for (let i = 0; i < 40; i += 1) { const tenant = db('tenant'); if (tenant) return tenant; await delay(250); } throw new Error('Acceptance tenant was not onboarded'); }
 async function failedAnalysisDiagnostic() {
   if (!organizationId) return;
-  try { return db('failed', organizationId) ? 'stage=analysis reason=job_failed' : undefined; }
+  try { return db('failed', organizationId, runStartedAt.toISOString()) ? 'stage=analysis reason=job_failed' : undefined; }
   catch { return undefined; }
 }
 function assertNoPriorTenantSettingCount(count) { assert(count === 0, 'Prior tenant setting cannot be safely restored without plaintext'); }

@@ -2,6 +2,7 @@
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import delete, select, update
@@ -28,6 +29,11 @@ from db.models import (  # noqa: E402
     User,
 )
 from db.session import make_engine  # noqa: E402
+
+
+def utc_iso(value):
+    aware = value.replace(tzinfo=timezone.utc)
+    return aware.isoformat().replace("+00:00", "Z")
 
 
 def tenant(session):
@@ -80,7 +86,7 @@ def main():
                 {
                     "organizationId": row.id,
                     "lastSyncAt": (
-                        row.last_sync_at.isoformat()
+                        utc_iso(row.last_sync_at)
                         if row.last_sync_at
                         else None  # noqa: E501
                     ),
@@ -102,7 +108,7 @@ def main():
                 result = {
                     "present": bool(connection),
                     "lastSyncAt": (
-                        connection.last_sync_at.isoformat()
+                        utc_iso(connection.last_sync_at)
                         if connection and connection.last_sync_at
                         else None
                     ),
@@ -149,12 +155,18 @@ def main():
                     )
                 result = len(session.scalars(statement).all())
             elif command == "failed":
+                started_at = datetime.fromisoformat(  # noqa: E501
+                    sys.argv[3].replace("Z", "+00:00")
+                )
+                started_at = started_at.astimezone(timezone.utc)
+                started_at = started_at.replace(tzinfo=None)
                 result = bool(
                     session.scalar(
                         select(Job.id)
                         .where(
                             Job.organization_id == organization_id,
                             Job.status == "failed",
+                            Job.created_at >= started_at,
                         )
                         .limit(1)
                     )
