@@ -1016,7 +1016,7 @@ async function ensureApps() {
 }
 function assertPythonRuntime() {
   const version = spawnSync(path.join(root, 'apps/api-py/.venv/bin/python'), ['--version'], { encoding: 'utf8' });
-  assert(version.status === 0 && /Python 3\.13\./.test(version.stdout || version.stderr), 'apps/api-py/.venv must use Python 3.13');
+  assert(version.status === 0 && /Python 3\.1[3-9]\./.test(version.stdout || version.stderr), 'apps/api-py/.venv must use Python 3.13+');
 }
 async function stopApps(owned) {
   for (const { child } of owned) signalTree(child, 'SIGTERM');

@@ -45,7 +45,7 @@ reglementees. Le flux reel est volontairement explicite :
 
 - Node.js 20 (compatible avec les versions pinnees du monorepo).
 - `pnpm@10.15.1` exactement, comme declare dans `package.json`.
-- Python 3.13 pour le backend FastAPI (`apps/api-py`).
+- Python 3.13+ pour le backend FastAPI (`apps/api-py`).
 - Docker avec Compose v2.
 - Chromium installe par Playwright si `pnpm test:e2e` le demande.
 
@@ -116,7 +116,7 @@ lancé séparément avec `pnpm api:worker` en développement.
 
 Le runner d'acceptation démarre FastAPI, le worker Python et le web, puis suit
 le parcours UI complet sur le fixture Drive partagé. Il refuse tout venv autre
-que Python 3.13 et ne doit être lancé que par un reviewer disposant des secrets :
+que Python 3.13+ et ne doit être lancé que par un reviewer disposant des secrets :
 
 ```bash
 KLASR_GOOGLE_SERVICE_ACCOUNT_FILE=/chemin/absolu/service-account.json \
