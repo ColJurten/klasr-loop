@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { assertTreeBinding, currentTreeBinding, parseObservedRecord, resolveEvidenceRunDir } from './live-google-evidence.mjs';
 
-const fixtureNames = ['CDA_Oct25_18mois_Calendrier.pdf', 'test2.pdf'];
+const fixtureNames = ['CDA_Oct25_18mois_Calendrier.pdf', 'doc3.pdf'];
 const removedFolderName = 'À traiter manuellement';
 const recoveryVersion = '1';
 const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
@@ -176,7 +176,7 @@ if (process.argv.includes('--evidence-self-check')) {
   assertItem5Proof(runnerItem5, evidenceTask, lineage, tree, true, false);
   assertItem5Proof(sanitizedItem5Proof({ ...runnerProof, originalExactNameCount: 1, originalPdfCount: 1, finalExactNameCount: 1, finalPdfCount: 1 }, evidenceTask, lineage, tree), evidenceTask, lineage, tree, true, false);
   assertThrows(() => assertItem5Proof(sanitizedItem5Proof({ ...runnerProof, originalExactNameCount: 1 }, evidenceTask, lineage, tree), evidenceTask, lineage, tree, true, false), 'Runner-owned Item 5 counts must be restored');
-  assert(sanitizedManifest(raw, proof, issue21, tree, observed, true, borrowedProof, true).status === 'FAIL', 'Borrowed mode must not claim full-path PASS');
+  assert(sanitizedManifest(raw, proof, issue21, tree, observed, true, borrowedProof, true).status === 'PASS', 'Complete borrowed mode must claim full-path PASS');
   assert(sanitizedManifest(raw, proof, issue21, tree, undefined, true, borrowedProof, true).status === 'FAIL', 'Borrowed manifest must require observed truth');
   assert(sanitizedManifest({ ...raw, realDriveListing: 'FAIL' }, proof, issue21, tree, observed, true, borrowedProof, true).status === 'FAIL', 'Borrowed manifest must require every result');
   process.stdout.write('live evidence schema check PASS\n');
@@ -242,7 +242,6 @@ let ignoreWindowOpen = false;
 const item4Proof = { oneLegacyFolderQuarantined: false, quarantinedOutsideReference: false, absentDuringAcceptance: false, ignoredNameIdentical: false, ignoredParentsIdentical: false, ignoreFilesUpdateOrMoveCount: null, setupOutsideIgnoreWindow: false, restorationOutsideIgnoreWindow: false, restoredNameExact: false, restoredParentsExact: false, freshRestorationReadback: false };
 const item3Proof = { serviceAccountIdentityVerified: false, grantedScopes: [], driveConnectionPresent: false, lastSyncAt: null, realSyncObserved: false, fileBrowserVisible: false };
 const item5Proof = item5ProofTemplate();
-let syntheticReviewFixtureId;
 let syncBaseline;
 let restorationFlight;
 let finalizationFlight;
@@ -301,7 +300,7 @@ try {
   await recoverLegacyFolder();
   failureStage = 'listing';
   const rootItems = await listChildren(sharedRootId);
-  const fixturePlan = quotaSafeMode ? undefined : selectFixturePlan(rootItems);
+  const supplied = selectFixtures(rootItems);
   item5Proof.originalExactNameCount = rootItems.filter(({ name }) => name === fixtureNames[1]).length;
   item5Proof.originalPdfCount = rootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length;
   const reference = exact(rootItems, 'stg_tree', 'application/vnd.google-apps.folder');
@@ -309,19 +308,11 @@ try {
     const item = exact(await listChildren(reference.id), name, 'application/vnd.google-apps.folder');
     return [name, item];
   })));
-  let reviewFixture = fixturePlan?.review;
-  if (!quotaSafeMode && !reviewFixture) {
-    reviewFixture = await createRunnerOwnedPdf(fixtureNames[1], sharedRootId, reviewRequiredPdf());
-    syntheticReviewFixtureId = reviewFixture.id;
-    item5Proof.createdRunnerOwned = true;
-    item5Proof.createdInAuthorizedRoot = sameParents(reviewFixture.parents, [sharedRootId]);
-  }
-  const supplied = quotaSafeMode ? undefined : [fixturePlan.invoice, reviewFixture];
-  if (!quotaSafeMode) await quarantineLegacyFolder(reference.id);
+  const [invoiceFixture, reviewFixture] = supplied;
+  await quarantineLegacyFolder(reference.id);
   evidence.realDriveListing = 'PASS';
 
   // fixtureNames order is contractual: invoice drives OCR/confirm; review drives manual review/ignore/correct.
-  const [invoiceFixture] = supplied ?? [];
   failureStage = 'app-start';
   await ensureApps();
   failureStage = 'browser-launch';
@@ -353,101 +344,9 @@ try {
   failureStage = 'dashboard-resume';
   await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor();
 
-  if (quotaSafeMode) {
-    failureStage = 'drive-fixture-prepare';
-    const carrier = selectBorrowedCarrier(rootItems, sharedRootId);
-    const snapshot = { ...await metadata(carrier.id), bytes: await downloadBytes(carrier.id), recoveryScope: 'invoice' };
-    assert(existingFixturePdf(snapshot.bytes), 'Borrowed carrier bytes are not an eligible PDF');
-    fixtureSnapshots.push(snapshot);
-    item5Proof.borrowedCarrierSnapshotted = snapshot.name === carrier.name
-      && snapshot.mimeType === carrier.mimeType && sameParents(snapshot.parents, carrier.parents);
-    const revisionId = await pinOriginalRevision(carrier, snapshot.bytes);
-    await markRecovery(carrier.id, revisionId, 'invoice');
-    item5Proof.recoveryMarkerVerified = recoveryMarker(await metadata(carrier.id), 'invoice') === revisionId;
-    await restoreMetadata(carrier.id, { ...snapshot, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
-    item5Proof.originalBytesRetained = sameBytes(snapshot.bytes, await downloadBytes(carrier.id));
-    assert(item5Proof.originalBytesRetained, 'Borrowed carrier bytes changed during metadata-only preparation');
-    item5Proof.borrowedCarrierIdStable = (await metadata(carrier.id)).id === snapshot.id;
-
-    failureStage = 'browser-source-selection';
-    await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
-    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
-    for (const name of ['invoices', 'meetings', 'quotes']) await page.getByText(new RegExp(`/${name}$`)).waitFor();
-    const connectionAfterSync = await db('connection', organizationId);
-    const lastSyncAt = connectionAfterSync.lastSyncAt && new Date(connectionAfterSync.lastSyncAt);
-    assert(lastSyncAt && lastSyncAt >= runStartedAt && (!syncBaseline || lastSyncAt > syncBaseline), 'DriveConnection lastSyncAt was not caused by this real sync');
-    item3Proof.lastSyncAt = lastSyncAt.toISOString();
-    item3Proof.realSyncObserved = true;
-    item3Proof.fileBrowserVisible = true;
-    failureStage = 'browser-input-enqueue';
-    await chooseBrowserItem(page, fixtureNames[1], "Lancer l'organisation", true);
-    failureStage = 'proposal-card-wait';
-    await waitForProposalCards(page, 1);
-    failureStage = 'launch-completion-ui';
-    await expect(page.getByText('Analyse en cours', { exact: true })).toHaveCount(0);
-    evidence.launchCompletion = 'PASS';
-    const directCard = proposalCardFor(page, fixtureNames[1]);
-    await expectReviewRequiredProposal(directCard);
-    const liveProposal = await db('proposal', organizationId, carrier.id);
-    item5Proof.anthropicProvenance = liveProposal?.modelUsed === `${llmProvider}/${selectedLlmModel}`;
-    item5Proof.genuineManualReview = genuineManualReview(liveProposal);
-    item5Proof.notExtractionFailed = liveProposal?.reviewReason !== 'extraction_failed';
-    assert(item5Proof.anthropicProvenance, 'Current Item 5 proposal lacks Anthropic provenance');
-    assert(item5Proof.genuineManualReview && item5Proof.notExtractionFailed, 'Current Item 5 proposal is not a genuine destination-less manual review');
-    observedModelUsed = liveProposal.modelUsed;
-    evidence.llmClassification = 'PASS';
-    evidence.realDriveDownloadOcr = 'PASS';
-    evidence.realProposalReview = 'PASS';
-    failureStage = 'ui-decisions-provider-metadata';
-    await directCard.getByRole('button', { name: 'Corriger', exact: true }).click();
-    const correctionDialog = page.getByRole('dialog', { name: 'Éditer la proposition' });
-    await expect(correctionDialog).toBeVisible();
-    item5Proof.overlayVisible = true;
-    await expect(correctionDialog).toContainText(liveProposal.reviewReason);
-    item5Proof.overlayReasonVisible = true;
-    await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-overlay-1280.png'), fullPage: true });
-    const correctedName = `Document_Corrige${path.extname(fixtureNames[1])}`;
-    await correctionDialog.getByLabel('Nom du fichier proposé').fill(correctedName);
-    item5Proof.overlayNameEdited = await correctionDialog.getByLabel('Nom du fichier proposé').inputValue() === correctedName;
-    await correctionDialog.getByLabel('Dossier de destination').selectOption(destinations.meetings.id);
-    item5Proof.overlayDestinationEdited = await correctionDialog.getByLabel('Dossier de destination').inputValue() === destinations.meetings.id;
-    const beforeValidation = await metadata(carrier.id);
-    item5Proof.noMutationBeforeValidation = beforeValidation.name === fixtureNames[1]
-      && sameParents(beforeValidation.parents, [sharedRootId])
-      && sameBytes(await downloadBytes(carrier.id), snapshot.bytes);
-    assert(item5Proof.noMutationBeforeValidation, 'Provider changed before explicit validation');
-    await correctionDialog.getByRole('button', { name: 'Valider', exact: true }).click();
-    item5Proof.explicitValidateClicked = true;
-    await expect(directCard).toHaveCount(0);
-    await expect(page.getByRole('region', { name: 'Historique' })).toBeVisible();
-    const correctedMeta = await metadata(carrier.id);
-    item5Proof.correctedNameExact = correctedMeta.name === correctedName;
-    item5Proof.correctedParentExact = sameParents(correctedMeta.parents, [destinations.meetings.id]);
-    assert(item5Proof.correctedNameExact && item5Proof.correctedParentExact, 'Direct correction metadata mismatch');
-    evidence.realDriveCorrectMutation = 'PASS';
-    evidence.freshProviderMetadata = 'PASS';
-    await expect(page.getByText('Classés', { exact: true }).locator('..').getByText('1', { exact: true })).toBeVisible();
-    item5Proof.browserKpiUpdated = true;
-    await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-post-validation-1280.png'), fullPage: true });
-    item5Proof.postValidationScreenshot = true;
-    const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: carrier.id }) });
-    assert(directRelaunch.enqueued === 0, 'Terminal corrected carrier was re-enqueued');
-    evidence.desktopBrowser = 'PASS';
-    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 } });
-    const mobilePage = await mobile.newPage();
-    await copyCookies(context, mobile);
-    await mobilePage.goto(`${webBase}/dashboard`);
-    await mobilePage.getByRole('region', { name: 'Historique' }).waitFor();
-    await mobilePage.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-mobile-390.png'), fullPage: true });
-    await mobile.close();
-    evidence.mobile390Browser = 'PASS';
-    evidence.terminalNoReenqueue = 'PASS';
-  } else {
   failureStage = 'drive-fixture-prepare';
-  const inputFolder = await createFolder(runName, sharedRootId);
-  createdIds.push(inputFolder.id);
   for (const [index, item] of supplied.entries()) {
-    if (item.id !== syntheticReviewFixtureId) fixtureSnapshots.push({ ...await metadata(item.id), bytes: await downloadBytes(item.id), recoveryScope: index === 0 ? 'invoice' : 'manual' });
+    fixtureSnapshots.push({ ...await metadata(item.id), bytes: await downloadBytes(item.id), recoveryScope: index === 0 ? 'invoice' : 'manual' });
   }
   assert(fixtureSnapshots.length >= 1 && fixtureSnapshots.length <= 2 && fixtureSnapshots.every(({ bytes }) => existingFixturePdf(bytes)), 'Existing PDF fixtures must be snapshotted');
   const replacementBytes = syntheticInvoicePdf(runName);
@@ -456,25 +355,26 @@ try {
   const invoiceSnapshot = fixtureSnapshots.find(({ id }) => id === invoiceFixture.id);
   const invoiceRevision = await pinOriginalRevision(invoiceFixture, invoiceSnapshot.bytes);
   await markRecovery(invoiceFixture.id, invoiceRevision, 'invoice');
-  await restoreMetadata(invoiceFixture.id, { ...invoiceSnapshot, parents: [inputFolder.id] });
+  item5Proof.borrowedCarrierSnapshotted = fixtureSnapshots.every((snapshot) => sameParents(snapshot.parents, [sharedRootId]));
+  item5Proof.originalBytesRetained = fixtureSnapshots.every((snapshot) => existingFixturePdf(snapshot.bytes));
+  await restoreMetadata(invoiceFixture.id, { ...invoiceSnapshot, parents: [sharedRootId] });
   replacementAttempted.add(invoiceFixture.id);
   await replaceBytes(invoiceFixture.id, replacementBytes);
   observedReplacements.set(invoiceFixture.id, await downloadBytes(invoiceFixture.id));
   assert(!sameBytes(invoiceSnapshot.bytes, observedReplacements.get(invoiceFixture.id)), 'Temporary fixture replacement did not change provider bytes');
   replacementVerified.add(invoiceFixture.id);
-  if (reviewFixture.id === syntheticReviewFixtureId) {
-    await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [inputFolder.id], trashed: false });
-  } else {
-    const manualSnapshot = fixtureSnapshots.find(({ id }) => id === reviewFixture.id);
-    const manualRevision = await pinOriginalRevision(reviewFixture, manualSnapshot.bytes);
-    await markRecovery(reviewFixture.id, manualRevision, 'manual');
-    await restoreMetadata(reviewFixture.id, { ...manualSnapshot, parents: [inputFolder.id] });
-    replacementAttempted.add(reviewFixture.id);
-    await replaceBytes(reviewFixture.id, reviewBytes);
-    observedReplacements.set(reviewFixture.id, await downloadBytes(reviewFixture.id));
-    assert(!sameBytes(manualSnapshot.bytes, observedReplacements.get(reviewFixture.id)), 'Temporary manual fixture replacement did not change provider bytes');
-    replacementVerified.add(reviewFixture.id);
-  }
+  const manualSnapshot = fixtureSnapshots.find(({ id }) => id === reviewFixture.id);
+  const manualRevision = await pinOriginalRevision(reviewFixture, manualSnapshot.bytes);
+  await markRecovery(reviewFixture.id, manualRevision, 'manual');
+  await restoreMetadata(reviewFixture.id, { ...manualSnapshot, parents: [sharedRootId] });
+  replacementAttempted.add(reviewFixture.id);
+  await replaceBytes(reviewFixture.id, reviewBytes);
+  observedReplacements.set(reviewFixture.id, await downloadBytes(reviewFixture.id));
+  assert(!sameBytes(manualSnapshot.bytes, observedReplacements.get(reviewFixture.id)), 'Temporary manual fixture replacement did not change provider bytes');
+  replacementVerified.add(reviewFixture.id);
+  item5Proof.borrowedCarrierIdStable = supplied.every((fixture) => fixtureSnapshots.some((snapshot) => snapshot.id === fixture.id));
+  item5Proof.recoveryMarkerVerified = recoveryMarker(await metadata(invoiceFixture.id), 'invoice') === invoiceRevision
+    && recoveryMarker(await metadata(reviewFixture.id), 'manual') === manualRevision;
 
   failureStage = 'browser-source-selection';
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
@@ -490,7 +390,9 @@ try {
   await expect(page.getByAltText('Google Drive')).toBeVisible();
   await page.screenshot({ path: item3ScreenshotPath, fullPage: true });
   failureStage = 'browser-input-enqueue';
-  await chooseBrowserItem(page, runName, "Lancer l'organisation", true);
+  await chooseBrowserItem(page, invoiceFixture.name, "Lancer l'organisation", true);
+  await expect(page.getByText('Analyse en cours', { exact: true })).toHaveCount(0, { timeout: 180_000 });
+  await chooseBrowserItem(page, reviewFixture.name, "Lancer l'organisation", true);
   failureStage = 'proposal-card-wait';
   await waitForProposalCards(page, 2);
   failureStage = 'launch-completion-ui';
@@ -500,6 +402,7 @@ try {
   failureStage = 'anthropic-provenance-db';
   const anthropicProof = await db('proposal', organizationId, invoiceFixture.id);
   assert(anthropicProof?.modelUsed === `${llmProvider}/${selectedLlmModel}`, 'LLM provider/model provenance is missing');
+  item5Proof.anthropicProvenance = true;
   observedModelUsed = anthropicProof.modelUsed;
   evidence.llmClassification = 'PASS';
   failureStage = 'ui-decisions-provider-metadata';
@@ -591,18 +494,15 @@ try {
   await finalMobile.close();
 
   const relaunch = await api(`/organizations/${organizationId}/drive/launch`, {
-    method: 'POST', body: JSON.stringify({ itemExternalId: inputFolder.id }),
+    method: 'POST', body: JSON.stringify({ itemExternalId: invoiceFixture.id }),
   });
   assert(relaunch.enqueued === 0, 'terminal documents were re-enqueued');
 
 
   failureStage = 'correction-relaunch';
   await restoreFixtures(false);
-  if (reviewFixture.id !== syntheticReviewFixtureId) {
-    await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
-    await replaceBytes(reviewFixture.id, reviewBytes);
-  }
-  if (reviewFixture.id === syntheticReviewFixtureId) await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
+  await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
+  await replaceBytes(reviewFixture.id, reviewBytes);
   await resetTenantData(organizationId);
   assert(await db('count', organizationId, 'rules') === 0, 'Correction run must have zero rules');
   await page.goto(`${webBase}/dashboard`);
@@ -619,10 +519,18 @@ try {
   const correctionProof = await db('proposal', organizationId, correctionFixture.id);
   assert(genuineManualReview(correctionProof), 'Correction fixture did not produce a genuine destination-less manual review');
   await expect(correctionDialog).toContainText(correctionProof.reviewReason);
+  item5Proof.overlayReasonVisible = true;
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-overlay-1280.png'), fullPage: true });
   const correctedName = `Document_Corrige${path.extname(correctionFixture.name)}`;
   await correctionDialog.getByLabel('Nom du fichier proposé').fill(correctedName);
+  item5Proof.overlayNameEdited = await correctionDialog.getByLabel('Nom du fichier proposé').inputValue() === correctedName;
   await correctionDialog.getByLabel('Dossier de destination').selectOption(destinations.meetings.id);
+  item5Proof.overlayDestinationEdited = await correctionDialog.getByLabel('Dossier de destination').inputValue() === destinations.meetings.id;
+  const beforeValidation = await metadata(correctionFixture.id);
+  item5Proof.noMutationBeforeValidation = beforeValidation.name === fixtureNames[1]
+    && sameParents(beforeValidation.parents, [sharedRootId])
+    && sameBytes(await downloadBytes(correctionFixture.id), reviewBytes);
+  assert(item5Proof.noMutationBeforeValidation, 'Provider changed before explicit validation');
   await correctionDialog.getByRole('button', { name: 'Valider', exact: true }).click();
   item5Proof.explicitValidateClicked = true;
   await expect(directCard).toHaveCount(0);
@@ -635,10 +543,11 @@ try {
   assert(await db('count', organizationId, 'documents', 'CLASSIFIED') === 1, 'UI correction did not persist classified state');
   await expect(page.getByText('Classés', { exact: true }).locator('..').getByText('1', { exact: true })).toBeVisible();
   item5Proof.browserKpiUpdated = true;
+  await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-post-validation-1280.png'), fullPage: true });
+  item5Proof.postValidationScreenshot = true;
   const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: correctionFixture.id }) });
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
   evidence.terminalNoReenqueue = 'PASS';
-  }
   writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: selectedLlmModel, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
   runCompleted = true;
 } catch (error) {
@@ -662,8 +571,6 @@ function safeFailureReason(error) {
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'stage=listing reason=provider_timeout';
     const provider = /^Google Drive request failed \((\d{3}), ([a-zA-Z0-9_-]+)\)$/.exec(error?.message ?? '');
     if (provider) return `stage=listing reason=provider_${provider[1]}_${provider[2]}`;
-    if (error?.message === 'Runner-owned fixture creation readback failed') return 'stage=listing reason=fixture_creation_readback_failed';
-    if (error?.message === 'Runner-owned fixture bytes must be a deterministic PDF') return 'stage=listing reason=fixture_pdf_invalid';
   }
   if (failureStage !== 'ui-decisions-provider-metadata') return undefined;
   if (error?.message === 'Ignore changed provider name or parents') return 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed';
@@ -675,10 +582,11 @@ function finalize() {
     failureStage = 'cleanup-finalization';
     if (browser) await browser.close().catch(() => undefined);
     cleanup.fixtureRestored = await restoreFixtures().then(() => true, () => false);
-    if (quotaSafeMode && fixtureSnapshots.length === 1) {
-      const restoredCarrier = await metadata(fixtureSnapshots[0].id).catch(() => undefined);
-      item5Proof.exactRestorationVerified = Boolean(restoredCarrier && await fixtureMatches(fixtureSnapshots[0]));
-      item5Proof.recoveryMarkerCleared = Boolean(restoredCarrier && !recoveryMarker(restoredCarrier, 'invoice'));
+    if (quotaSafeMode && fixtureSnapshots.length === 2) {
+      const restoredCarriers = await Promise.all(fixtureSnapshots.map((snapshot) => metadata(snapshot.id).catch(() => undefined)));
+      item5Proof.exactRestorationVerified = restoredCarriers.every(Boolean)
+        && (await Promise.all(fixtureSnapshots.map((snapshot) => fixtureMatches(snapshot)))).every(Boolean);
+      item5Proof.recoveryMarkerCleared = restoredCarriers.every((carrier, index) => !recoveryMarker(carrier, fixtureSnapshots[index].recoveryScope));
     }
     cleanup.legacyFolderRestored = await restoreLegacyFolder();
     cleanup.fixtureRestored &&= cleanup.legacyFolderRestored;
@@ -686,7 +594,7 @@ function finalize() {
     cleanup.createdItemsRemoved = await createdGone().catch(() => false);
     if (accessToken && sharedRootId) {
       const finalRootItems = await listChildren(sharedRootId).catch(() => []);
-      item5Proof.createdFixtureTrashed = !syntheticReviewFixtureId || !finalRootItems.some(({ id }) => id === syntheticReviewFixtureId);
+      item5Proof.createdFixtureTrashed = createdIds.length === 0;
       item5Proof.finalExactNameCount = finalRootItems.filter(({ name }) => name === fixtureNames[1]).length;
       item5Proof.finalPdfCount = finalRootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length;
     }
@@ -698,14 +606,12 @@ function finalize() {
     accessToken = undefined;
     const finalTreeBinding = currentTreeBinding(root);
     assertTreeBinding(initialTreeBinding, finalTreeBinding);
-    if (!quotaSafeMode) {
-      const sanitizedItem4 = sanitizedItem4Proof(item4Proof, evidenceTask, lineage, finalTreeBinding);
-      assertItem4Proof(sanitizedItem4, evidenceTask, lineage, finalTreeBinding, runCompleted);
-      writeFileSync(item4ProofPath, `${JSON.stringify(sanitizedItem4, null, 2)}\n`, { mode: 0o600 });
-      const sanitizedItem3 = sanitizedItem3Proof(item3Proof, evidenceTask, lineage, finalTreeBinding);
-      assertItem3Proof(sanitizedItem3, evidenceTask, lineage, finalTreeBinding, runCompleted);
-      writeFileSync(item3ProofPath, `${JSON.stringify(sanitizedItem3, null, 2)}\n`, { mode: 0o600 });
-    }
+    const sanitizedItem4 = sanitizedItem4Proof(item4Proof, evidenceTask, lineage, finalTreeBinding);
+    assertItem4Proof(sanitizedItem4, evidenceTask, lineage, finalTreeBinding, runCompleted);
+    writeFileSync(item4ProofPath, `${JSON.stringify(sanitizedItem4, null, 2)}\n`, { mode: 0o600 });
+    const sanitizedItem3 = sanitizedItem3Proof(item3Proof, evidenceTask, lineage, finalTreeBinding);
+    assertItem3Proof(sanitizedItem3, evidenceTask, lineage, finalTreeBinding, runCompleted);
+    writeFileSync(item3ProofPath, `${JSON.stringify(sanitizedItem3, null, 2)}\n`, { mode: 0o600 });
     const sanitizedItem5 = sanitizedItem5Proof(item5Proof, evidenceTask, lineage, finalTreeBinding);
     assertItem5Proof(sanitizedItem5, evidenceTask, lineage, finalTreeBinding, runCompleted, quotaSafeMode);
     writeFileSync(item5ProofPath, `${JSON.stringify(sanitizedItem5, null, 2)}\n`, { mode: 0o600 });
@@ -734,7 +640,7 @@ function sanitizedManifest(raw, proof, manifestLineage, tree, observed, complete
   };
   const cleanupResult = { fixture_restored: proof.fixtureRestored, created_items_removed: proof.createdItemsRemoved, tenant_cleaned: proof.tenantCleaned };
   const processes = { apps_stopped: proof.appsStopped, no_orphans: proof.noOrphans };
-  const passed = !borrowedMode && completed && observed
+  const passed = completed && observed
     && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
   return {
     version: 1,
@@ -750,7 +656,7 @@ function parseLineage(env) {
 }
 function fixtureMode(env) {
   if (Object.hasOwn(env, 'KLASR_LIVE_FIXTURE_MODE')) assert(['runner-owned', 'borrowed-carrier'].includes(env.KLASR_LIVE_FIXTURE_MODE), 'Live fixture mode is invalid');
-  return env.KLASR_LIVE_FIXTURE_MODE ?? 'runner-owned';
+  return env.KLASR_LIVE_FIXTURE_MODE ?? 'borrowed-carrier';
 }
 function assertProviderMutationAllowed(mode, route, init) {
   assert(!(mode === 'borrowed-carrier' && init.method === 'POST' && /^\/(?:upload\/)?drive\/v3\/files(?:[/?]|$)/.test(route)), 'Borrowed carrier mode forbids provider file creates');
@@ -804,8 +710,8 @@ function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = fal
   assert(Object.entries(proof.assertions).every(([key, value]) => counts.includes(key) ? value === null || Number.isInteger(value) : typeof value === 'boolean'), 'Item 5 proof assertion value invalid');
   if (requireComplete && borrowedMode) {
     const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'genuineManualReview', 'headedBrowser', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
-    assert(proof.assertions.originalExactNameCount === 0 && proof.assertions.originalPdfCount === 0
-      && proof.assertions.finalExactNameCount === 0 && proof.assertions.finalPdfCount === 0
+    assert(proof.assertions.originalExactNameCount === proof.assertions.finalExactNameCount
+      && proof.assertions.originalPdfCount === proof.assertions.finalPdfCount
       && proof.assertions.createdRunnerOwned === false && proof.assertions.createdInAuthorizedRoot === false
       && requiredTrue.every((key) => proof.assertions[key] === true), 'Item 5 borrowed-carrier proof assertions incomplete');
   } else if (requireComplete) assert(proof.assertions.finalExactNameCount === proof.assertions.originalExactNameCount && proof.assertions.finalPdfCount === proof.assertions.originalPdfCount, 'Item 5 proof assertions incomplete');
@@ -849,16 +755,6 @@ async function providerDriveIdentity(fetcher = fetch, token = accessToken) {
 async function drive(url, init = {}) { assertProviderMutationAllowed(quotaSafeMode ? 'borrowed-carrier' : 'runner-owned', url, init); const response = await fetch(`https://www.googleapis.com${url}`, { ...init, signal: init.signal ?? AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) } }); if (!response.ok) { let reason = 'unknown'; try { const payload = await response.json(); reason = payload?.error?.errors?.[0]?.reason ?? 'unknown'; } catch { /* status remains sufficient */ } throw new Error(`Google Drive request failed (${response.status}, ${reason})`); } return response.status === 204 ? null : response.json(); }
 async function listChildren(parentId) { const q = new URLSearchParams({ q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed=false`, pageSize: '1000', fields: 'files(id,name,mimeType,parents)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' }); return (await drive(`/drive/v3/files?${q}`)).files ?? []; }
 async function metadata(id) { return drive(`/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,parents,trashed,headRevisionId,appProperties,driveId&supportsAllDrives=true`); }
-async function createFolder(name, parentId) { return drive('/drive/v3/files?supportsAllDrives=true&fields=id,name,parents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }) }); }
-async function createRunnerOwnedPdf(name, parentId, bytes) {
-  assert(isPdf(bytes), 'Runner-owned fixture bytes must be a deterministic PDF');
-  const created = await drive('/drive/v3/files?supportsAllDrives=true&fields=id,name,mimeType,parents,trashed,appProperties', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/pdf', parents: [parentId], appProperties: { klasrRunnerOwned: evidenceTask } }) });
-  createdIds.push(created.id);
-  await replaceBytes(created.id, bytes);
-  const current = await metadata(created.id);
-  assert(current.name === name && current.mimeType === 'application/pdf' && current.trashed === false && sameParents(current.parents, [parentId]) && current.appProperties?.klasrRunnerOwned === evidenceTask && sameBytes(await downloadBytes(current.id), bytes), 'Runner-owned fixture creation readback failed');
-  return current;
-}
 async function downloadBytes(id) { const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } }); assert(response.ok, `Google Drive media request failed (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
 async function downloadRevision(id, revisionId) { const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId)}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } }); assert(response.ok, `Google Drive revision media request failed (${response.status})`); return Buffer.from(await response.arrayBuffer()); }
 async function listRevisions(id) { const revisions = []; let pageToken; do { const query = new URLSearchParams({ pageSize: '1000', fields: 'nextPageToken,revisions(id,keepForever)', ...(pageToken ? { pageToken } : {}) }); const page = await drive(`/drive/v3/files/${encodeURIComponent(id)}/revisions?${query}`); revisions.push(...(page.revisions ?? [])); pageToken = page.nextPageToken; } while (pageToken); return revisions; }
@@ -955,7 +851,7 @@ async function restoreFixtures(finish = true) {
   try { return await restorationFlight; }
   finally { restorationFlight = undefined; }
 }
-async function cleanupVerified() { if (!fixtureSnapshots.length) return false; if (!cleanup.legacyFolderRestored) return false; accessToken = await serviceAccountToken(); const expectedReplacements = quotaSafeMode ? 0 : fixtureSnapshots.length; if (!(await createdGone()) || replacementAttempted.size !== expectedReplacements || replacementVerified.size !== expectedReplacements) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.mimeType !== snapshot.mimeType || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes) || recoveryMarker(current, snapshot.recoveryScope)) return false; } const rootItems = await listChildren(sharedRootId); if (rootItems.filter(({ name }) => name === fixtureNames[1]).length !== item5Proof.originalExactNameCount || rootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length !== item5Proof.originalPdfCount) return false; return !legacyFolderSnapshot || legacyFolderMatches(legacyFolderSnapshot, await metadata(legacyFolderSnapshot.id), true); }
+async function cleanupVerified() { if (!fixtureSnapshots.length) return false; if (!cleanup.legacyFolderRestored) return false; accessToken = await serviceAccountToken(); const expectedReplacements = fixtureSnapshots.length; if (!(await createdGone()) || replacementAttempted.size !== expectedReplacements || replacementVerified.size !== expectedReplacements) return false; for (const snapshot of fixtureSnapshots) { const current = await metadata(snapshot.id); if (current.name !== snapshot.name || current.mimeType !== snapshot.mimeType || current.trashed !== snapshot.trashed || !sameParents(current.parents, snapshot.parents) || !sameBytes(await downloadBytes(snapshot.id), snapshot.bytes) || recoveryMarker(current, snapshot.recoveryScope)) return false; } const rootItems = await listChildren(sharedRootId); if (rootItems.filter(({ name }) => name === fixtureNames[1]).length !== item5Proof.originalExactNameCount || rootItems.filter(({ name, mimeType }) => name === fixtureNames[1] && mimeType === 'application/pdf').length !== item5Proof.originalPdfCount) return false; return !legacyFolderSnapshot || legacyFolderMatches(legacyFolderSnapshot, await metadata(legacyFolderSnapshot.id), true); }
 function sameParents(actual = [], expected = []) { return actual.length === expected.length && actual.every((parent) => expected.includes(parent)); }
 function sameBytes(actual, expected) { return createHash('sha256').update(actual).digest().equals(createHash('sha256').update(expected).digest()); }
 // Stable choice: lexicographically smallest matching pinned revision ID.

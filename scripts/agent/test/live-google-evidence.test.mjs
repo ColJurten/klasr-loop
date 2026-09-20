@@ -145,16 +145,17 @@ test('Item 5 evidence paths are issue-attempt-task-run scoped and distinct', () 
   }
 });
 
-test('Item 5 runner retains borrowed bytes and requires genuine configured-LLM manual review', () => {
+test('Item 5 runner reuses borrowed carriers and requires genuine configured-LLM manual review', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const branch = source.slice(source.indexOf('if (quotaSafeMode) {'), source.indexOf('} else {', source.indexOf('if (quotaSafeMode) {')));
-  assert.doesNotMatch(branch, /replaceBytes\(/);
-  assert.match(branch, /originalBytesRetained/);
-  assert.match(branch, /modelUsed.*llmProvider/);
-  assert.match(branch, /genuineManualReview\(liveProposal\)/);
+  const flow = source.slice(source.indexOf("failureStage = 'drive-fixture-prepare'"), source.indexOf('writeFileSync(observedPath'));
+  assert.match(flow, /fixtureSnapshots/);
+  assert.match(flow, /replaceBytes\(invoiceFixture\.id, replacementBytes\)/);
+  assert.match(flow, /replaceBytes\(reviewFixture\.id, reviewBytes\)/);
+  assert.match(flow, /modelUsed.*llmProvider/);
+  assert.match(flow, /genuineManualReview\(reviewProof\)/);
   assert.match(functionBody(source, 'genuineManualReview'), /reviewReason\.trim\(\)\.length > 0.*reviewReason !== 'extraction_failed'/s);
   assert.doesNotMatch(source, /no_destination_match/);
-  assert.match(branch, /live-google-sa-item-5-post-validation-1280\.png/);
+  assert.match(flow, /live-google-sa-item-5-post-validation-1280\.png/);
 });
 
 test('live runner selects borrowed carriers only through the explicit quota-safe contract', () => {
@@ -174,12 +175,12 @@ test('live runner selects borrowed carriers only through the explicit quota-safe
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '21' },
   });
   assert.equal(ordinary.status, 0, ordinary.stderr);
-  assert.equal(ordinary.stdout, 'runner-owned\n');
+  assert.equal(ordinary.stdout, 'borrowed-carrier\n');
   const defaultMode = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '5' },
   });
   assert.equal(defaultMode.status, 0, defaultMode.stderr);
-  assert.equal(defaultMode.stdout, 'runner-owned\n');
+  assert.equal(defaultMode.stdout, 'borrowed-carrier\n');
 
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   assert.match(source, /async function drive\(url, init = \{\}\) \{ assertProviderMutationAllowed\(quotaSafeMode \? 'borrowed-carrier' : 'runner-owned', url, init\)/);
@@ -200,7 +201,7 @@ test('service-account proof gets scope from tokeninfo and identity from Drive ab
 test('live runner contracts environment LLM configuration before Google mutation', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const preflight = source.indexOf("assert(await db('count', organizationId, 'settings') === 0");
-  const driveMutation = source.indexOf('await createFolder(runName, sharedRootId)');
+  const driveMutation = source.indexOf('await markRecovery(invoiceFixture.id');
   assert(preflight !== -1 && driveMutation !== -1 && preflight < driveMutation, 'Tenant preflight must precede Drive mutation');
   for (const name of ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL']) assert.match(source, new RegExp(`required\\('${name}'\\)`));
   assert.match(source, /missing = \[[^\]]*'KLASR_LLM_API_KEY'/);
@@ -237,7 +238,7 @@ test('observed live record has an exact metadata-only schema and binds model plu
 
 test('live runner validates the environment LLM key before Drive browser selection', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const verification = source.slice(source.indexOf("failureStage = 'settings-verification'"), source.indexOf('if (quotaSafeMode) {'));
+  const verification = source.slice(source.indexOf("failureStage = 'settings-verification'"), source.indexOf("failureStage = 'drive-fixture-prepare'"));
   assert.match(verification, /KLASR_LLM_API_KEY\.includes\('\\n'\)/);
   assert.match(verification, /failureStage = 'dashboard-resume'/);
   assert.match(verification, /getByRole\('button', \{ name: 'Choisir ce dossier' \}\)\.waitFor\(\)/);
@@ -268,10 +269,11 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /files\.create|uploadType=multipart|multipart\/related|function uploadFile/);
   assert.doesNotMatch(source, /\/upload\/drive\/v3\/files\?/);
-  assert.match(source, /function createFolder/);
-  assert.match(source, /parents: \[inputFolder\.id\]/);
-  assert.match(source, /chooseBrowserItem\(page, runName, "Lancer l'organisation"/);
-  assert.match(source, /itemExternalId: inputFolder\.id/);
+  assert.match(source, /const supplied = selectFixtures\(rootItems\)/);
+  assert.match(source, /parents: \[sharedRootId\]/);
+  assert.match(source, /chooseBrowserItem\(page, invoiceFixture\.name, "Lancer l'organisation"/);
+  assert.match(source, /chooseBrowserItem\(page, reviewFixture\.name, "Lancer l'organisation"/);
+  assert.match(source, /itemExternalId: invoiceFixture\.id/);
   assert.match(source, /uploadType=media/);
   assert.match(source, /fixtureSnapshots\.length === 2/);
   assert.match(source, /downloadBytes\(snapshot\.id\)/);
@@ -284,7 +286,7 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
 test('live runner keeps crash recovery inside Drive revisions without local byte backups', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const startupRecovery = source.indexOf('await recoverMarkedFixtures();');
-  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixturePlan(rootItems)', startupRecovery));
+  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixtures(rootItems)', startupRecovery));
   const discovery = functionBody(source, 'recoveryCandidates');
   assert.match(discovery, /appProperties has \{ key='klasrRecoveryScope' and value='/);
   assert.doesNotMatch(source, /function markedCandidates|markedCandidates\(/);
@@ -422,7 +424,7 @@ test('live runner exposes only exact allowlisted failure stages', () => {
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const transitions = [
-    ["failureStage = 'browser-input-enqueue';", 'await chooseBrowserItem(page, runName, "Lancer l\'organisation", true);'],
+    ["failureStage = 'browser-input-enqueue';", 'await chooseBrowserItem(page, invoiceFixture.name, "Lancer l\'organisation", true);'],
     ["failureStage = 'proposal-card-wait';", 'await waitForProposalCards(page, 2);'],
     ["failureStage = 'launch-completion-ui';", "await expect(page.getByText('Analyse en cours', { exact: true })).toHaveCount(0);"],
     ["failureStage = 'anthropic-provenance-db';", "const anthropicProof = await db('proposal', organizationId, invoiceFixture.id);"],

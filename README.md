@@ -121,21 +121,24 @@ que Python 3.13+ et ne doit être lancé que par un reviewer disposant des secre
 ```bash
 KLASR_GOOGLE_SERVICE_ACCOUNT_FILE=/chemin/absolu/service-account.json \
 KLASR_GOOGLE_DRIVE_ROOT_ID=... \
-KLASR_LLM_PROVIDER=... \
-KLASR_LLM_MODEL=... \
+KLASR_LLM_PROVIDER=anthropic \
+KLASR_LLM_MODEL=claude-haiku-4-5-20251001 \
 KLASR_LLM_API_KEY=... \
 KLASR_LLM_BASE_URL=... \
 KLASR_EVIDENCE_SHA="$(git rev-parse HEAD)" \
 KLASR_EVIDENCE_ISSUE=5 \
 KLASR_EVIDENCE_ATTEMPT=... \
 KLASR_EVIDENCE_TASK=t_... \
-KLASR_LIVE_FIXTURE_MODE=runner-owned \
+KLASR_LIVE_FIXTURE_MODE=borrowed-carrier \
 pnpm test:live-google-sa
 ```
 
 La base URL LLM est facultative pour les fournisseurs natifs. Le runner ne
-journalise ni secrets, ni contenu, ni identifiants Drive ; son manifeste
-assaini est écrit sous `.tmp/hermes/ux-clarity/evidence/`. Le run réel n'est
+crée aucun fichier ou dossier Drive : il emprunte les deux PDF staging existants,
+épingle leurs révisions, utilise uniquement l'arborescence `stg_tree`, puis
+restaure exactement octets, métadonnées et parents. Il ne journalise ni secrets,
+ni contenu, ni identifiants Drive ; son manifeste assaini est écrit sous le
+dossier de run `.tmp/hermes/ux-clarity/evidence/item-5/`. Le run réel n'est
 pas exécuté par les checks locaux. `pnpm` doit être disponible pour lancer la
 commande, mais le runner résout directement le binaire Next.js au démarrage.
 Les captures plein écran peuvent contenir les noms des fixtures Drive : utiliser
