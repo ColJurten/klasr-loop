@@ -493,8 +493,8 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
 
     started = []
 
-    async def fake_worker(settings, worker_engine, event, local):
-        started.append((settings.inline_worker, worker_engine, local))
+    async def fake_worker(settings, worker_engine, event, analyses=None):
+        started.append((settings.inline_worker, worker_engine, analyses))
         await event.wait()
 
     monkeypatch.setattr("worker.run_worker", fake_worker)
@@ -503,7 +503,7 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
     inline_app.state.engine = engine
     with TestClient(inline_app) as client:
         assert client.get("/health").status_code == 200
-    assert len(started) == 1 and started[0][0] is True
+    assert started == [(True, engine, None)]
 
 
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
