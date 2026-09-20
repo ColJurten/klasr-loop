@@ -134,7 +134,9 @@ def main():
                 )
                 result = (
                     {
+                        "destinationPath": proposal.destination_path,
                         "modelUsed": proposal.model_used,
+                        "reviewRequired": proposal.review_required,
                         "reviewReason": proposal.review_reason,
                     }
                     if proposal

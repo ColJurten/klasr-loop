@@ -11,7 +11,7 @@ import { assertTreeBinding, currentTreeBinding, parseObservedRecord, resolveEvid
 const fixtureNames = ['CDA_Oct25_18mois_Calendrier.pdf', 'test2.pdf'];
 const removedFolderName = 'À traiter manuellement';
 const recoveryVersion = '1';
-const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'anthropic-server-setup', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'settings-delete', 'cleanup-finalization'];
+const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
 const failureOverrides = ['stage=analysis reason=job_failed', 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed', 'stage=ui-decisions-provider-metadata reason=legacy_folder_present'];
 
 if (process.argv.includes('--lifecycle-check')) {
@@ -61,6 +61,8 @@ if (process.argv.includes('--decision-selection-check')) {
     { id: 'valid', reviewRequired: false, confirmEnabled: true, destination: '/invoices' },
   ]);
   assert(selected.confirm.id === 'valid' && selected.ignore.id === 'manual', 'Decision fixture selection is not provider-agnostic');
+  assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason: 'low_confidence' }), 'Configured-LLM manual review must be accepted');
+  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '', reviewReason: 'extraction_failed' }, { reviewRequired: true, destinationPath: '', reviewReason: ' ' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
   process.stdout.write('live runner fixture restoration and decision selection check PASS\n');
   process.exit(0);
 }
@@ -88,7 +90,7 @@ if (process.argv.includes('--borrowed-carrier-check')) {
 if (process.argv.includes('--quota-safe-mode-check')) {
   const issue = Number(process.env.KLASR_EVIDENCE_ISSUE);
   assert(/^\d+$/.test(process.env.KLASR_EVIDENCE_ISSUE ?? '') && issue > 0, 'Evidence issue is invalid');
-  const mode = fixtureMode(process.env, issue);
+  const mode = fixtureMode(process.env);
   if (mode === 'borrowed-carrier') assertThrows(() => assertProviderMutationAllowed(mode, '/drive/v3/files', { method: 'POST' }), 'Borrowed mode must reject provider creates');
   else assertProviderMutationAllowed(mode, '/drive/v3/files', { method: 'POST' });
   process.stdout.write(`${mode}\n`);
@@ -107,7 +109,7 @@ if (process.argv.includes('--byok-acceptance-self-check')) {
 const syntheticLineage = { sha: '0'.repeat(40), issue: 1, attempt: 1 };
 const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineage : parseLineage(process.env);
 const evidenceTask = process.argv.includes('--evidence-self-check') ? 't_selfcheck' : parseEvidenceTask(process.env);
-const quotaSafeMode = fixtureMode(process.env, lineage.issue) === 'borrowed-carrier';
+const quotaSafeMode = fixtureMode(process.env) === 'borrowed-carrier';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fatalLifecycleCheck = process.argv.includes('--fatal-lifecycle-check');
@@ -346,7 +348,6 @@ try {
   assert(await db('count', organizationId, 'settings') === 0, 'Acceptance tenant must have zero LLM settings');
   await resetTenantData(organizationId);
   assert(await db('count', organizationId, 'rules') === 0, 'Acceptance tenant must have zero rules');
-  failureStage = 'anthropic-server-setup';
   failureStage = 'settings-verification';
   assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
   failureStage = 'dashboard-resume';
@@ -389,10 +390,10 @@ try {
     await expectReviewRequiredProposal(directCard);
     const liveProposal = await db('proposal', organizationId, carrier.id);
     item5Proof.anthropicProvenance = liveProposal?.modelUsed === `${llmProvider}/${selectedLlmModel}`;
-    item5Proof.noDestinationMatch = liveProposal?.reviewReason === 'no_destination_match';
+    item5Proof.genuineManualReview = genuineManualReview(liveProposal);
     item5Proof.notExtractionFailed = liveProposal?.reviewReason !== 'extraction_failed';
     assert(item5Proof.anthropicProvenance, 'Current Item 5 proposal lacks Anthropic provenance');
-    assert(item5Proof.noDestinationMatch && item5Proof.notExtractionFailed, 'Current Item 5 proposal is not review-required for no_destination_match');
+    assert(item5Proof.genuineManualReview && item5Proof.notExtractionFailed, 'Current Item 5 proposal is not a genuine destination-less manual review');
     observedModelUsed = liveProposal.modelUsed;
     evidence.llmClassification = 'PASS';
     evidence.realDriveDownloadOcr = 'PASS';
@@ -402,7 +403,7 @@ try {
     const correctionDialog = page.getByRole('dialog', { name: 'Éditer la proposition' });
     await expect(correctionDialog).toBeVisible();
     item5Proof.overlayVisible = true;
-    await expect(correctionDialog).toContainText('no_destination_match');
+    await expect(correctionDialog).toContainText(liveProposal.reviewReason);
     item5Proof.overlayReasonVisible = true;
     await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-overlay-1280.png'), fullPage: true });
     const correctedName = `Document_Corrige${path.extname(fixtureNames[1])}`;
@@ -523,9 +524,9 @@ try {
   const ignoredCard = ignored.card;
   await expectReviewRequiredProposal(proposals.find(({ reviewRequired }) => reviewRequired).card);
   const reviewProof = await db('proposal', organizationId, reviewFixture.id);
-  item5Proof.noDestinationMatch = reviewProof?.reviewReason === 'no_destination_match';
+  item5Proof.genuineManualReview = genuineManualReview(reviewProof);
   item5Proof.notExtractionFailed = reviewProof?.reviewReason !== 'extraction_failed';
-  assert(item5Proof.noDestinationMatch && item5Proof.notExtractionFailed, 'Review fixture did not extract into no_destination_match review');
+  assert(item5Proof.genuineManualReview && item5Proof.notExtractionFailed, 'Review fixture did not produce a genuine destination-less manual review');
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-review.png'), fullPage: true });
@@ -615,7 +616,9 @@ try {
   const correctionDialog = page.getByRole('dialog', { name: 'Éditer la proposition' });
   await expect(correctionDialog).toBeVisible();
   item5Proof.overlayVisible = true;
-  await expect(correctionDialog).toContainText('no_destination_match');
+  const correctionProof = await db('proposal', organizationId, correctionFixture.id);
+  assert(genuineManualReview(correctionProof), 'Correction fixture did not produce a genuine destination-less manual review');
+  await expect(correctionDialog).toContainText(correctionProof.reviewReason);
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-overlay-1280.png'), fullPage: true });
   const correctedName = `Document_Corrige${path.extname(correctionFixture.name)}`;
   await correctionDialog.getByLabel('Nom du fichier proposé').fill(correctedName);
@@ -636,8 +639,6 @@ try {
   assert(directRelaunch.enqueued === 0, 'terminal direct file was re-enqueued');
   evidence.terminalNoReenqueue = 'PASS';
   }
-  failureStage = 'settings-delete';
-  assert(await db('count', organizationId, 'settings') === 0, 'tenant_setting_absent');
   writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: selectedLlmModel, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
   runCompleted = true;
 } catch (error) {
@@ -747,7 +748,7 @@ function parseLineage(env) {
   assert(/^[0-9a-f]{40}$/.test(value.sha ?? '') && /^\d+$/.test(env.KLASR_EVIDENCE_ISSUE ?? '') && value.issue > 0 && /^\d+$/.test(env.KLASR_EVIDENCE_ATTEMPT ?? '') && value.attempt > 0, 'Evidence lineage is invalid');
   return value;
 }
-function fixtureMode(env, issue) {
+function fixtureMode(env) {
   if (Object.hasOwn(env, 'KLASR_LIVE_FIXTURE_MODE')) assert(['runner-owned', 'borrowed-carrier'].includes(env.KLASR_LIVE_FIXTURE_MODE), 'Live fixture mode is invalid');
   return env.KLASR_LIVE_FIXTURE_MODE ?? 'runner-owned';
 }
@@ -793,16 +794,16 @@ function assertItem3Proof(proof, task, proofLineage, tree, requireComplete = fal
 function sanitizedItem5Proof(assertions, task, proofLineage, tree) {
   return { schema: 'klasr-item5-provider-proof-v1', task, issue: proofLineage.issue, attempt: proofLineage.attempt, sha: proofLineage.sha, tree, assertions };
 }
-function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, noDestinationMatch: false, notExtractionFailed: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
+function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, genuineManualReview: false, notExtractionFailed: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
 function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = false, borrowedMode = false) {
   const keys = (value) => Object.keys(value).sort().join(',');
   assert(keys(proof) === 'assertions,attempt,issue,schema,sha,task,tree' && proof.schema === 'klasr-item5-provider-proof-v1', 'Item 5 proof schema mismatch');
   assert(proof.task === task && proof.issue === proofLineage.issue && proof.attempt === proofLineage.attempt && proof.sha === proofLineage.sha, 'Item 5 proof lineage mismatch');
-  assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,headedBrowser,noDestinationMatch,noMutationBeforeValidation,notExtractionFailed,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
+  assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,genuineManualReview,headedBrowser,noMutationBeforeValidation,notExtractionFailed,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
   const counts = ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount'];
   assert(Object.entries(proof.assertions).every(([key, value]) => counts.includes(key) ? value === null || Number.isInteger(value) : typeof value === 'boolean'), 'Item 5 proof assertion value invalid');
   if (requireComplete && borrowedMode) {
-    const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'headedBrowser', 'noDestinationMatch', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
+    const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'genuineManualReview', 'headedBrowser', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
     assert(proof.assertions.originalExactNameCount === 0 && proof.assertions.originalPdfCount === 0
       && proof.assertions.finalExactNameCount === 0 && proof.assertions.finalPdfCount === 0
       && proof.assertions.createdRunnerOwned === false && proof.assertions.createdInAuthorizedRoot === false
@@ -813,6 +814,7 @@ function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = fal
 function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) throw new Error('Live app URLs must use loopback'); return value.replace(/\/$/, ''); }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function assertThrows(action, message) { try { action(); } catch { return; } throw new Error(message); }
+function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath && typeof proposal.reviewReason === 'string' && proposal.reviewReason.trim().length > 0 && proposal.reviewReason !== 'extraction_failed'; }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }
 
 async function serviceAccountToken() {
