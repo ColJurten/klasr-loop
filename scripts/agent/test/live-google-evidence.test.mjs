@@ -13,7 +13,6 @@ const sha = head.startsWith('ref: ') ? readFileSync(new URL(`.git/${head.slice(5
 const treeBinding = { schema: 'klasr-tree-v1', mode: 'sha', head: sha, digest: sha };
 const observedRecord = { schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: 'claude-safe', modelUsed: 'anthropic/claude-safe', tree: treeBinding };
 const liveResultKeys = ['llm_classification', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
-const publisherResultKeys = ['anthropic_discovery', 'anthropic_setting_saved', 'anthropic_classification', 'anthropic_setting_removed', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
 
 function functionBody(source, name) {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\([^)]*\\) \\{`));
@@ -110,6 +109,11 @@ test('live runner evidence self-check enforces the sanitized manifest allowlist'
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const results = functionBody(source, 'sanitizedManifest');
   const schema = functionBody(source, 'assertManifest');
+  const publisher = readFileSync(new URL('../../publish-live-google-status.mjs', import.meta.url), 'utf8');
+  const publisherKeys = publisher.match(/const RESULT_KEYS = \[(.*?)\];/)?.[1].match(/'([^']+)'/g)?.map((key) => key.slice(1, -1));
+  const runnerKeys = schema.match(/keys\(manifest\.results\) === '([^']+)'/)?.[1].split(',');
+  assert.deepEqual(publisherKeys?.toSorted(), runnerKeys);
+  assert.deepEqual(liveResultKeys.toSorted(), runnerKeys);
   const markdown = functionBody(source, 'realAcceptanceMarkdown');
   const item4Schema = functionBody(source, 'assertItem4Proof');
   const item3Schema = functionBody(source, 'assertItem3Proof');
@@ -231,7 +235,7 @@ test('observed live record has an exact metadata-only schema and binds model plu
   assert.throws(() => parseObservedRecord('{', tree));
 });
 
-test('live runner verifies environment LLM settings before Drive browser selection', () => {
+test('live runner validates the environment LLM key before Drive browser selection', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const verification = source.slice(source.indexOf("failureStage = 'settings-verification'"), source.indexOf('if (quotaSafeMode) {'));
   assert.match(verification, /KLASR_LLM_API_KEY\.includes\('\\n'\)/);
@@ -495,7 +499,7 @@ test('publisher dry-run emits only a sanitized success status and performs no ne
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 21, attempt: 2, tree: treeBinding, observed: observedRecord,
     status: 'PASS',
     results: {
-      anthropic_discovery: true, anthropic_setting_saved: true, anthropic_classification: true, anthropic_setting_removed: true,
+      llm_classification: true,
       service_account_auth: true, drive_listing: true, drive_download_ocr: true,
       proposal_review: true, confirm_mutation: true, correction_mutation: true,
       reject_mutation: true, terminal_no_reenqueue: true, desktop_browser: true,
@@ -524,7 +528,7 @@ test('publisher dry-run emits only a sanitized success status and performs no ne
 test('publisher fails closed for wrong SHA or failed required proof', () => {
   const base = {
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2, status: 'FAIL', tree: treeBinding, observed: observedRecord,
-    results: Object.fromEntries(publisherResultKeys.map((key) => [key, false])),
+    results: Object.fromEntries(liveResultKeys.map((key) => [key, false])),
     cleanup: { fixture_restored: false, created_items_removed: false, tenant_cleaned: false },
     processes: { apps_stopped: false, no_orphans: false },
   };
@@ -543,11 +547,11 @@ test('publisher fails closed for wrong SHA or failed required proof', () => {
 test('publisher derives FAIL from every false required truth and rejects missing observed truth', () => {
   const manifest = {
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 21, attempt: 2, status: 'PASS', tree: treeBinding, observed: observedRecord,
-    results: Object.fromEntries(publisherResultKeys.map((key) => [key, true])),
+    results: Object.fromEntries(liveResultKeys.map((key) => [key, true])),
     cleanup: { fixture_restored: true, created_items_removed: true, tenant_cleaned: true }, processes: { apps_stopped: true, no_orphans: true },
   };
   const env = { PATH: process.env.PATH, GITHUB_REPOSITORY: 'owner/repo', DRY_RUN_CURRENT_HEAD_SHA: sha };
-  for (const [section, key] of [...publisherResultKeys.map((key) => ['results', key]), ...Object.keys(manifest.cleanup).map((key) => ['cleanup', key]), ...Object.keys(manifest.processes).map((key) => ['processes', key])]) {
+  for (const [section, key] of [...liveResultKeys.map((key) => ['results', key]), ...Object.keys(manifest.cleanup).map((key) => ['cleanup', key]), ...Object.keys(manifest.processes).map((key) => ['processes', key])]) {
     const candidate = structuredClone(manifest);
     candidate[section][key] = false;
     const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify(candidate), encoding: 'utf8', env });
@@ -564,7 +568,7 @@ test('publisher derives FAIL from every false required truth and rejects missing
 test('publisher dry-run fails closed for a stale current head or no matching failed CI run', () => {
   const manifest = {
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2, status: 'PASS', tree: treeBinding, observed: observedRecord,
-    results: Object.fromEntries(publisherResultKeys.map((key) => [key, true])),
+    results: Object.fromEntries(liveResultKeys.map((key) => [key, true])),
     cleanup: { fixture_restored: true, created_items_removed: true, tenant_cleaned: true },
     processes: { apps_stopped: true, no_orphans: true },
   };
@@ -581,7 +585,7 @@ test('publisher dry-run fails closed for a stale current head or no matching fai
 test('publisher dispatches acceptance directly when exact-SHA CI already succeeded', () => {
   const manifest = {
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 13, attempt: 2, status: 'PASS', tree: treeBinding, observed: observedRecord,
-    results: Object.fromEntries(publisherResultKeys.map((key) => [key, true])),
+    results: Object.fromEntries(liveResultKeys.map((key) => [key, true])),
     cleanup: { fixture_restored: true, created_items_removed: true, tenant_cleaned: true }, processes: { apps_stopped: true, no_orphans: true },
   };
   const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify(manifest), encoding: 'utf8', env: {
@@ -598,7 +602,7 @@ test('publisher dispatches acceptance directly when exact-SHA CI already succeed
 test('publisher rejects malformed expected and manifest SHAs', () => {
   const manifest = {
     version: 1, identity: 'Google service account non-production acceptance', sha: 'not-a-sha', issue: 1, attempt: 1, status: 'PASS', tree: treeBinding, observed: observedRecord,
-    results: Object.fromEntries(publisherResultKeys.map((key) => [key, true])),
+    results: Object.fromEntries(liveResultKeys.map((key) => [key, true])),
     cleanup: { fixture_restored: true, created_items_removed: true, tenant_cleaned: true }, processes: { apps_stopped: true, no_orphans: true },
   };
   for (const env of [{ PATH: process.env.PATH }, { PATH: process.env.PATH, EXPECTED_SHA: 'A'.repeat(40) }]) {

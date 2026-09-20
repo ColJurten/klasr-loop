@@ -2,7 +2,7 @@
 
 - Updated `scripts/agent/test/live-google-evidence.test.mjs` to pin the ported environment-LLM contract.
 - Guards now require `genuineManualReview`, the current `llm_classification` and mutation manifest keys, the `env-llm-verified` observed schema, and the current failure-stage list.
-- Guards explicitly reject removed `no_destination_match`, `tenant_setting_absent`, `science-server-setup`, `anthropic-server-setup`, and `settings-delete` contracts.
+- Guards explicitly reject removed `no_destination_match`, `tenant_setting_absent`, `anthropic-server-setup`, and `settings-delete` contracts.
 - No product code or credentialed live run was touched.
 
 Verification:
