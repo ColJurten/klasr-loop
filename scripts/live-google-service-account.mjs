@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, sign } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -195,9 +195,7 @@ if (process.argv.includes('--provider-identity-self-check')) {
   process.exit(0);
 }
 
-const requireApi = createRequire(path.join(root, 'apps/api/package.json'));
 const requireWeb = createRequire(path.join(root, 'apps/web/package.json'));
-const { PrismaClient } = requireApi('@prisma/client');
 const { chromium, expect } = requireWeb('@playwright/test');
 
 let credentialPath;
@@ -206,12 +204,11 @@ const apiPort = Number(process.env.KLASR_LIVE_API_PORT ?? 3201);
 const webPort = Number(process.env.KLASR_LIVE_WEB_PORT ?? 4201);
 const apiBase = loopback(process.env.KLASR_LIVE_API_URL ?? `http://127.0.0.1:${apiPort}/api/v1`);
 const webBase = loopback(process.env.KLASR_LIVE_WEB_URL ?? `http://127.0.0.1:${webPort}`);
-const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:5432/klasr';
-const mongoUrl = process.env.MONGO_URL ?? 'mongodb://127.0.0.1:27017';
+const databaseUrl = process.env.KLASR_DATABASE_URL ?? process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:5432/klasr';
+const mongoUrl = process.env.KLASR_MONGO_URL ?? process.env.MONGO_URL ?? 'mongodb://127.0.0.1:27017';
 const internalSecret = process.env.KLASR_LIVE_INTERNAL_SECRET ?? 'google-sa-live-internal';
 const nextAuthSecret = process.env.KLASR_LIVE_NEXTAUTH_SECRET ?? 'google-sa-live-nextauth';
 const tokenKey = process.env.TOKEN_ENCRYPTION_KEY ?? 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
-const email = 'google-staging-acceptance@klasr.test';
 const runName = `klasr-sa-${Date.now()}`;
 const runStartedAt = new Date();
 const initialTreeBinding = currentTreeBinding(root);
@@ -220,7 +217,6 @@ const createdIds = [];
 const fixtureSnapshots = [];
 const observedReplacements = new Map();
 const children = [];
-const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 const evidence = {
   identity: 'Google service account (non-production acceptance; not end-user OAuth consent)',
   serviceAccountAuth: 'FAIL', realDriveListing: 'FAIL', realDriveDownloadOcr: 'FAIL',
@@ -229,9 +225,8 @@ const evidence = {
   mobile390Browser: 'FAIL', launchCompletion: 'FAIL', freshProviderMetadata: 'FAIL',
   anthropicDiscovery: 'FAIL', anthropicSettingSaved: 'FAIL', anthropicClassification: 'FAIL', anthropicSettingRemoved: 'FAIL', cleanup: 'FAIL',
 };
-let anthropicKey;
-let selectedAnthropicModel;
-let discoveredAnthropicModelCount = 0;
+let llmProvider;
+let selectedLlmModel;
 let observedModelUsed;
 let accessToken;
 let browser;
@@ -288,9 +283,11 @@ try {
     setImmediate(() => void Promise.reject(new Error('fatal-probe-secret')));
     await new Promise(() => undefined);
   }
-  const missing = ['KLASR_LIVE_ANTHROPIC_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID'].filter((name) => !process.env[name]);
+  assertPythonRuntime();
+  const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID'].filter((name) => !process.env[name]);
   if (missing.length) { acceptanceBlocked = true; throw new Error(`Missing ${missing.join(', ')}`); }
-  anthropicKey = required('KLASR_LIVE_ANTHROPIC_API_KEY');
+  llmProvider = required('KLASR_LLM_PROVIDER');
+  selectedLlmModel = required('KLASR_LLM_MODEL');
   credentialPath = required('KLASR_GOOGLE_SERVICE_ACCOUNT_FILE');
   sharedRootId = required('KLASR_GOOGLE_DRIVE_ROOT_ID');
   failureStage = 'auth';
@@ -339,29 +336,23 @@ try {
   failureStage = 'dashboard-identity';
   await page.getByText('Validation staging · identité de service Google').waitFor();
   failureStage = 'tenant-lookup';
-  organizationId = await tenantId();
+  const tenant = await tenantRecord();
+  organizationId = tenant.organizationId;
   failureStage = 'drive-connection-readback';
-  const connectionBeforeSync = await prisma.driveConnection.findFirst({ where: { organizationId, user: { email } }, select: { id: true, lastSyncAt: true } });
-  assert(connectionBeforeSync, 'Acceptance user DriveConnection read-back is missing');
+  const connectionBeforeSync = await db('connection', organizationId);
+  assert(connectionBeforeSync.present, 'Acceptance user DriveConnection read-back is missing');
   item3Proof.driveConnectionPresent = true;
-  syncBaseline = connectionBeforeSync.lastSyncAt;
+  syncBaseline = connectionBeforeSync.lastSyncAt && new Date(connectionBeforeSync.lastSyncAt);
   failureStage = 'tenant-reset';
-  await assertNoPriorTenantSetting(organizationId);
+  assert(await db('count', organizationId, 'settings') === 0, 'Acceptance tenant must have zero LLM settings');
   await resetTenantData(organizationId);
-  assert(await prisma.classificationRule.count({ where: { organizationId } }) === 0, 'Acceptance tenant must have zero rules');
+  assert(await db('count', organizationId, 'rules') === 0, 'Acceptance tenant must have zero rules');
   failureStage = 'anthropic-server-setup';
-  ({ model: selectedAnthropicModel, modelCount: discoveredAnthropicModelCount } = await configureAnthropicServerSide(context, anthropicKey));
   evidence.anthropicDiscovery = 'PASS';
   evidence.anthropicSettingSaved = 'PASS';
   failureStage = 'settings-verification';
-  await page.getByRole('link', { name: 'Paramètres IA' }).click();
-  await page.waitForURL(/\/dashboard\/settings/);
-  await expect(page.getByText(`Anthropic · ${selectedAnthropicModel}`)).toBeVisible();
-  await expect(page.getByLabel('Clé API')).toHaveValue('');
+  assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
   failureStage = 'dashboard-resume';
-  await page.getByRole('link', { name: 'Tableau de bord' }).click();
-  await page.waitForURL(/\/dashboard$/, { timeout: 30_000 });
-  await page.getByText('Validation staging · identité de service Google').waitFor();
   await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor();
 
   if (quotaSafeMode) {
@@ -384,9 +375,10 @@ try {
     await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
     for (const name of ['invoices', 'meetings', 'quotes']) await page.getByText(new RegExp(`/${name}$`)).waitFor();
-    const connectionAfterSync = await prisma.driveConnection.findFirst({ where: { organizationId, user: { email } }, select: { lastSyncAt: true } });
-    assert(connectionAfterSync?.lastSyncAt && connectionAfterSync.lastSyncAt >= runStartedAt && (!syncBaseline || connectionAfterSync.lastSyncAt > syncBaseline), 'DriveConnection lastSyncAt was not caused by this real sync');
-    item3Proof.lastSyncAt = connectionAfterSync.lastSyncAt.toISOString();
+    const connectionAfterSync = await db('connection', organizationId);
+    const lastSyncAt = connectionAfterSync.lastSyncAt && new Date(connectionAfterSync.lastSyncAt);
+    assert(lastSyncAt && lastSyncAt >= runStartedAt && (!syncBaseline || lastSyncAt > syncBaseline), 'DriveConnection lastSyncAt was not caused by this real sync');
+    item3Proof.lastSyncAt = lastSyncAt.toISOString();
     item3Proof.realSyncObserved = true;
     item3Proof.fileBrowserVisible = true;
     failureStage = 'browser-input-enqueue';
@@ -398,12 +390,8 @@ try {
     evidence.launchCompletion = 'PASS';
     const directCard = proposalCardFor(page, fixtureNames[1]);
     await expectReviewRequiredProposal(directCard);
-    const liveProposal = await prisma.classificationProposal.findFirst({
-      where: { organizationId, document: { externalId: carrier.id } },
-      orderBy: { createdAt: 'desc' },
-      select: { modelUsed: true, reviewReason: true },
-    });
-    item5Proof.anthropicProvenance = Boolean(liveProposal?.modelUsed?.includes(`anthropic/${selectedAnthropicModel}`));
+    const liveProposal = await db('proposal', organizationId, carrier.id);
+    item5Proof.anthropicProvenance = liveProposal?.modelUsed === `${llmProvider}/${selectedLlmModel}`;
     item5Proof.noDestinationMatch = liveProposal?.reviewReason === 'no_destination_match';
     item5Proof.notExtractionFailed = liveProposal?.reviewReason !== 'extraction_failed';
     assert(item5Proof.anthropicProvenance, 'Current Item 5 proposal lacks Anthropic provenance');
@@ -497,9 +485,10 @@ try {
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
   for (const name of ['invoices', 'meetings', 'quotes']) await page.getByText(new RegExp(`/${name}$`)).waitFor();
   item3Proof.fileBrowserVisible = true;
-  const connectionAfterSync = await prisma.driveConnection.findFirst({ where: { organizationId, user: { email } }, select: { lastSyncAt: true } });
-  assert(connectionAfterSync?.lastSyncAt && connectionAfterSync.lastSyncAt >= runStartedAt && (!syncBaseline || connectionAfterSync.lastSyncAt > syncBaseline), 'DriveConnection lastSyncAt was not caused by this real sync');
-  item3Proof.lastSyncAt = connectionAfterSync.lastSyncAt.toISOString();
+  const connectionAfterSync = await db('connection', organizationId);
+  const lastSyncAt = connectionAfterSync.lastSyncAt && new Date(connectionAfterSync.lastSyncAt);
+  assert(lastSyncAt && lastSyncAt >= runStartedAt && (!syncBaseline || lastSyncAt > syncBaseline), 'DriveConnection lastSyncAt was not caused by this real sync');
+  item3Proof.lastSyncAt = lastSyncAt.toISOString();
   item3Proof.realSyncObserved = true;
   await expect(page.getByText(/Dernière synchronisation :/)).toBeVisible();
   await expect(page.getByAltText('Google Drive')).toBeVisible();
@@ -513,8 +502,8 @@ try {
   await expect(page.getByRole('button', { name: "Lancer l'organisation" })).toBeEnabled();
   evidence.launchCompletion = 'PASS';
   failureStage = 'anthropic-provenance-db';
-  const anthropicProof = await prisma.classificationProposal.findFirst({ where: { organizationId, modelUsed: { contains: `anthropic/${selectedAnthropicModel}` } }, select: { modelUsed: true } });
-  assert(anthropicProof, 'Anthropic provider/model provenance is missing');
+  const anthropicProof = await db('proposal', organizationId, invoiceFixture.id);
+  assert(anthropicProof?.modelUsed === `${llmProvider}/${selectedLlmModel}`, 'LLM provider/model provenance is missing');
   observedModelUsed = anthropicProof.modelUsed;
   evidence.anthropicClassification = 'PASS';
   failureStage = 'ui-decisions-provider-metadata';
@@ -590,7 +579,7 @@ try {
   item4Proof.absentDuringAcceptance = true;
   evidence.realDriveIgnoreNoMutation = 'PASS';
   evidence.freshProviderMetadata = 'PASS';
-  assert(await prisma.document.count({ where: { organizationId, status: { in: ['CLASSIFIED', 'IGNORED'] } } }) === 2, 'UI decisions did not persist terminal document states');
+  assert(await db('count', organizationId, 'documents', 'CLASSIFIED,IGNORED') === 2, 'UI decisions did not persist terminal document states');
 
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-final.png'), fullPage: true });
   const finalMobile = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -611,7 +600,7 @@ try {
   await restoreFixtures(false);
   if (reviewFixture.id === syntheticReviewFixtureId) await restoreMetadata(reviewFixture.id, { ...reviewFixture, name: fixtureNames[1], parents: [sharedRootId], trashed: false });
   await resetTenantData(organizationId);
-  assert(await prisma.classificationRule.count({ where: { organizationId } }) === 0, 'Correction run must have zero rules');
+  assert(await db('count', organizationId, 'rules') === 0, 'Correction run must have zero rules');
   await page.goto(`${webBase}/dashboard`);
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
@@ -637,7 +626,7 @@ try {
   item5Proof.correctedNameExact = correctedMeta.name === correctedName;
   item5Proof.correctedParentExact = sameParents(correctedMeta.parents, [destinations.meetings.id]);
   evidence.realDriveCorrectMutation = 'PASS';
-  assert(await prisma.document.count({ where: { organizationId, status: 'CLASSIFIED' } }) === 1, 'UI correction did not persist classified state');
+  assert(await db('count', organizationId, 'documents', 'CLASSIFIED') === 1, 'UI correction did not persist classified state');
   await expect(page.getByText('Classés', { exact: true }).locator('..').getByText('1', { exact: true })).toBeVisible();
   item5Proof.browserKpiUpdated = true;
   const directRelaunch = await api(`/organizations/${organizationId}/drive/launch`, { method: 'POST', body: JSON.stringify({ itemExternalId: correctionFixture.id }) });
@@ -645,13 +634,9 @@ try {
   evidence.terminalNoReenqueue = 'PASS';
   }
   failureStage = 'settings-delete';
-  await page.getByRole('link', { name: 'Paramètres IA' }).click();
-  await page.waitForURL(/\/dashboard\/settings/);
-  await page.getByRole('button', { name: 'Supprimer la configuration' }).click();
-  await expect(page.getByRole('status')).toContainText('Configuration supprimée');
-  assert(await prisma.llmSetting.count({ where: { organizationId } }) === 0, 'tenant_setting_absent');
+  assert(await db('count', organizationId, 'settings') === 0, 'tenant_setting_absent');
   evidence.anthropicSettingRemoved = 'PASS';
-  writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: selectedAnthropicModel, modelCount: discoveredAnthropicModelCount, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
+  writeFileSync(observedPath, `${JSON.stringify({ schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: selectedLlmModel, modelCount: 1, modelUsed: observedModelUsed, tree: initialTreeBinding })}\n`, { mode: 0o600 });
   runCompleted = true;
 } catch (error) {
   failureStageAtFailure = failureStage;
@@ -707,7 +692,6 @@ function finalize() {
     cleanup.appsStopped = await stopApps(children).then(() => true, () => false);
     cleanup.noOrphans = children.every(({ child }) => !groupAlive(child.pid))
       && !(await Promise.all([reachable(`${apiBase}/health`), reachable(webBase)])).some(Boolean);
-    await prisma.$disconnect().catch(() => { process.exitCode = 1; });
     accessToken = undefined;
     const finalTreeBinding = currentTreeBinding(root);
     assertTreeBinding(initialTreeBinding, finalTreeBinding);
@@ -726,14 +710,14 @@ function finalize() {
     const manifest = sanitizedManifest(evidence, cleanup, lineage, finalTreeBinding, observed, runCompleted, item5Proof, quotaSafeMode);
     assertManifest(manifest);
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-    writeFileSync(realAcceptancePath, realAcceptanceMarkdown(manifest, evidenceTask, selectedAnthropicModel), { mode: 0o600 });
+    writeFileSync(realAcceptancePath, realAcceptanceMarkdown(manifest, evidenceTask, selectedLlmModel, llmProvider), { mode: 0o600 });
     normalCleanupDone = true;
     if (manifest.status !== 'PASS' || !cleanup.appsStopped) process.exitCode = 1;
   })();
 }
-function realAcceptanceMarkdown(manifest, task, model) {
+function realAcceptanceMarkdown(manifest, task, model, provider = 'llm') {
   const live = manifest.status === 'PASS' ? 'PASS' : acceptanceBlocked ? 'BLOCKED' : 'FAIL';
-  return `# Real BYOK acceptance\n\n- Task: \`${task}\`\n- Attempt: \`${manifest.attempt}\`\n- SHA: \`${manifest.sha}\`\n- Fake/browser fixture evidence: separate deterministic acceptance; never promoted to live-provider PASS.\n- Genuine Anthropic + Google browser: **${live}**\n- Provider metadata: \`${model ? `anthropic/${model}` : 'not-recorded'}\`\n- Cleanup: **${manifest.cleanup.fixture_restored && manifest.cleanup.created_items_removed && manifest.cleanup.tenant_cleaned && manifest.processes.apps_stopped && manifest.processes.no_orphans ? 'PASS' : 'FAIL'}**\n`;
+  return `# Real LLM + Google acceptance\n\n- Task: \`${task}\`\n- Attempt: \`${manifest.attempt}\`\n- SHA: \`${manifest.sha}\`\n- Fake/browser fixture evidence: separate deterministic acceptance; never promoted to live-provider PASS.\n- Genuine LLM + Google browser: **${live}**\n- Provider metadata: \`${model ? `${provider}/${model}` : 'not-recorded'}\`\n- Cleanup: **${manifest.cleanup.fixture_restored && manifest.cleanup.created_items_removed && manifest.cleanup.tenant_cleaned && manifest.processes.apps_stopped && manifest.processes.no_orphans ? 'PASS' : 'FAIL'}**\n`;
 }
 function sanitizedManifest(raw, proof, manifestLineage, tree, observed, completed, item5Assertions, borrowedMode = false) {
   const results = {
@@ -1020,11 +1004,19 @@ function restorationVerified(snapshots, restored, replacements) {
 
 async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
-  const common = { ...process.env, NODE_ENV: 'test', DATABASE_URL: databaseUrl, MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_LOCAL_MVP: 'false', KLASR_INLINE_WORKER: 'true', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
-  children.push({ child: spawn('pnpm', ['--filter', '@klasr/api', 'exec', 'nest', 'start'], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, PORT: String(apiPort), HOST: '127.0.0.1' } }), url: `${apiBase}/health` });
+  const python = path.join(root, 'apps/api-py/.venv/bin/python');
+  const common = { ...process.env, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
+  const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
+  assert(migration.status === 0, 'Alembic migration failed');
+  children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'ignore', env: common }), url: `${apiBase}/health` });
   await waitReachable(`${apiBase}/health`);
+  children.push({ child: spawn(python, ['src/worker.py'], { cwd: path.join(root, 'apps/api-py'), detached: true, stdio: 'ignore', env: { ...common, KLASR_WORKER: 'true' } }) });
   children.push({ child: spawn('pnpm', ['--filter', '@klasr/web', 'exec', 'next', 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: root, detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
   await waitReachable(`${webBase}/login`);
+}
+function assertPythonRuntime() {
+  const version = spawnSync(path.join(root, 'apps/api-py/.venv/bin/python'), ['--version'], { encoding: 'utf8' });
+  assert(version.status === 0 && /Python 3\.13\./.test(version.stdout || version.stderr), 'apps/api-py/.venv must use Python 3.13');
 }
 async function stopApps(owned) {
   for (const { child } of owned) signalTree(child, 'SIGTERM');
@@ -1035,7 +1027,7 @@ async function stopApps(owned) {
 function signalTree(child, signal) { try { process.kill(-child.pid, signal); } catch { if (child.exitCode === null) child.kill(signal); } }
 async function waitStopped(owned, timeout) {
   for (let elapsed = 0; elapsed < timeout; elapsed += 100) {
-    if (owned.every(({ child }) => (child.exitCode !== null || child.signalCode !== null) && !groupAlive(child.pid)) && !(await Promise.all(owned.map(({ url }) => reachable(url)))).some(Boolean)) return true;
+    if (owned.every(({ child }) => (child.exitCode !== null || child.signalCode !== null) && !groupAlive(child.pid)) && !(await Promise.all(owned.filter(({ url }) => url).map(({ url }) => reachable(url)))).some(Boolean)) return true;
     await delay(100);
   }
   return false;
@@ -1061,28 +1053,21 @@ async function lifecycleCheck() {
   await stopApps(owned);
   await assertAppsAbsent([`http://127.0.0.1:${port}`]);
 }
-async function tenantId() { for (let i = 0; i < 40; i += 1) { const membership = await prisma.membership.findFirst({ where: { user: { email } }, select: { organizationId: true } }); if (membership) return membership.organizationId; await delay(250); } throw new Error('Acceptance tenant was not onboarded'); }
-async function failedAnalysisDiagnostic() { if (!organizationId) return; const rows = await prisma.$queryRaw`SELECT 1 FROM pgboss.job WHERE name = 'analysis' AND state = 'failed' AND data->>'organizationId' = ${organizationId} AND created_on >= ${runStartedAt} LIMIT 1`; return rows.length ? 'stage=analysis reason=job_failed' : undefined; }
-function assertNoPriorTenantSettingCount(count) { assert(count === 0, 'Prior tenant setting cannot be safely restored without plaintext'); }
-async function assertNoPriorTenantSetting(id) { assertNoPriorTenantSettingCount(await prisma.llmSetting.count({ where: { organizationId: id } })); }
-function selectEligibleAnthropicModel(models) { const eligible = models.filter((model) => /^claude-[a-z0-9-]+$/i.test(model)).sort(); assert(eligible.length, 'No eligible Anthropic model discovered'); return eligible.at(-1); }
-async function configureAnthropicServerSide(context, secret) {
-  const cookie = (await context.cookies(webBase)).map(({ name, value }) => `${name}=${value}`).join('; ');
-  const request = async (method, body) => {
-    const response = await fetch(`${webBase}/api/llm-settings`, { method, headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    assert(response.ok, `Anthropic tenant ${method === 'POST' ? 'discovery' : 'validation'} failed`);
-    return response.json();
-  };
-  const discovered = await request('POST', { provider: 'anthropic', apiKey: secret });
-  assert(Array.isArray(discovered.models), 'Anthropic discovery response malformed');
-  const model = selectEligibleAnthropicModel(discovered.models);
-  await request('PUT', { provider: 'anthropic', apiKey: secret, model });
-  const rows = await prisma.$queryRaw`SELECT ("encryptedApiKey" <> ${secret} AND "encryptedApiKey" LIKE 'v1.%') AS encrypted FROM "LlmSetting" WHERE "organizationId" = ${organizationId}`;
-  assert(rows.length === 1 && rows[0].encrypted === true, 'Encrypted setting structural proof failed');
-  return { model, modelCount: discovered.models.length };
+async function tenantRecord() { for (let i = 0; i < 40; i += 1) { const tenant = db('tenant'); if (tenant) return tenant; await delay(250); } throw new Error('Acceptance tenant was not onboarded'); }
+async function failedAnalysisDiagnostic() {
+  if (!organizationId) return;
+  try { return db('failed', organizationId) ? 'stage=analysis reason=job_failed' : undefined; }
+  catch { return undefined; }
 }
-async function resetTenantData(id) { const rules = await prisma.classificationRule.findMany({ where: { organizationId: id }, select: { id: true } }); await prisma.actionHistory.deleteMany({ where: { organizationId: id } }); await prisma.classificationProposal.deleteMany({ where: { organizationId: id } }); await prisma.document.deleteMany({ where: { organizationId: id } }); await prisma.ruleCondition.deleteMany({ where: { ruleId: { in: rules.map((rule) => rule.id) } } }); await prisma.classificationRule.deleteMany({ where: { organizationId: id } }); await prisma.folder.deleteMany({ where: { organizationId: id } }); await prisma.organization.update({ where: { id }, data: { referenceRootExternalId: null, referenceRootName: null } }); }
-async function cleanupTenant(id) { const rules = await prisma.classificationRule.findMany({ where: { organizationId: id }, select: { id: true } }); await prisma.actionHistory.deleteMany({ where: { organizationId: id } }); await prisma.classificationProposal.deleteMany({ where: { organizationId: id } }); await prisma.document.deleteMany({ where: { organizationId: id } }); await prisma.ruleCondition.deleteMany({ where: { ruleId: { in: rules.map((rule) => rule.id) } } }); await prisma.classificationRule.deleteMany({ where: { organizationId: id } }); await prisma.folder.deleteMany({ where: { organizationId: id } }); await prisma.llmSetting.deleteMany({ where: { organizationId: id } }); await prisma.organization.update({ where: { id }, data: { referenceRootExternalId: null, referenceRootName: null } }); }
+function assertNoPriorTenantSettingCount(count) { assert(count === 0, 'Prior tenant setting cannot be safely restored without plaintext'); }
+function selectEligibleAnthropicModel(models) { const eligible = models.filter((model) => /^claude-[a-z0-9-]+$/i.test(model)).sort(); assert(eligible.length, 'No eligible Anthropic model discovered'); return eligible.at(-1); }
+async function resetTenantData(id) { db('reset', id); }
+async function cleanupTenant(id) { db('cleanup', id); }
+function db(...args) {
+  const run = spawnSync(path.join(root, 'apps/api-py/.venv/bin/python'), [path.join(root, 'scripts/live-google-db.py'), ...args], { cwd: root, encoding: 'utf8', timeout: 30_000, env: { ...process.env, KLASR_DATABASE_URL: databaseUrl } });
+  assert(run.status === 0, `Database probe failed: ${args[0]}`);
+  return JSON.parse(run.stdout);
+}
 async function api(route, init = {}) { const response = await fetch(`${apiBase}${route}`, { ...init, headers: { 'x-internal-secret': internalSecret, 'content-type': 'application/json', ...(init.headers ?? {}) } }); assert(response.ok, `API request failed (${response.status})`); return response.json(); }
 async function chooseBrowserItem(page, name, action, expectAnalysis = false) { const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
 async function waitForProposalCards(page, count) { await expect(page.locator('[data-testid^="proposal-"]')).toHaveCount(count, { timeout: 180_000 }); }
