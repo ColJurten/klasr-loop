@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { assertTreeBinding, currentTreeBinding, parseObservedRecord, resolveEvidenceRunDir } from './live-google-evidence.mjs';
 
-const fixtureNames = ['CDA_Oct25_18mois_Calendrier.pdf', 'doc3.pdf'];
+const fixtureNames = ['doc3.pdf', 'CDA_Oct25_18mois_Calendrier.pdf'];
 const removedFolderName = 'À traiter manuellement';
 const recoveryVersion = '1';
 const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
