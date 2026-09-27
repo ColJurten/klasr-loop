@@ -47,6 +47,7 @@ if (process.argv.includes('--decision-selection-check')) {
   assertThrows(() => selectFixturePlan([...items, { ...items[1], id: 'duplicate' }]), 'Duplicate exact manual PDFs must fail before mutation');
   assertThrows(() => selectFixturePlan([...items.slice(0, 1), { id: 'non-pdf', name: fixtureNames[1], mimeType: 'text/plain' }]), 'Exact-name non-PDF candidates must fail closed');
   assertThrows(() => restorationVerified([], [], replacements), 'Empty restoration proof must fail');
+  assert(sanitizeFailure(new Error('failed with secret-value'), ['secret-value']) === 'failed with [REDACTED]', 'Failure details must redact secrets');
   assertThrows(() => restorationVerified(fixtureSnapshots, fixtureSnapshots.slice(0, 1), replacements), 'Partial restoration proof must fail');
   for (const index of [0, 1]) assertThrows(() => restorationVerified(fixtureSnapshots, restored, replacements.map((replacement, replacementIndex) => replacementIndex === index ? { ...replacement, bytes: fixtureSnapshots[index].bytes } : replacement)), 'Unchanged replacement proof must fail');
   const marker = { appProperties: { klasrRecoveryRevision: 'revision_1', klasrRecoveryVersion: recoveryVersion, klasrRecoveryScope: 'invoice' } };
@@ -249,6 +250,7 @@ let normalCleanupDone = false;
 let failureStage = 'preflight';
 let failureStageAtFailure;
 let failureDiagnostic;
+let failureDetail;
 let acceptanceBlocked = false;
 let fatalExitStarted = false;
 
@@ -341,8 +343,20 @@ try {
   assert(await db('count', organizationId, 'rules') === 0, 'Acceptance tenant must have zero rules');
   failureStage = 'settings-verification';
   assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
+  await page.goto(`${webBase}/dashboard/settings`);
+  await page.getByRole('radio', { name: 'Anthropic' }).check();
+  await page.getByLabel('Clé API').fill(process.env.KLASR_LLM_API_KEY);
+  await page.getByLabel('Modèle').fill(selectedLlmModel);
+  const savedResponse = page.waitForResponse((response) => response.url().endsWith('/api/llm-settings') && response.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Valider et enregistrer' }).click();
+  const saved = await (await savedResponse).json();
+  assert(saved.configured === true && saved.provider === llmProvider && saved.model === selectedLlmModel, 'LLM settings were not saved through the authenticated app flow');
+  await expect(page.getByRole('region', { name: 'Configuration active' })).toContainText(selectedLlmModel);
   failureStage = 'dashboard-resume';
+  await page.goto(`${webBase}/dashboard`);
+  await page.reload();
   await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor();
+  await expect(page.getByRole('button', { name: "Lancer l'organisation" })).toBeEnabled();
 
   failureStage = 'drive-fixture-prepare';
   for (const [index, item] of supplied.entries()) {
@@ -552,15 +566,18 @@ try {
   runCompleted = true;
 } catch (error) {
   failureStageAtFailure = failureStage;
+  failureDetail = sanitizeFailure(error);
   failureDiagnostic = await failedAnalysisDiagnostic().catch(() => undefined);
   failureDiagnostic ??= safeFailureReason(error);
   process.exitCode = 1;
 } finally {
-  await finalize().catch(() => {
-    failureDiagnostic = 'stage=cleanup-finalization';
+  await finalize().catch((error) => {
+    failureStageAtFailure ??= 'cleanup-finalization';
+    failureDetail ??= sanitizeFailure(error);
+    failureDiagnostic ??= 'stage=cleanup-finalization';
     process.exitCode = 1;
   });
-  if (failureStageAtFailure) process.stderr.write(`root failure: ${failureDiagnostic ?? `stage=${failureStageAtFailure}`}\n`);
+  if (failureStageAtFailure) process.stderr.write(`root failure: ${failureDiagnostic ?? `stage=${failureStageAtFailure}`} detail=${failureDetail}\n`);
 }
 
 if (Object.entries(evidence).some(([key, value]) => key !== 'identity' && typeof value === 'string' && value !== 'PASS')) process.exitCode = 1;
@@ -575,6 +592,11 @@ function safeFailureReason(error) {
   if (failureStage !== 'ui-decisions-provider-metadata') return undefined;
   if (error?.message === 'Ignore changed provider name or parents') return 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed';
   if (error?.message === 'Removed routing folder exists after ignore') return 'stage=ui-decisions-provider-metadata reason=legacy_folder_present';
+}
+function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, process.env.INTERNAL_API_SECRET, process.env.KLASR_LIVE_INTERNAL_SECRET, process.env.NEXTAUTH_SECRET, process.env.KLASR_LIVE_NEXTAUTH_SECRET, process.env.TOKEN_ENCRYPTION_KEY]) {
+  let detail = String(error?.message ?? error ?? 'Unknown error');
+  for (const secret of secrets.filter(Boolean)) detail = detail.replaceAll(secret, '[REDACTED]');
+  return detail.replace(/(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 function finalize() {
   return finalizationFlight ??= (async () => {
@@ -616,7 +638,7 @@ function finalize() {
     assertItem5Proof(sanitizedItem5, evidenceTask, lineage, finalTreeBinding, runCompleted, quotaSafeMode);
     writeFileSync(item5ProofPath, `${JSON.stringify(sanitizedItem5, null, 2)}\n`, { mode: 0o600 });
     const observed = runCompleted ? parseObservedRecord(readFileSync(observedPath, 'utf8'), finalTreeBinding) : undefined;
-    const manifest = sanitizedManifest(evidence, cleanup, lineage, finalTreeBinding, observed, runCompleted, item5Proof, quotaSafeMode);
+    const manifest = sanitizedManifest(evidence, cleanup, lineage, finalTreeBinding, observed, runCompleted, item5Proof, quotaSafeMode, failureDetail);
     assertManifest(manifest);
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     writeFileSync(realAcceptancePath, realAcceptanceMarkdown(manifest, evidenceTask, selectedLlmModel, llmProvider), { mode: 0o600 });
@@ -628,7 +650,7 @@ function realAcceptanceMarkdown(manifest, task, model, provider = 'llm') {
   const live = manifest.status === 'PASS' ? 'PASS' : acceptanceBlocked ? 'BLOCKED' : 'FAIL';
   return `# Real LLM + Google acceptance\n\n- Task: \`${task}\`\n- Attempt: \`${manifest.attempt}\`\n- SHA: \`${manifest.sha}\`\n- Fake/browser fixture evidence: separate deterministic acceptance; never promoted to live-provider PASS.\n- Genuine LLM + Google browser: **${live}**\n- Provider metadata: \`${model ? `${provider}/${model}` : 'not-recorded'}\`\n- Cleanup: **${manifest.cleanup.fixture_restored && manifest.cleanup.created_items_removed && manifest.cleanup.tenant_cleaned && manifest.processes.apps_stopped && manifest.processes.no_orphans ? 'PASS' : 'FAIL'}**\n`;
 }
-function sanitizedManifest(raw, proof, manifestLineage, tree, observed, completed, item5Assertions, borrowedMode = false) {
+function sanitizedManifest(raw, proof, manifestLineage, tree, observed, completed, item5Assertions, borrowedMode = false, detail) {
   const results = {
     llm_classification: raw.llmClassification === 'PASS',
     service_account_auth: raw.serviceAccountAuth === 'PASS', drive_listing: raw.realDriveListing === 'PASS',
@@ -646,7 +668,7 @@ function sanitizedManifest(raw, proof, manifestLineage, tree, observed, complete
     version: 1,
     identity: 'Google service account non-production acceptance',
     ...manifestLineage,
-    status: passed ? 'PASS' : 'FAIL', tree, observed: observed ?? null, results, cleanup: cleanupResult, processes,
+    status: passed ? 'PASS' : 'FAIL', failureDetail: detail ?? null, tree, observed: observed ?? null, results, cleanup: cleanupResult, processes,
   };
 }
 function parseLineage(env) {
@@ -664,7 +686,8 @@ function assertProviderMutationAllowed(mode, route, init) {
 function parseEvidenceTask(env) { assert(/^t_[a-z0-9]+$/.test(env.KLASR_EVIDENCE_TASK ?? ''), 'Evidence task is invalid'); return env.KLASR_EVIDENCE_TASK; }
 function assertManifest(manifest) {
   const keys = (value) => Object.keys(value).sort().join(',');
-  assert(keys(manifest) === 'attempt,cleanup,identity,issue,observed,processes,results,sha,status,tree,version', 'Sanitized manifest top-level schema mismatch');
+  assert(keys(manifest) === 'attempt,cleanup,failureDetail,identity,issue,observed,processes,results,sha,status,tree,version', 'Sanitized manifest top-level schema mismatch');
+  assert(manifest.failureDetail === null || typeof manifest.failureDetail === 'string', 'Sanitized manifest failure detail is invalid');
   assert(keys(manifest.results) === 'confirm_mutation,correction_mutation,desktop_browser,drive_download_ocr,drive_listing,fresh_provider_metadata,launch_completion,llm_classification,mobile_390_browser,proposal_review,reject_mutation,service_account_auth,terminal_no_reenqueue', 'Sanitized manifest result schema mismatch');
   assert(keys(manifest.cleanup) === 'created_items_removed,fixture_restored,tenant_cleaned', 'Sanitized manifest cleanup schema mismatch');
   assert(keys(manifest.processes) === 'apps_stopped,no_orphans', 'Sanitized manifest process schema mismatch');

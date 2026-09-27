@@ -236,13 +236,16 @@ test('observed live record has an exact metadata-only schema and binds model plu
   assert.throws(() => parseObservedRecord('{', tree));
 });
 
-test('live runner validates the environment LLM key before Drive browser selection', () => {
+test('live runner saves environment LLM settings through the authenticated UI before Drive browser selection', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const verification = source.slice(source.indexOf("failureStage = 'settings-verification'"), source.indexOf("failureStage = 'drive-fixture-prepare'"));
   assert.match(verification, /KLASR_LLM_API_KEY\.includes\('\\n'\)/);
+  assert.match(verification, /page\.goto\(`\$\{webBase\}\/dashboard\/settings`\)/);
+  assert.match(verification, /saved\.configured === true && saved\.provider === llmProvider && saved\.model === selectedLlmModel/);
   assert.match(verification, /failureStage = 'dashboard-resume'/);
+  assert.match(verification, /page\.reload\(\)/);
   assert.match(verification, /getByRole\('button', \{ name: 'Choisir ce dossier' \}\)\.waitFor\(\)/);
-  assert.doesNotMatch(verification, /page\.(?:goto|reload)\(/);
+  assert.match(verification, /getByRole\('button', \{ name: "Lancer l'organisation" \}\)\)\.toBeEnabled\(\)/);
 });
 
 test('live BYOK decisions are deterministic and reject missing prerequisites without credentials', () => {
@@ -254,8 +257,10 @@ test('live BYOK decisions are deterministic and reject missing prerequisites wit
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_FATAL_CHECK_DIR: directory, KLASR_EVIDENCE_TASK: 't_selfcheck', KLASR_EVIDENCE_SHA: sha, KLASR_EVIDENCE_ISSUE: '1', KLASR_EVIDENCE_ATTEMPT: '93' },
   });
   assert.notEqual(missing.status, 0);
-  assert.equal(missing.stderr, 'root failure: stage=preflight\n');
-  assert.equal(JSON.parse(readFileSync(path.join(directory, 'manifest.sanitized.json'), 'utf8')).status, 'FAIL');
+  assert.match(missing.stderr, /^root failure: stage=preflight detail=Missing KLASR_LLM_PROVIDER/);
+  const manifest = JSON.parse(readFileSync(path.join(directory, 'manifest.sanitized.json'), 'utf8'));
+  assert.equal(manifest.status, 'FAIL');
+  assert.match(manifest.failureDetail, /^Missing KLASR_LLM_PROVIDER/);
   assert.doesNotMatch(missing.stdout, /PASS/);
 });
 
@@ -410,7 +415,7 @@ test('live runner exposes only exact allowlisted failure stages', () => {
     ['drive-connection-readback', "const connectionBeforeSync = await db('connection', organizationId)"],
     ['tenant-reset', "assert(await db('count', organizationId, 'settings') === 0"],
     ['settings-verification', "assert(!process.env.KLASR_LLM_API_KEY.includes('\\n')"],
-    ['dashboard-resume', "await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor()"],
+    ['dashboard-resume', 'await page.goto'],
   ];
   for (const [stage, operation] of browserBoundaries) assert(source.includes(`failureStage = '${stage}';\n  ${operation}`), `Missing immediate boundary: ${stage}`);
   assert.doesNotMatch(source, /drive-classification/);
