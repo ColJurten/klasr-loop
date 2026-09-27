@@ -27,6 +27,11 @@ ERRORS = [
         " Klasr. Choisissez un autre modèle.",
     ),
     (
+        "provider_bad_request",
+        "bad_request",
+        "Le fournisseur a refusé la requête.",
+    ),
+    (
         "provider_rate_limited",
         "rate_limited",
         "Limite du fournisseur atteinte. Réessayez plus tard.",
@@ -58,6 +63,8 @@ def status_error(status, phase):
         return ValueError("provider_rate_limited")
     if phase == "validation" and status in (400, 422):
         return ValueError("provider_model_incompatible")
+    if phase == "completion" and status in (400, 422):
+        return ValueError("provider_bad_request")
     return ValueError("provider_unavailable")
 
 
@@ -181,6 +188,7 @@ class ProviderClientService:
             messages = [dict(role="user", content=messages)]
         body = dict(model=config["model"], max_tokens=2048, messages=messages)
         if config["provider"] == "anthropic":
+            messages = [{"role": m["role"], "content": m["content"]} for m in messages]
             system = "\n".join(str(m["content"]) for m in messages if m["role"] == "system")
             body["messages"] = [m for m in messages if m["role"] != "system"]
             if system:
@@ -189,7 +197,7 @@ class ProviderClientService:
             config,
             "messages" if config["provider"] == "anthropic" else "chat/completions",
             body,
-            "validation",
+            "completion",
         )
         try:
             result = (

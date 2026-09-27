@@ -240,19 +240,32 @@ def test_provider_mapped_errors(tenant, status, code, message):
 async def test_provider_bounds_discovery_anthropic_and_network_errors():
     settings = Settings(NODE_ENV="test")
     config = dict(provider="anthropic", apiKey="synthetic", model="model")
+    bodies = []
 
     def anthropic(request):
         assert request.headers["x-api-key"] == "synthetic"
         assert request.headers["anthropic-version"] == "2023-06-01"
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "claude"}]})
+        bodies.append(json.loads(request.content))
         return httpx.Response(200, json={"content": [{"text": "{}"}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(anthropic)) as client:
         provider = ProviderClientService(settings, client)
         assert await provider.discover(config) == ["claude"]
         await provider.validate(config)
-        assert await provider.completion(config, "synthetic prompt") == "{}"
+        assert (
+            await provider.completion(
+                config,
+                [
+                    dict(role="system", content="synthetic system", cache_breakpoint=True),
+                    dict(role="user", content="synthetic prompt", cache_breakpoint=True),
+                ],
+            )
+            == "{}"
+        )
+        assert bodies[-1]["system"] == "synthetic system"
+        assert bodies[-1]["messages"] == [dict(role="user", content="synthetic prompt")]
     for response, reason in [
         (httpx.Response(302), "provider_unsafe"),
         (httpx.Response(200, content=b"x" * 1_000_001), "provider_response_too_large"),
@@ -275,6 +288,17 @@ async def test_provider_bounds_discovery_anthropic_and_network_errors():
         async with httpx.AsyncClient(transport=httpx.MockTransport(fail)) as client:
             with pytest.raises(ValueError, match=reason):
                 await ProviderClientService(settings, client).discover(config)
+
+
+@pytest.mark.asyncio
+async def test_completion_bad_request_is_not_model_incompatible():
+    settings = Settings(NODE_ENV="test")
+    config = dict(provider="anthropic", apiKey="synthetic", model="model")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(400))
+    ) as client:
+        with pytest.raises(ValueError, match="^provider_bad_request$"):
+            await ProviderClientService(settings, client).completion(config, "synthetic prompt")
 
 
 @pytest.mark.asyncio
