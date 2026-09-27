@@ -948,10 +948,10 @@ async function ensureApps() {
   const common = { ...runtimeEnv, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
   const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
   assert(migration.status === 0, 'Alembic migration failed');
-  children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'ignore', env: common }), url: `${apiBase}/health` });
+  children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'inherit', env: common }), url: `${apiBase}/health` });
   await waitReachable(`${apiBase}/health`);
-  children.push({ child: spawn(python, ['src/worker.py'], { cwd: path.join(root, 'apps/api-py'), detached: true, stdio: 'ignore', env: { ...common, KLASR_WORKER: 'true' } }) });
-  children.push({ child: spawn(process.execPath, [requireWeb.resolve('next/dist/bin/next'), 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: path.join(root, 'apps/web'), detached: true, stdio: 'ignore', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
+  children.push({ child: spawn(python, ['src/worker.py'], { cwd: path.join(root, 'apps/api-py'), detached: true, stdio: 'inherit', env: { ...common, KLASR_WORKER: 'true' } }) });
+  children.push({ child: spawn(process.execPath, [requireWeb.resolve('next/dist/bin/next'), 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: path.join(root, 'apps/web'), detached: true, stdio: 'inherit', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
   await waitReachable(`${webBase}/login`);
 }
 function assertPythonRuntime() {
