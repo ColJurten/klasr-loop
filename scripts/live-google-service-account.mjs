@@ -568,7 +568,7 @@ try {
   runCompleted = true;
 } catch (error) {
   failureStageAtFailure = failureStage;
-  failureDetail = sanitizeFailure(error);
+  failureDetail = error?.launchFailureDetail ?? sanitizeFailure(error);
   failureDiagnostic = await failedAnalysisDiagnostic().catch(() => undefined);
   failureDiagnostic ??= safeFailureReason(error);
   process.exitCode = 1;
@@ -596,12 +596,14 @@ function safeFailureReason(error) {
   if (error?.message === 'Removed routing folder exists after ignore') return 'stage=ui-decisions-provider-metadata reason=legacy_folder_present';
 }
 function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, accessToken, internalSecret, nextAuthSecret, tokenKey]) {
-  let detail = String(error?.message ?? error ?? 'Unknown error');
-  for (const secret of secrets.filter(Boolean)) detail = detail.replaceAll(secret, '[REDACTED]');
-  return detail
-    .replace(/(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]+|ya29\.[\w.-]+/g, '[REDACTED]')
+  return redact(error?.message ?? error ?? 'Unknown error', secrets)
     .split(/\r?\n/).filter((line) => !/^\s*Received\b/.test(line)).slice(0, 3).join(' ')
     .replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+function redact(value, secrets = [process.env.KLASR_LLM_API_KEY, accessToken, internalSecret, nextAuthSecret, tokenKey]) {
+  let redacted = String(value);
+  for (const secret of secrets.filter(Boolean)) redacted = redacted.replaceAll(secret, '[REDACTED]');
+  return redacted.replace(/(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]+|ya29\.[\w.-]+/g, '[REDACTED]');
 }
 function assertLlmSetupSequence(events) {
   let configured = false;
@@ -1023,7 +1025,51 @@ function db(...args) {
   return JSON.parse(run.stdout);
 }
 async function api(route, init = {}) { const response = await fetch(`${apiBase}${route}`, { ...init, headers: { 'x-internal-secret': internalSecret, 'content-type': 'application/json', ...(init.headers ?? {}) } }); assert(response.ok, `API request failed (${response.status})`); return response.json(); }
-async function chooseBrowserItem(page, name, action, expectAnalysis = false) { if (action === "Lancer l'organisation") { llmSetupEvents.push('launch'); assertLlmSetupSequence(llmSetupEvents); } const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
+async function chooseBrowserItem(page, name, action, expectAnalysis = false) {
+  if (action === "Lancer l'organisation") { llmSetupEvents.push('launch'); assertLlmSetupSequence(llmSetupEvents); }
+  const submit = page.getByRole('button', { name: action });
+  const browserPanel = submit.locator('..');
+  await browserPanel.getByRole('list').waitFor({ timeout: 30_000 });
+  await page.waitForLoadState('networkidle');
+  const row = browserPanel.getByRole('button', { name, exact: true }).locator('..');
+  const radio = row.getByRole('radio');
+  await row.getByText('Sélectionner', { exact: true }).click();
+  await expect(radio).toBeChecked();
+  await expect(submit).toBeEnabled();
+  if (!expectAnalysis) { await submit.click(); return; }
+
+  let launch = null;
+  let lastConsole = null;
+  let bodyRead;
+  const onRequest = (request) => {
+    if (new URL(request.url()).pathname.endsWith('/api/drive/launch')) launch = { method: request.method(), path: new URL(request.url()).pathname, startedAt: Date.now(), response: null };
+  };
+  const onResponse = (response) => {
+    if (!response.url().includes('/api/drive/launch')) return;
+    launch ??= { method: response.request().method(), path: new URL(response.url()).pathname, startedAt: Date.now(), response: null };
+    launch.response = { status: response.status(), body: null, responseMs: Date.now() - launch.startedAt };
+    bodyRead = response.text().then((body) => { launch.response.body = redact(body); }, () => undefined);
+  };
+  const onConsole = (message) => { if (['error', 'warning'].includes(message.type())) lastConsole = redact(message.text()); };
+  page.on('request', onRequest);
+  page.on('response', onResponse);
+  page.on('console', onConsole);
+  try {
+    await submit.click();
+    await expect(page.getByRole('status')).toContainText('Analyse en cours');
+  } catch (error) {
+    await bodyRead;
+    const alerts = await page.getByRole('alert').allTextContents().catch(() => []);
+    const statuses = await page.getByRole('status').allTextContents().catch(() => []);
+    error.launchFailureDetail = redact(`${String(error?.message ?? error).split(/\r?\n/)[0]} launch=${JSON.stringify(launch)} alerts=${JSON.stringify(alerts.map((text) => redact(text)))} statuses=${statuses.length}:${JSON.stringify(statuses.map((text) => redact(text)))} console=${JSON.stringify(lastConsole)} url=${page.url()}`)
+      .replace(/\s+/g, ' ').trim().slice(0, 1500);
+    throw error;
+  } finally {
+    page.off('request', onRequest);
+    page.off('response', onResponse);
+    page.off('console', onConsole);
+  }
+}
 async function waitForProposalCards(page, count) { await expect(page.locator('[data-testid^="proposal-"]')).toHaveCount(count, { timeout: 180_000 }); }
 function proposalCardFor(page, documentName) { return page.locator('[data-testid^="proposal-"]').filter({ hasText: documentName }); }
 function chooseDecisionFixtures(proposals) {

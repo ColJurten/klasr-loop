@@ -448,6 +448,17 @@ test('live runner reports ordered proposal launch boundaries immediately before 
   }
 });
 
+test('live runner captures redacted launch-status failure context', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const chooser = functionBody(source, 'chooseBrowserItem');
+  assert.match(chooser, /page\.on\('request'/);
+  assert.match(chooser, /page\.on\('response'/);
+  assert.match(chooser, /getByRole\('alert'\)\.allTextContents/);
+  assert.match(chooser, /getByRole\('status'\)\.allTextContents/);
+  assert.match(chooser, /response\.text\(\).*redact/s);
+  assert.match(chooser, /alerts\.map\(\(text\) => redact\(text\)\).*statuses\.map\(\(text\) => redact\(text\)\)/s);
+});
+
 test('live runner routes signals and fatal errors through bounded single-flight recovery with fresh tokens', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   for (const event of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) assert.match(source, new RegExp(`process\\.once\\('${event}'`));
