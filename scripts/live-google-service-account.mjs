@@ -297,6 +297,7 @@ try {
   const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID'].filter((name) => !process.env[name]);
   if (missing.length) { acceptanceBlocked = true; throw new Error(`Missing ${missing.join(', ')}`); }
   llmProvider = required('KLASR_LLM_PROVIDER');
+  assert(llmProvider === 'anthropic', `Live UI LLM setup supports provider anthropic, received ${llmProvider}`);
   selectedLlmModel = required('KLASR_LLM_MODEL');
   credentialPath = required('KLASR_GOOGLE_SERVICE_ACCOUNT_FILE');
   sharedRootId = required('KLASR_GOOGLE_DRIVE_ROOT_ID');
@@ -519,6 +520,7 @@ try {
   assert(await db('count', organizationId, 'rules') === 0, 'Correction run must have zero rules');
   await configureLlmThroughUi(page);
   await page.goto(`${webBase}/dashboard`);
+  await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor();
   await expect(page.locator('#llm-launch-help')).toHaveCount(0);
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
@@ -598,7 +600,7 @@ function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, access
   for (const secret of secrets.filter(Boolean)) detail = detail.replaceAll(secret, '[REDACTED]');
   return detail
     .replace(/(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]+|ya29\.[\w.-]+/g, '[REDACTED]')
-    .split(/\r?\n/).filter((line) => !/^\s*Received:/.test(line)).slice(0, 3).join(' ')
+    .split(/\r?\n/).filter((line) => !/^\s*Received\b/.test(line)).slice(0, 3).join(' ')
     .replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 function assertLlmSetupSequence(events) {
@@ -1000,7 +1002,6 @@ function selectEligibleAnthropicModel(models) { const eligible = models.filter((
 async function resetTenantData(id) { db('reset', id); llmSetupEvents.push('reset'); }
 async function cleanupTenant(id) { db('cleanup', id); }
 async function configureLlmThroughUi(page) {
-  assert(llmProvider === 'anthropic', `Live UI LLM setup supports provider anthropic, received ${llmProvider}`);
   assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
   await page.goto(`${webBase}/dashboard/settings`);
   await page.getByRole('radio', { name: 'Anthropic' }).check();
@@ -1010,7 +1011,7 @@ async function configureLlmThroughUi(page) {
     page.waitForResponse((candidate) => candidate.url().endsWith('/api/llm-settings') && candidate.request().method() === 'PUT'),
     page.getByRole('button', { name: 'Valider et enregistrer' }).click(),
   ]);
-  const saved = await response.json();
+  const saved = await response.json().catch(() => ({}));
   assert(response.ok() && saved.configured === true && saved.provider === llmProvider && saved.model === selectedLlmModel,
     `LLM settings PUT failed (${response.status()}): ${saved.error ?? 'invalid saved configuration'}`);
   await expect(page.getByRole('region', { name: 'Configuration active' })).toContainText(selectedLlmModel);

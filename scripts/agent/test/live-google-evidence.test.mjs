@@ -246,7 +246,8 @@ test('live runner saves environment LLM settings through the authenticated UI be
   for (const [index, reset] of resets.entries()) {
     const nextReset = resets[index + 1]?.index ?? source.length;
     const block = source.slice(reset.index + reset[0].length, nextReset);
-    assert(block.indexOf('await configureLlmThroughUi(page);') < block.indexOf('"Lancer l\'organisation"'), 'Every reset must be followed by LLM setup before launch');
+    const setup = block.indexOf('await configureLlmThroughUi(page);');
+    assert(setup !== -1 && setup < block.indexOf('"Lancer l\'organisation"'), 'Every reset must contain LLM setup before launch');
   }
   assert.match(functionBody(source, 'configureLlmThroughUi'), /Promise\.all/);
   assert.match(source, /locator\('#llm-launch-help'\)\)\.toHaveCount\(0\)/);
