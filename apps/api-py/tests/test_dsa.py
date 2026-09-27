@@ -72,8 +72,8 @@ def test_corrupted_empty_sparse_and_schema(monkeypatch, tmp_path):
     with pytest.raises(ValidationError):
         DecisionResult(value="x", confidence=2, signals=["kind:value"])
     normalized = DecisionResult(value="x", confidence=1, signals=["unlabelled"])
-    assert normalized.signals == [Signal(label="evidence", value="unlabelled")]
-    assert "signal sans label normalisé" in normalized.warnings
+    assert normalized.signals == [Signal(label="unlabelled", value="unlabelled")]
+    assert "unlabelled_signal" in normalized.warnings
     with pytest.raises(ValidationError):
         DecisionResult(value="x", confidence=1, signals=[42])
     path = tmp_path / "broken.pdf"
@@ -239,8 +239,12 @@ def test_decision_signals_normalize_llm_drift_and_preserve_labelled_signals():
         }
     )
     assert [signal.label for signal in result.signals] == ["date", "invoice", "contract"]
-    assert all(signal.label and signal.value for signal in result.signals)
-    assert "signal sans label normalisé" in result.warnings
+    assert [signal.value for signal in result.signals] == [
+        "date: 2026-08-15",
+        "Invoice number 12345",
+        "Contract reference identified in source text",
+    ]
+    assert result.warnings == ["unlabelled_signal"]
 
     labelled = DecisionResult.model_validate(
         {
@@ -252,6 +256,34 @@ def test_decision_signals_normalize_llm_drift_and_preserve_labelled_signals():
     )
     assert labelled.signals == [Signal(label="reference", value="INV-42")]
     assert labelled.warnings == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"signals": [""]},
+        {"signals": ["date"]},
+        {"signals": [{"label": "date", "value": "today", "extra": True}]},
+        {"signals": "date: today"},
+        {"signals": ["date: today"], "warnings": "illisible"},
+    ],
+)
+def test_decision_signals_fail_closed(payload):
+    with pytest.raises(ValidationError):
+        DecisionResult.model_validate({"value": "x", "confidence": 1, **payload})
+
+
+def test_colon_signal_is_lossless_labelled_and_warned_after_existing_warnings():
+    result = DecisionResult.model_validate(
+        {
+            "value": "invoice.pdf",
+            "confidence": 0.9,
+            "signals": ["Date: 2026-08-15"],
+            "warnings": ["filename_warning"],
+        }
+    )
+    assert result.signals == [Signal(label="date", value="Date: 2026-08-15")]
+    assert result.warnings == ["filename_warning", "unlabelled_signal"]
 
 
 def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
@@ -281,9 +313,10 @@ def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
     assert crews.os.environ["CREWAI_DISABLE_TELEMETRY"] == "true"
     assert isinstance(output.pydantic, DecisionResult)
     assert output.pydantic.value == "invoice.pdf"
-    assert output.pydantic.signals == [Signal(label="invoice", value="12345")]
-    assert "signal sans label normalisé" in output.pydantic.warnings
+    assert output.pydantic.signals == [Signal(label="invoice", value="Invoice number 12345")]
+    assert "unlabelled_signal" in output.pydantic.warnings
     assert all("ACME INVOICE 42" in task.description for task in crew.tasks)
+    assert any("JAMAIS de simples chaînes de caractères" in prompt for prompt in fake.prompts)
 
     directory_crew = crews.DocumentSortingAssistantCrew().destination_crew()
     directories = ["/Clients/Acme", "/Archive/2026"]

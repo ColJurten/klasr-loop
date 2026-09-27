@@ -31,7 +31,7 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
         return DecisionResult(
             value=None,
             confidence=0,
-            signals=[f"extraction:{analysis.quality}"],
+            signals=[{"label": "extraction", "value": analysis.quality}],
             warnings=analysis.warnings,
         )
     if local := _local_suggestion(analysis, directories):

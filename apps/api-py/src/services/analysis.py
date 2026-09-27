@@ -225,13 +225,13 @@ def local_suggestion(extraction, directories):
         filename=DecisionResult(
             value=filename_value,
             confidence=filename_confidence,
-            signals=["provider:local"],
+            signals=[{"label": "provider", "value": "local"}],
             warnings=filename_warnings,
         ),
         destination=DecisionResult(
             value=dest_value,
             confidence=dest_confidence,
-            signals=["provider:local"],
+            signals=[{"label": "provider", "value": "local"}],
             warnings=dest_warnings,
         ),
         extraction_quality=extraction.quality,

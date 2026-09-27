@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-09-27 (provider message boundary)
+> Last updated: 2026-09-27 (normalisation stricte des signaux DSA)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-09-27 — Live acceptance attempt 11 : les appels Anthropic aboutissent, puis la sortie dérive en `signals` chaînes et échoue au parsing `DecisionResult`. Le correctif normalise toute chaîne non vide en signal structuré lossless avec warning `unlabelled_signal`, conserve les signaux internes structurés, rejette les warnings/signaux malformés et renforce le prompt sans date concrète copiable.
 
 - [x] 2026-09-27 — Live acceptance attempts 9–10 : correctif à la frontière fournisseur (`cache_breakpoint` supprimé pour tous les fournisseurs ; phase d’exécution `completion`).
 

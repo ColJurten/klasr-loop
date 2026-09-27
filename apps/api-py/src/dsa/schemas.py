@@ -55,20 +55,19 @@ class DecisionResult(BaseModel):
             if not signal:
                 normalized.append(signal)
                 continue
-            if ":" in signal:
-                label, value = signal.split(":", 1)
-            elif match := SIGNAL_LABEL_RE.match(signal):
-                label, value = match.group(1).lower(), signal[match.end() :]
-                changed = True
-            else:
-                label, value = "evidence", signal
-                changed = True
-            normalized.append({"label": label.strip(), "value": value.strip()})
+            match = SIGNAL_LABEL_RE.match(signal)
+            if match and not signal[match.end() :]:
+                normalized.append(signal)
+                continue
+            label = match.group(1).lower() if match else "unlabelled"
+            normalized.append({"label": label, "value": signal})
+            changed = True
         if not changed and normalized == data["signals"]:
             return data
-        warnings = list(data.get("warnings") or [])
-        if changed:
-            warnings.append("signal sans label normalisé")
+        warnings = data.get("warnings", [])
+        if not isinstance(warnings, list):
+            return {**data, "signals": normalized}
+        warnings = [*warnings, "unlabelled_signal"]
         return {**data, "signals": normalized, "warnings": warnings}
 
 
