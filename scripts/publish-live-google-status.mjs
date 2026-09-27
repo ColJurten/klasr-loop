@@ -7,7 +7,7 @@ import { parseObservedRecord } from './live-google-evidence.mjs';
 
 const EXPECTED_SHA = process.env.EXPECTED_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const CONTEXT = 'klasr/live-google';
-const RESULT_KEYS = ['anthropic_discovery', 'anthropic_setting_saved', 'anthropic_classification', 'anthropic_setting_removed', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
+const RESULT_KEYS = ['llm_classification', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
 const CLEANUP_KEYS = ['fixture_restored', 'created_items_removed', 'tenant_cleaned'];
 const PROCESS_KEYS = ['apps_stopped', 'no_orphans'];
 const dryRun = process.argv.includes('--dry-run');

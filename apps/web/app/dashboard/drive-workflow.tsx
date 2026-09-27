@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { launchDriveItem, listDriveItems, selectReferenceRoot } from '@/lib/client-api';
 import type { DashboardView, DriveInputItemView, FolderChoiceView } from '@/lib/types';
 
-const LOCAL_REFERENCE_ID = 'local_root_cabinet';
 const PRODUCTION_INPUT_SELECTION_KEY = 'klasr-drive-input-selection';
 const PRODUCTION_LAUNCH_KEY = 'klasr-drive-launch';
 type DrivePath = Array<{ id: string; name: string }>;
@@ -21,10 +20,9 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
   const [launchBaseline, setLaunchBaseline] = useState({ outcomes: 0, failures: 0 });
   const [launchTarget, setLaunchTarget] = useState<number | null>(null);
   const [launchStartedAt, setLaunchStartedAt] = useState<number | null>(null);
-  const [selectedInput, setSelectedInput] = useState(data?.inputItems?.find((item) => item.eligible)?.externalId ?? '');
+  const [selectedInput, setSelectedInput] = useState('');
   const [restoredInputPath, setRestoredInputPath] = useState<DrivePath | null>(null);
-  const [showReferencePicker, setShowReferencePicker] = useState(() => Boolean(data && data.mode !== 'local' && !data.referenceRoot));
-  const productionReferencePicker = Boolean(data && data.mode !== 'local' && showReferencePicker);
+  const [showReferencePicker, setShowReferencePicker] = useState(() => Boolean(data && !data.referenceRoot));
 
   useEffect(() => {
     const selection = savedProductionInputSelection();
@@ -55,7 +53,7 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
   }, []);
 
   useEffect(() => {
-    if (data && data.mode !== 'local' && !data.referenceRoot) {
+    if (data && !data.referenceRoot) {
       setShowReferencePicker(true);
     }
   }, [data]);
@@ -153,8 +151,6 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
   }
 
   const folders = data?.folders ?? [];
-  const inputItems = data?.inputItems ?? [];
-
   return (
     <div className="mb-10 space-y-4">
       <section aria-labelledby="reference-title" className="rounded-lg border border-line bg-white p-4">
@@ -170,24 +166,20 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
                 : 'Choisissez la racine Drive dont klasr hérite les destinations.'}
             </p>
           </div>
-          {data?.mode === 'local' || data?.referenceRoot ? (
+          {data?.referenceRoot ? (
             <Button
               type="button"
               variant={data?.referenceRoot ? 'secondary' : 'validate'}
               disabled={!data || referenceState === 'running'}
               onClick={() => {
-                if (data?.mode === 'local') {
-                  void chooseReference(LOCAL_REFERENCE_ID);
-                  return;
-                }
                 setShowReferencePicker(true);
               }}
             >
-              {data?.referenceRoot ? 'Remplacer' : 'Choisir Cabinet de démonstration'}
+              Remplacer
             </Button>
           ) : null}
         </div>
-        {productionReferencePicker && <DriveBrowser mode="folder" busy={referenceState === 'running'} onChoose={(item) => void chooseReference(item.externalId)} />}
+        {showReferencePicker && <DriveBrowser mode="folder" busy={referenceState === 'running'} onChoose={(item) => void chooseReference(item.externalId)} />}
         {referenceState === 'error' && (
           <p role="alert" className="mt-3 rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
             Impossible de sélectionner le dossier. Réessayez.
@@ -204,34 +196,8 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
         <h2 id="input-title" className="text-sm font-medium">3. Fichiers à organiser</h2>
         {!data?.referenceRoot ? (
           <p className="mt-2 text-sm text-ink/60">Sélectionnez d&apos;abord un dossier de référence.</p>
-        ) : data.mode !== 'local' ? (
-          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done' || !llmConfigured} describedBy={!llmConfigured ? 'llm-launch-help' : undefined} selected={selectedInput} initialPath={restoredInputPath ?? undefined} onSelect={selectInput} onStaleSelection={clearInputSelection} onChoose={(item) => void launchItem(item.externalId)} />
-        ) : inputItems.length === 0 ? (
-          <p className="mt-2 text-sm text-ink/60">Aucun fichier disponible.</p>
         ) : (
-          <>
-            <label htmlFor="drive-input" className="mt-3 block text-xs font-medium">
-              Élément Drive existant
-            </label>
-            <select
-              id="drive-input"
-              value={selectedInput}
-              onChange={(event) => setSelectedInput(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
-            >
-              {inputItems.map((item) => (
-                <option key={item.externalId} value={item.externalId} disabled={!item.eligible}>
-                  {item.type === 'folder' ? 'Dossier' : 'Fichier'} - {item.name}{item.eligible ? '' : ` (${reasonLabel(item)})`}
-                </option>
-              ))}
-            </select>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="validate" aria-describedby={!llmConfigured ? 'llm-launch-help' : undefined} disabled={!llmConfigured || !selectedInput || launchState === 'running' || launchState === 'done'} onClick={() => void launch()}>
-                <Play className="mr-1.5 inline h-3.5 w-3.5" strokeWidth={1.5} />
-                Lancer l&apos;organisation
-              </Button>
-            </div>
-          </>
+          <DriveBrowser mode="input" busy={launchState === 'running' || launchState === 'done' || !llmConfigured} describedBy={!llmConfigured ? 'llm-launch-help' : undefined} selected={selectedInput} initialPath={restoredInputPath ?? undefined} onSelect={selectInput} onStaleSelection={clearInputSelection} onChoose={(item) => void launchItem(item.externalId)} />
         )}
         {!llmConfigured && <p id="llm-launch-help" role="tooltip" className="mt-3 text-sm text-ink/70">L&apos;analyse est bloquée : configurez et validez une clé LLM.</p>}
         {(launchState === 'running' || launchState === 'done') && (

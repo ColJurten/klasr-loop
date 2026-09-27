@@ -35,15 +35,7 @@ declare module 'next-auth/jwt' {
 // Matches apps/web/lib/api.ts's API_URL convention exactly.
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 const DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive';
-const INTERNAL_VERIFIED_PROVIDERS = new Set(['local-mvp', 'google-service-account-acceptance']);
-
-function localProviderEnabled(): boolean {
-  if (process.env.KLASR_LOCAL_MVP !== 'true') return false;
-  if (process.env.NODE_ENV === 'production' && process.env.KLASR_ACCEPTANCE_LOCAL_MVP !== 'true') {
-    throw new Error('KLASR_LOCAL_MVP cannot run in production');
-  }
-  return true;
-}
+const INTERNAL_VERIFIED_PROVIDERS = new Set(['google-service-account-acceptance']);
 
 function acceptanceProviderEnabled(): boolean {
   if (process.env.KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT !== 'true') return false;
@@ -97,22 +89,6 @@ export const authOptions: NextAuthOptions = {
                 id: 'google-service-account-acceptance',
                 email: 'google-staging-acceptance@klasr.test',
                 name: 'Validation Google staging',
-              };
-            },
-          }),
-        ]
-      : []),
-    ...(localProviderEnabled()
-      ? [
-          CredentialsProvider({
-            id: 'local-mvp',
-            name: 'Mode local',
-            credentials: {},
-            async authorize() {
-              return {
-                id: 'local-user',
-                email: 'camille.local@klasr.test',
-                name: 'Camille Local',
               };
             },
           }),

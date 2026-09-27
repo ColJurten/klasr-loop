@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-08-12 (OCR suggestion quality)
+> Last updated: 2026-09-27 (destination fail-closed, revue round 2)
 
 ## In progress
 
@@ -29,6 +29,20 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-09-27 — Revue destination fail-closed round 2 : fixture de revue dé-hintée, contrat applicatif couvert contre les réponses LLM incohérentes, prompt clarifié et test service isolé de l'environnement.
+
+- [x] 2026-09-27 — Live acceptance attempt 12 : la fixture de revue sans correspondance a été classée à tort dans `stg_tree/quotes` à confiance 0,90 ; diagnostic confirmé hors ligne, puis correctif fail-closed du prompt et de la validation de destination.
+
+- [x] 2026-09-27 — Live acceptance attempt 11 : les appels Anthropic aboutissent, puis la sortie dérive en `signals` chaînes et échoue au parsing `DecisionResult`. Le correctif normalise toute chaîne non vide en signal structuré lossless avec warning `unlabelled_signal`, conserve les signaux internes structurés, rejette les warnings/signaux malformés et renforce le prompt sans date concrète copiable.
+
+- [x] 2026-09-27 — Live acceptance attempts 9–10 : correctif à la frontière fournisseur (`cache_breakpoint` supprimé pour tous les fournisseurs ; phase d’exécution `completion`).
+
+- [x] 2026-09-19 — Backend recalé sur Python 3.13 : CrewAI 1.15.21 / ChromaDB 1.1.1 ne sont pas prêts pour Python 3.14 (`pydantic.v1 ConfigError` sur `chroma_server_nofile`). L’import des deux bibliothèques est validé sous Python 3.13 ; le backend et les environnements locaux doivent donc utiliser Python 3.13. Gate en attente : la suite pytest complète n’a pas encore été exécutée sous Python 3.13 réel (le venv local est en 3.14 ; l’utilisateur l’exécute localement en 3.13).
+
+- [x] 2026-09-19 — Plancher Python 3.14 tenté (`bce6da7`) puis abandonné : CrewAI / ChromaDB ne sont pas compatibles avec Python 3.14 ; voir le recalage sur Python 3.13 ci-dessus.
+
+- [x] 2026-09-13 — Migration backend Python unique : squelette FastAPI/Alembic (`fa3cd3e`), port domaine et tests de parité (`4be7798`), corrections de revue (`c183b8c`), cutover et suppression NestJS (`41ea3a9`), puis qualité de suggestion Docling (`c27ebf1`). État courant : FastAPI/SQLAlchemy, table PostgreSQL `jobs` avec worker inline optionnel, MongoDB limité aux métadonnées TTL, routes disponibles avec et sans `/api/v1`, et schéma Prisma final conservé comme fixture de parité. Écarts assumés : `queueState` est désormais tenant-scoped (corrige la fuite globale NestJS) ; les deux préfixes doublent la surface historique. La CI exécute pytest deux fois et son job d'intégration dépend implicitement de Node pour le test crypto ; `test:integration` désigne désormais pytest, pas l'ancien harness complet. Aucun chemin de révocation n'existe dans l'ancien ou le nouveau backend : la parité est une absence partagée.
 
 - [x] UX clarity Item 1 — SSO marqué et compte local : chaîne acceptée `t_9570e0af` → `t_4245d6fd`. Revue code `claude-opus-5` approuvée (`providerAccepted=false`) dans `.tmp/hermes/ux-clarity/evidence/item-1/claude-review-attempt5f-direct.json` ; revue fournisseur finale `claude-opus-5` approuvée (`approved=true`, `providerAccepted=true`, `reviewerEditedFiles=false`) dans `.tmp/hermes/ux-clarity/evidence/item-1/claude-service-account-final-review.json`. Le manifeste attempt 67 est PASS (`f5fda516`), avec les 16 résultats fournisseur/navigateur/workflow vrais, Drive service-account réel, desktop + 390 px, assertions mutation/ignorer et restauration exacte sans orphelin ; OAuth consumer n’est pas le gate d’acceptation de cette route hors production.
 - [x] UX clarity Item 2 — Onboarding clé LLM et sélecteur visuel : `t_8f8b2279`, revue exacte `claude-opus-5` approuvée (`approved=true`, `reviewerEditedFiles=false`) ; lint/typecheck/build verts, 358/358 tests sans skip, API ciblée 8/8, intégration fournisseur 18/18, cinq captures 1280 px, zéro violation axe, RED→GREEN, liaison à l’arbre et nettoyage vérifiés.
@@ -57,8 +71,6 @@
 - [x] 2026-08-12 — OCR suggestion quality (`ocr-suggestion-quality`) : extraction structurée metadata-only, limites 20 MiB / 20 pages PDF, couche texte PDF avant Tesseract, texte normalisé représentatif, formats non supportés visibles et révisables, fallback destination sans choix alphabétique arbitraire, parsing LLM borné, confiances filename/destination et état "à vérifier" exclu de `Tout valider`. Vérification ciblée API/web verte ; checks globaux à reporter dans le handoff Codex.
 
 - [x] 2026-08-06 — Agent loop v3 (#13) : spec v2 et hiérarchie de preuves, manifeste/finaliseur lié issue-tentative-SHA, états/lineage/supersession, rôle `acceptance-validator` en lecture seule du code produit, gate CI pnpm toujours présent avec intégration/E2E/acceptation Google conditionnelle et artefacts, CODEOWNERS, sync Projects v2 fail-safe, documentation et tests node:test. Aucun changement produit ni second orchestrateur.
-
-- [x] 2026-07-30 — One-shot MVP local jury-ready : workspace pnpm racine (`pnpm install/lint/typecheck/test/build`), suppression des anciens lockfiles npm, écran `/demo` sans OAuth ni secrets avec propositions fictives, correction en formulaire/dialogue accessible, validation unitaire ou "Tout valider", échec partiel déterministe + retry, état vide/succès, activité récente et bannière RGPD conforme. Vérification : `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (API 31, web 21, agent 50), `pnpm build`, lancement local `http://127.0.0.1:3000` et routes `/` + `/demo` en HTTP 200. Compromis : pas de capture navigateur réelle, aucun binaire Chromium/Chrome disponible sur l'hôte ; vérification de lancement + inspection HTML/CSS effectuées.
 
 - [x] 2026-07-16 — Agent loop v2 (spec-driven, event-driven) : suppression du cron triage ; adapters intake/feedback/ci-recovery → repository_dispatch → worker (dédup, MAX_AGENT_CYCLES, concurrence par tâche) → _claude-run réutilisable ; spec klasr-agent-spec:v1 + validateur ; machine à états agent:* + commentaire de contrôle unique ; rôles orchestrator (code déterministe)/spec-writer/implementer/verifier/security-reviewer/feedback-responder ; issues auto fingerprint-dédupliquées sur échec CI branche protégée ; 48 tests node:test verts ; actionlint clean. Voir docs/AGENT_LOOP_SPEC.md.
 
