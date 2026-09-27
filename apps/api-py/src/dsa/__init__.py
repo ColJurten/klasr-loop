@@ -67,8 +67,17 @@ def _both_decisions(
 
 
 def _validated_destination(result: DecisionResult, directories: list[str]) -> DecisionResult:
-    if result.value is None:
-        return result
+    if result.value is None or "no_destination_match" in result.warnings:
+        return result.model_copy(
+            update={
+                "value": None,
+                "confidence": 0,
+                "warnings": [
+                    "no_destination_match",
+                    *(warning for warning in result.warnings if warning != "no_destination_match"),
+                ],
+            }
+        )
     allowed = {path.rstrip("/") or "/" for path in directories}
     value = result.value.rstrip("/")
     if value not in allowed:

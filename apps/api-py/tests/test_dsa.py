@@ -209,7 +209,8 @@ def test_empty_destination_keeps_extraction_warning():
         value=None, confidence=0, signals=["extraction:empty"], warnings=["no_text"]
     )
     validated = dsa._validated_destination(result, ["/allowed"])
-    assert validated == result and "destination_outside_tree" not in validated.warnings
+    assert validated.value is None and validated.confidence == 0
+    assert validated.warnings[:2] == ["no_destination_match", "no_text"]
 
 
 class FakeLLM(BaseLLM):
@@ -350,6 +351,56 @@ def test_combined_crew_task_order_and_prompts(monkeypatch):
     assert len(fake.prompts) == 3
     # At least the first prompt (analysis task) contains the content.
     assert "ACME INVOICE 42" in fake.prompts[0]
+
+
+@pytest.mark.parametrize(
+    ("content", "destination", "confidence", "warnings"),
+    [
+        (
+            "Contract REF-ZEPHYR-742 dated 2026-08-15 from Zephyr Research. "
+            "Archived research memorandum without a matching destination.",
+            None,
+            0,
+            ["no_destination_match"],
+        ),
+        (
+            "INVOICE INV-42 dated 2026-08-15 from Acme",
+            "stg_tree/invoices",
+            0.98,
+            [],
+        ),
+    ],
+)
+def test_stub_llm_destination_contract(monkeypatch, content, destination, confidence, warnings):
+    from dsa import crews
+
+    fake = FakeLLM(
+        model="fake",
+        responses=[
+            '{"value":"analysis","confidence":1,"signals":[],"warnings":[]}',
+            '{"value":"document.pdf","confidence":0.9,"signals":[],"warnings":[]}',
+            json.dumps(
+                {
+                    "value": destination,
+                    "confidence": confidence,
+                    "signals": [],
+                    "warnings": warnings,
+                }
+            ),
+        ],
+    )
+    monkeypatch.setattr(crews, "llm_for", lambda _name: fake)
+
+    result = dsa.suggest_text(
+        ExtractionResult(text=content, quality="ok"),
+        ["stg_tree/invoices", "stg_tree/meetings", "stg_tree/quotes"],
+        lambda _name: fake,
+    )
+
+    assert result.destination.value == destination
+    assert result.destination.confidence == confidence
+    assert result.destination.warnings == warnings
+    assert any("INTERDICTION de choisir le chemin le plus proche" in p for p in fake.prompts)
 
 
 # --- Phase 4: Suggestion quality tests ---

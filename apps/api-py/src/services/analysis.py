@@ -357,6 +357,11 @@ class AnalysisService:
         filename_confidence = min(filename.confidence, cap)
         destination_confidence = min(destination.confidence, cap)
         warnings = filename.warnings + destination.warnings
+        if "no_destination_match" in warnings:
+            warnings = [
+                "no_destination_match",
+                *(w for w in warnings if w != "no_destination_match"),
+            ]
         return dict(
             proposed_name=name,
             destination_path=destination.value or "",

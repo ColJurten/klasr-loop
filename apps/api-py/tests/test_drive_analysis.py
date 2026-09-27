@@ -365,6 +365,42 @@ async def test_configured_provider_bypasses_offline_shortcut(tenant, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_destinationless_proposal_prioritizes_manual_review_reason(monkeypatch):
+    from dsa.schemas import DecisionResult, ExtractionResult, SuggestionResult
+
+    result = SuggestionResult(
+        filename=DecisionResult(
+            value="REF-ZEPHYR-742.pdf",
+            confidence=0.9,
+            signals=[],
+            warnings=["filename_warning"],
+        ),
+        destination=DecisionResult(
+            value=None,
+            confidence=0,
+            signals=[],
+            warnings=["no_destination_match"],
+        ),
+        extraction_quality="ok",
+    )
+    monkeypatch.setattr("services.analysis.local_suggestion", lambda *_: result)
+    monkeypatch.setattr("services.analysis.LlmSettingsService.resolve", lambda *_: None)
+    service = AnalysisService(None, None, None, None, None)
+
+    proposal = await service.suggest(
+        "org",
+        types.SimpleNamespace(name="review.pdf"),
+        ExtractionResult(text="contract research content", quality="ok"),
+        ["stg_tree/invoices", "stg_tree/meetings", "stg_tree/quotes"],
+    )
+
+    assert proposal["destination_path"] == ""
+    assert proposal["destination_confidence"] == 0
+    assert proposal["review_required"] is True
+    assert proposal["review_reason"] == "no_destination_match"
+
+
+@pytest.mark.asyncio
 async def test_dsa_real_crew_callable_pipeline_no_replay_content(tenant, monkeypatch, tmp_path):
     _, app, engine, identity, _ = tenant
     from crewai.memory.storage.kickoff_task_outputs_storage import KickoffTaskOutputsSQLiteStorage
