@@ -354,11 +354,31 @@ def test_combined_crew_task_order_and_prompts(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("content", "destination", "confidence", "warnings"),
+    (
+        "content",
+        "model_destination",
+        "model_confidence",
+        "model_warnings",
+        "destination",
+        "confidence",
+        "warnings",
+    ),
     [
         (
             "Contract REF-ZEPHYR-742 dated 2026-08-15 from Zephyr Research. "
-            "Archived research memorandum without a matching destination.",
+            "Archived research memorandum.",
+            None,
+            0.9,
+            [],
+            None,
+            0,
+            ["no_destination_match"],
+        ),
+        (
+            "Archived research memorandum.",
+            "stg_tree/quotes",
+            0.9,
+            ["no_destination_match"],
             None,
             0,
             ["no_destination_match"],
@@ -368,10 +388,22 @@ def test_combined_crew_task_order_and_prompts(monkeypatch):
             "stg_tree/invoices",
             0.98,
             [],
+            "stg_tree/invoices",
+            0.98,
+            [],
         ),
     ],
 )
-def test_stub_llm_destination_contract(monkeypatch, content, destination, confidence, warnings):
+def test_stub_llm_destination_contract(
+    monkeypatch,
+    content,
+    model_destination,
+    model_confidence,
+    model_warnings,
+    destination,
+    confidence,
+    warnings,
+):
     from dsa import crews
 
     fake = FakeLLM(
@@ -381,10 +413,10 @@ def test_stub_llm_destination_contract(monkeypatch, content, destination, confid
             '{"value":"document.pdf","confidence":0.9,"signals":[],"warnings":[]}',
             json.dumps(
                 {
-                    "value": destination,
-                    "confidence": confidence,
+                    "value": model_destination,
+                    "confidence": model_confidence,
                     "signals": [],
-                    "warnings": warnings,
+                    "warnings": model_warnings,
                 }
             ),
         ],
@@ -400,7 +432,9 @@ def test_stub_llm_destination_contract(monkeypatch, content, destination, confid
     assert result.destination.value == destination
     assert result.destination.confidence == confidence
     assert result.destination.warnings == warnings
-    assert any("INTERDICTION de choisir le chemin le plus proche" in p for p in fake.prompts)
+    assert any(
+        "Ne choisir un chemin que si le contenu l'étaye directement" in p for p in fake.prompts
+    )
 
 
 # --- Phase 4: Suggestion quality tests ---

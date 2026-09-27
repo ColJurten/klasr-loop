@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-09-27 (normalisation stricte des signaux DSA)
+> Last updated: 2026-09-27 (destination fail-closed, revue round 2)
 
 ## In progress
 
@@ -29,6 +29,10 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-09-27 — Revue destination fail-closed round 2 : fixture de revue dé-hintée, contrat applicatif couvert contre les réponses LLM incohérentes, prompt clarifié et test service isolé de l'environnement.
+
+- [x] 2026-09-27 — Live acceptance attempt 12 : la fixture de revue sans correspondance a été classée à tort dans `stg_tree/quotes` à confiance 0,90 ; diagnostic confirmé hors ligne, puis correctif fail-closed du prompt et de la validation de destination.
 
 - [x] 2026-09-27 — Live acceptance attempt 11 : les appels Anthropic aboutissent, puis la sortie dérive en `signals` chaînes et échoue au parsing `DecisionResult`. Le correctif normalise toute chaîne non vide en signal structuré lossless avec warning `unlabelled_signal`, conserve les signaux internes structurés, rejette les warnings/signaux malformés et renforce le prompt sans date concrète copiable.
 

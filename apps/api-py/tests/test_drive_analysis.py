@@ -368,6 +368,8 @@ async def test_configured_provider_bypasses_offline_shortcut(tenant, monkeypatch
 async def test_destinationless_proposal_prioritizes_manual_review_reason(monkeypatch):
     from dsa.schemas import DecisionResult, ExtractionResult, SuggestionResult
 
+    monkeypatch.delenv("KLASR_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("KLASR_LLM_MODEL", raising=False)
     result = SuggestionResult(
         filename=DecisionResult(
             value="REF-ZEPHYR-742.pdf",

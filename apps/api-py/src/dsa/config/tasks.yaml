@@ -20,9 +20,9 @@ suggest_directory_task:
   description: |-
     Choisir un chemin exact dans cette liste sans jamais en inventer :
     {directories}
-    INTERDICTION de choisir le chemin le plus proche, le meilleur disponible ou un
-    chemin par défaut. Si aucun candidat n'est étayé par le contenu du document,
-    retourner value: null, confidence: 0 et le warning no_destination_match.
+    Ne choisir un chemin que si le contenu l'étaye directement ; à défaut, ne jamais
+    se rabattre sur le plus proche, le moins mauvais ou un chemin par défaut. Retourner
+    alors value: null, confidence: 0 et le warning no_destination_match.
     Les signals DOIVENT être une liste d'objets avec chacun un label et une value
     prouvée par l'extraction (exemple : {"label": "date", "value": "<valeur exacte extraite>"}),
     JAMAIS de simples chaînes de caractères.
