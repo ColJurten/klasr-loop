@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import json
+import logging
 import socket
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
@@ -35,14 +36,16 @@ ERRORS = [
     ("provider_unsafe", "unsafe_endpoint", "Cette adresse de fournisseur est interdite."),
     ("provider_response_too_large", "malformed_response", "Réponse du fournisseur invalide."),
     ("provider_malformed_response", "malformed_response", "Réponse du fournisseur invalide."),
+    ("provider_unavailable", "endpoint_unavailable", "Point d’accès fournisseur indisponible."),
 ]
+logger = logging.getLogger(__name__)
 
 
 def mapped(error):
-    _, code, message = next(
-        (item for item in ERRORS if str(error).startswith(item[0])),
-        ("provider_unavailable", "endpoint_unavailable", "Point d’accès fournisseur indisponible."),
-    )
+    match = next((item for item in ERRORS if str(error).startswith(item[0])), None)
+    if not isinstance(error, ValueError) or not match:
+        raise error
+    _, code, message = match
     return HTTPException(400, dict(code=code, message=message))
 
 
@@ -253,6 +256,9 @@ class LlmSettingsService:
                 raise ValueError("provider_model_not_found")
             base = await self.providers.endpoint(config)
             await self.providers.validate(config)
+        except ValueError as error:
+            raise mapped(error) from None
+        try:
             row = self.repository.upsert(
                 organization_id,
                 provider=config["provider"],
@@ -265,8 +271,9 @@ class LlmSettingsService:
                 validated_at=datetime.now(timezone.utc),
             )
             return self.safe(row)
-        except Exception as error:
-            raise mapped(error) from None
+        except Exception:
+            logger.exception("Failed to persist LLM settings")
+            raise
 
     def remove(self, organization_id):
         self.repository.delete(organization_id)

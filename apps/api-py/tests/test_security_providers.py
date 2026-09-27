@@ -159,6 +159,37 @@ def test_llm_crud_discovery_safe_output_and_tenant(tenant):
     )
 
 
+def test_llm_persistence_failure_is_internal_error(tenant, monkeypatch):
+    client, app, _, _, base = tenant
+
+    class Providers:
+        async def endpoint(self, _config):
+            return "https://api.openai.com/v1"
+
+        async def validate(self, _config):
+            pass
+
+    app.state.providers = Providers()
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+
+    logged = []
+    monkeypatch.setattr("repositories.llm_settings.LlmSettingsRepository.upsert", fail)
+    monkeypatch.setattr("services.llm_settings.logger.exception", logged.append)
+    response = client.put(
+        base + "/llm-settings", json=dict(provider="openai", apiKey="synthetic", model="m")
+    )
+    assert response.status_code == 500
+    assert response.json() == {
+        "message": "Internal server error",
+        "error": "Internal Server Error",
+        "statusCode": 500,
+    }
+    assert "endpoint_unavailable" not in response.text
+    assert logged == ["Failed to persist LLM settings"]
+
+
 @pytest.mark.parametrize(
     "status,code,message",
     [
