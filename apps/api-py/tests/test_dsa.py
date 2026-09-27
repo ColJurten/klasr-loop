@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 from pydantic import ValidationError
 
 import dsa
-from dsa.schemas import DecisionResult, ExtractionResult
+from dsa.schemas import DecisionResult, ExtractionResult, Signal
 from dsa.tools import SUPPORTED_SUFFIXES, extract_bytes, extract_document
 
 
@@ -63,7 +63,7 @@ def test_offline_cli_filename_and_directory(monkeypatch, tmp_path, stub_docling,
     directory_main()
     destination = DecisionResult.model_validate_json(capsys.readouterr().out)
 
-    assert filename.value and filename.signals == ["provider:local"]
+    assert filename.value and filename.signals == [Signal(label="provider", value="local")]
     assert destination.value == "/Clients/Acme"
 
 
@@ -71,8 +71,11 @@ def test_corrupted_empty_sparse_and_schema(monkeypatch, tmp_path):
     assert ExtractionResult(text="", quality="empty").quality == "empty"
     with pytest.raises(ValidationError):
         DecisionResult(value="x", confidence=2, signals=["kind:value"])
+    normalized = DecisionResult(value="x", confidence=1, signals=["unlabelled"])
+    assert normalized.signals == [Signal(label="evidence", value="unlabelled")]
+    assert "signal sans label normalisé" in normalized.warnings
     with pytest.raises(ValidationError):
-        DecisionResult(value="x", confidence=1, signals=["unlabelled"])
+        DecisionResult(value="x", confidence=1, signals=[42])
     path = tmp_path / "broken.pdf"
     path.write_bytes(b"not a pdf")
     assert extract_document(str(path)).quality == "failed"
@@ -223,6 +226,34 @@ class FakeLLM(BaseLLM):
         return self.responses.pop(0)
 
 
+def test_decision_signals_normalize_llm_drift_and_preserve_labelled_signals():
+    result = DecisionResult.model_validate(
+        {
+            "value": "invoice.pdf",
+            "confidence": 0.9,
+            "signals": [
+                "date: 2026-08-15",
+                "Invoice number 12345",
+                "Contract reference identified in source text",
+            ],
+        }
+    )
+    assert [signal.label for signal in result.signals] == ["date", "invoice", "contract"]
+    assert all(signal.label and signal.value for signal in result.signals)
+    assert "signal sans label normalisé" in result.warnings
+
+    labelled = DecisionResult.model_validate(
+        {
+            "value": "invoice.pdf",
+            "confidence": 0.9,
+            "signals": [{"label": "reference", "value": "INV-42"}],
+            "warnings": [],
+        }
+    )
+    assert labelled.signals == [Signal(label="reference", value="INV-42")]
+    assert labelled.warnings == []
+
+
 def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
     monkeypatch.setenv("CREWAI_DISABLE_TELEMETRY", "false")
     from dsa import crews
@@ -231,7 +262,14 @@ def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
         model="fake",
         responses=[
             '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
-            '{"value":"invoice.pdf","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+            json.dumps(
+                {
+                    "value": "invoice.pdf",
+                    "confidence": 0.9,
+                    "signals": ["Invoice number 12345"],
+                    "warnings": [],
+                }
+            ),
             '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
             '{"value":"/Clients/Acme","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
         ],
@@ -243,6 +281,8 @@ def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
     assert crews.os.environ["CREWAI_DISABLE_TELEMETRY"] == "true"
     assert isinstance(output.pydantic, DecisionResult)
     assert output.pydantic.value == "invoice.pdf"
+    assert output.pydantic.signals == [Signal(label="invoice", value="12345")]
+    assert "signal sans label normalisé" in output.pydantic.warnings
     assert all("ACME INVOICE 42" in task.description for task in crew.tasks)
 
     directory_crew = crews.DocumentSortingAssistantCrew().destination_crew()

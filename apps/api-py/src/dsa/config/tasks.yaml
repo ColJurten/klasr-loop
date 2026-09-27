@@ -2,17 +2,26 @@ analyse_file_task:
   description: |-
     Analyser ce texte extrait et produire des signaux factuels étiquetés :
     {content}
-  expected_output: "Une analyse structurée sans reproduire le texte documentaire brut."
+    Les signals DOIVENT être une liste d'objets avec chacun un label et une value
+    prouvée par l'extraction (exemple : {"label": "date", "value": "2026-08-15"}),
+    JAMAIS de simples chaînes de caractères.
+  expected_output: "Une analyse structurée sans reproduire le texte documentaire brut, avec des signals au format [{\"label\": \"date\", \"value\": \"2026-08-15\"}]."
   agent: analyse_file_agent
 suggest_filename_task:
   description: |-
     Proposer un nom depuis ce contenu et l'analyse, jamais depuis les octets du fichier :
     {content}
-  expected_output: "Value, confidence, signals et warnings validés."
+    Les signals DOIVENT être une liste d'objets avec chacun un label et une value
+    prouvée par l'extraction (exemple : {"label": "date", "value": "2026-08-15"}),
+    JAMAIS de simples chaînes de caractères.
+  expected_output: "Value, confidence, warnings et signals validés au format [{\"label\": \"date\", \"value\": \"2026-08-15\"}]."
   agent: suggest_filename_agent
 suggest_directory_task:
   description: |-
     Choisir un chemin exact dans cette liste sans jamais en inventer :
     {directories}
-  expected_output: "Un chemin exact de la liste, ou un état d'échec explicite."
+    Les signals DOIVENT être une liste d'objets avec chacun un label et une value
+    prouvée par l'extraction (exemple : {"label": "date", "value": "2026-08-15"}),
+    JAMAIS de simples chaînes de caractères.
+  expected_output: "Un chemin exact de la liste, ou un état d'échec explicite, avec des signals au format [{\"label\": \"date\", \"value\": \"2026-08-15\"}]."
   agent: suggest_directory_agent
