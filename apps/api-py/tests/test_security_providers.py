@@ -266,6 +266,23 @@ async def test_provider_bounds_discovery_anthropic_and_network_errors():
         )
         assert bodies[-1]["system"] == "synthetic system"
         assert bodies[-1]["messages"] == [dict(role="user", content="synthetic prompt")]
+    config = dict(provider="openai", apiKey="synthetic", model="model")
+
+    def openai(request):
+        assert request.headers["authorization"] == "Bearer synthetic"
+        assert request.url == "https://api.openai.com/v1/chat/completions"
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openai)) as client:
+        assert (
+            await ProviderClientService(settings, client).completion(
+                config,
+                [dict(role="user", content="synthetic prompt", cache_breakpoint=True)],
+            )
+            == "{}"
+        )
+        assert bodies[-1]["messages"] == [dict(role="user", content="synthetic prompt")]
     for response, reason in [
         (httpx.Response(302), "provider_unsafe"),
         (httpx.Response(200, content=b"x" * 1_000_001), "provider_response_too_large"),

@@ -186,9 +186,9 @@ class ProviderClientService:
     async def completion(self, config, messages):
         if isinstance(messages, str):
             messages = [dict(role="user", content=messages)]
+        messages = [{"role": m["role"], "content": m["content"]} for m in messages]
         body = dict(model=config["model"], max_tokens=2048, messages=messages)
         if config["provider"] == "anthropic":
-            messages = [{"role": m["role"], "content": m["content"]} for m in messages]
             system = "\n".join(str(m["content"]) for m in messages if m["role"] == "system")
             body["messages"] = [m for m in messages if m["role"] != "system"]
             if system:
