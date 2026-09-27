@@ -14,6 +14,13 @@ const recoveryVersion = '1';
 const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
 const failureOverrides = ['stage=analysis reason=job_failed', 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed', 'stage=ui-decisions-provider-metadata reason=legacy_folder_present'];
 
+if (process.argv.includes('--llm-setup-contract-check')) {
+  assertLlmSetupSequence(['reset', 'configure', 'launch', 'reset', 'configure', 'launch']);
+  assertThrows(() => assertLlmSetupSequence(['reset', 'launch']), 'Launch after reset without LLM setup must fail');
+  process.stdout.write('live runner LLM setup sequence check PASS\n');
+  process.exit(0);
+}
+
 if (process.argv.includes('--lifecycle-check')) {
   await lifecycleCheck();
   process.stdout.write('live runner lifecycle check PASS\n');
@@ -233,6 +240,7 @@ let observedModelUsed;
 let accessToken;
 let browser;
 let organizationId;
+const llmSetupEvents = [];
 let runCompleted = false;
 const replacementAttempted = new Set();
 const replacementVerified = new Set();
@@ -342,21 +350,11 @@ try {
   await resetTenantData(organizationId);
   assert(await db('count', organizationId, 'rules') === 0, 'Acceptance tenant must have zero rules');
   failureStage = 'settings-verification';
-  assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
-  await page.goto(`${webBase}/dashboard/settings`);
-  await page.getByRole('radio', { name: 'Anthropic' }).check();
-  await page.getByLabel('Clé API').fill(process.env.KLASR_LLM_API_KEY);
-  await page.getByLabel('Modèle').fill(selectedLlmModel);
-  const savedResponse = page.waitForResponse((response) => response.url().endsWith('/api/llm-settings') && response.request().method() === 'PUT');
-  await page.getByRole('button', { name: 'Valider et enregistrer' }).click();
-  const saved = await (await savedResponse).json();
-  assert(saved.configured === true && saved.provider === llmProvider && saved.model === selectedLlmModel, 'LLM settings were not saved through the authenticated app flow');
-  await expect(page.getByRole('region', { name: 'Configuration active' })).toContainText(selectedLlmModel);
+  await configureLlmThroughUi(page);
   failureStage = 'dashboard-resume';
   await page.goto(`${webBase}/dashboard`);
-  await page.reload();
   await page.getByRole('button', { name: 'Choisir ce dossier' }).waitFor();
-  await expect(page.getByRole('button', { name: "Lancer l'organisation" })).toBeEnabled();
+  await expect(page.locator('#llm-launch-help')).toHaveCount(0);
 
   failureStage = 'drive-fixture-prepare';
   for (const [index, item] of supplied.entries()) {
@@ -519,7 +517,9 @@ try {
   await replaceBytes(reviewFixture.id, reviewBytes);
   await resetTenantData(organizationId);
   assert(await db('count', organizationId, 'rules') === 0, 'Correction run must have zero rules');
+  await configureLlmThroughUi(page);
   await page.goto(`${webBase}/dashboard`);
+  await expect(page.locator('#llm-launch-help')).toHaveCount(0);
   await chooseBrowserItem(page, 'stg_tree', 'Choisir ce dossier');
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
   await chooseBrowserItem(page, reviewFixture.name, "Lancer l'organisation", true);
@@ -593,10 +593,21 @@ function safeFailureReason(error) {
   if (error?.message === 'Ignore changed provider name or parents') return 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed';
   if (error?.message === 'Removed routing folder exists after ignore') return 'stage=ui-decisions-provider-metadata reason=legacy_folder_present';
 }
-function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, process.env.INTERNAL_API_SECRET, process.env.KLASR_LIVE_INTERNAL_SECRET, process.env.NEXTAUTH_SECRET, process.env.KLASR_LIVE_NEXTAUTH_SECRET, process.env.TOKEN_ENCRYPTION_KEY]) {
+function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, accessToken, internalSecret, nextAuthSecret, tokenKey]) {
   let detail = String(error?.message ?? error ?? 'Unknown error');
   for (const secret of secrets.filter(Boolean)) detail = detail.replaceAll(secret, '[REDACTED]');
-  return detail.replace(/(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]+/g, '[REDACTED]');
+  return detail
+    .replace(/(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]+|ya29\.[\w.-]+/g, '[REDACTED]')
+    .split(/\r?\n/).filter((line) => !/^\s*Received:/.test(line)).slice(0, 3).join(' ')
+    .replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+function assertLlmSetupSequence(events) {
+  let configured = false;
+  for (const event of events) {
+    if (event === 'reset') configured = false;
+    else if (event === 'configure') configured = true;
+    else if (event === 'launch') assert(configured, 'LLM setup must follow every tenant reset before launch');
+  }
 }
 function finalize() {
   return finalizationFlight ??= (async () => {
@@ -929,7 +940,8 @@ function restorationVerified(snapshots, restored, replacements) {
 async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
   const python = path.join(root, 'apps/api-py/.venv/bin/python');
-  const common = { ...process.env, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
+  const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, ...runtimeEnv } = process.env;
+  const common = { ...runtimeEnv, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
   const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
   assert(migration.status === 0, 'Alembic migration failed');
   children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'ignore', env: common }), url: `${apiBase}/health` });
@@ -985,15 +997,32 @@ async function failedAnalysisDiagnostic() {
 }
 function assertNoPriorTenantSettingCount(count) { assert(count === 0, 'Prior tenant setting cannot be safely restored without plaintext'); }
 function selectEligibleAnthropicModel(models) { const eligible = models.filter((model) => /^claude-[a-z0-9-]+$/i.test(model)).sort(); assert(eligible.length, 'No eligible Anthropic model discovered'); return eligible.at(-1); }
-async function resetTenantData(id) { db('reset', id); }
+async function resetTenantData(id) { db('reset', id); llmSetupEvents.push('reset'); }
 async function cleanupTenant(id) { db('cleanup', id); }
+async function configureLlmThroughUi(page) {
+  assert(llmProvider === 'anthropic', `Live UI LLM setup supports provider anthropic, received ${llmProvider}`);
+  assert(!process.env.KLASR_LLM_API_KEY.includes('\n'), 'LLM key must be a single environment value');
+  await page.goto(`${webBase}/dashboard/settings`);
+  await page.getByRole('radio', { name: 'Anthropic' }).check();
+  await page.getByLabel('Clé API').fill(process.env.KLASR_LLM_API_KEY);
+  await page.getByLabel('Modèle').fill(selectedLlmModel);
+  const [response] = await Promise.all([
+    page.waitForResponse((candidate) => candidate.url().endsWith('/api/llm-settings') && candidate.request().method() === 'PUT'),
+    page.getByRole('button', { name: 'Valider et enregistrer' }).click(),
+  ]);
+  const saved = await response.json();
+  assert(response.ok() && saved.configured === true && saved.provider === llmProvider && saved.model === selectedLlmModel,
+    `LLM settings PUT failed (${response.status()}): ${saved.error ?? 'invalid saved configuration'}`);
+  await expect(page.getByRole('region', { name: 'Configuration active' })).toContainText(selectedLlmModel);
+  llmSetupEvents.push('configure');
+}
 function db(...args) {
   const run = spawnSync(path.join(root, 'apps/api-py/.venv/bin/python'), [path.join(root, 'scripts/live-google-db.py'), ...args], { cwd: root, encoding: 'utf8', timeout: 30_000, env: { ...process.env, KLASR_DATABASE_URL: databaseUrl } });
   assert(run.status === 0, `Database probe failed: ${args[0]}`);
   return JSON.parse(run.stdout);
 }
 async function api(route, init = {}) { const response = await fetch(`${apiBase}${route}`, { ...init, headers: { 'x-internal-secret': internalSecret, 'content-type': 'application/json', ...(init.headers ?? {}) } }); assert(response.ok, `API request failed (${response.status})`); return response.json(); }
-async function chooseBrowserItem(page, name, action, expectAnalysis = false) { const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
+async function chooseBrowserItem(page, name, action, expectAnalysis = false) { if (action === "Lancer l'organisation") { llmSetupEvents.push('launch'); assertLlmSetupSequence(llmSetupEvents); } const submit = page.getByRole('button', { name: action }); const browserPanel = submit.locator('..'); await browserPanel.getByRole('list').waitFor({ timeout: 30_000 }); await page.waitForLoadState('networkidle'); const row = browserPanel.getByRole('button', { name, exact: true }).locator('..'); const radio = row.getByRole('radio'); await row.getByText('Sélectionner', { exact: true }).click(); await expect(radio).toBeChecked(); await expect(submit).toBeEnabled(); await submit.click(); if (expectAnalysis) await expect(page.getByRole('status')).toContainText('Analyse en cours'); }
 async function waitForProposalCards(page, count) { await expect(page.locator('[data-testid^="proposal-"]')).toHaveCount(count, { timeout: 180_000 }); }
 function proposalCardFor(page, documentName) { return page.locator('[data-testid^="proposal-"]').filter({ hasText: documentName }); }
 function chooseDecisionFixtures(proposals) {

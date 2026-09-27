@@ -238,14 +238,18 @@ test('observed live record has an exact metadata-only schema and binds model plu
 
 test('live runner saves environment LLM settings through the authenticated UI before Drive browser selection', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const verification = source.slice(source.indexOf("failureStage = 'settings-verification'"), source.indexOf("failureStage = 'drive-fixture-prepare'"));
-  assert.match(verification, /KLASR_LLM_API_KEY\.includes\('\\n'\)/);
-  assert.match(verification, /page\.goto\(`\$\{webBase\}\/dashboard\/settings`\)/);
-  assert.match(verification, /saved\.configured === true && saved\.provider === llmProvider && saved\.model === selectedLlmModel/);
-  assert.match(verification, /failureStage = 'dashboard-resume'/);
-  assert.match(verification, /page\.reload\(\)/);
-  assert.match(verification, /getByRole\('button', \{ name: 'Choisir ce dossier' \}\)\.waitFor\(\)/);
-  assert.match(verification, /getByRole\('button', \{ name: "Lancer l'organisation" \}\)\)\.toBeEnabled\(\)/);
+  const contract = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--llm-setup-contract-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(contract.status, 0, contract.stderr);
+  assert.equal(contract.stdout, 'live runner LLM setup sequence check PASS\n');
+  const resets = [...source.matchAll(/await resetTenantData\([^)]*\);/g)];
+  assert.equal(resets.length, 2);
+  for (const [index, reset] of resets.entries()) {
+    const nextReset = resets[index + 1]?.index ?? source.length;
+    const block = source.slice(reset.index + reset[0].length, nextReset);
+    assert(block.indexOf('await configureLlmThroughUi(page);') < block.indexOf('"Lancer l\'organisation"'), 'Every reset must be followed by LLM setup before launch');
+  }
+  assert.match(functionBody(source, 'configureLlmThroughUi'), /Promise\.all/);
+  assert.match(source, /locator\('#llm-launch-help'\)\)\.toHaveCount\(0\)/);
 });
 
 test('live BYOK decisions are deterministic and reject missing prerequisites without credentials', () => {
@@ -414,7 +418,7 @@ test('live runner exposes only exact allowlisted failure stages', () => {
     ['tenant-lookup', 'const tenant = await tenantRecord()'],
     ['drive-connection-readback', "const connectionBeforeSync = await db('connection', organizationId)"],
     ['tenant-reset', "assert(await db('count', organizationId, 'settings') === 0"],
-    ['settings-verification', "assert(!process.env.KLASR_LLM_API_KEY.includes('\\n')"],
+    ['settings-verification', 'await configureLlmThroughUi(page)'],
     ['dashboard-resume', 'await page.goto'],
   ];
   for (const [stage, operation] of browserBoundaries) assert(source.includes(`failureStage = '${stage}';\n  ${operation}`), `Missing immediate boundary: ${stage}`);
