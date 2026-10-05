@@ -343,9 +343,15 @@ try {
   failureStage = 'app-start';
   await ensureApps();
   failureStage = 'browser-launch';
-  browser = await chromium.launch({ headless: false });
+  browser = await chromium.launch({ headless: false, args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--lang=en-US,en', '--disable-infobars'] });
   item5Proof.headedBrowser = true;
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
+  await context.addInitScript(() => {
+    delete Object.getPrototypeOf(navigator).webdriver;
+    window.chrome = window.chrome || { runtime: {} };
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+  });
   const page = await context.newPage();
   failureStage = 'login-navigation';
   await page.goto(`${webBase}/login`);
@@ -957,7 +963,8 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
     stage(substage);
     const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => 'no visible heading');
     const text = await page.locator('body').innerText().catch(() => 'no visible page text');
-    throw new Error(`substage=${substage}; ${reason}; URL=${page.url()}; heading=${heading}; visible page text=${text.slice(0, 1200)}`);
+    const bodyCopy = text.replace(/\s+/g, ' ').trim().slice(0, 300);
+    throw new Error(`substage=${substage}; ${reason}; URL=${page.url()}; heading=${heading}; body copy=${bodyCopy}`);
   };
   const challenge = async (substage) => {
     const identifier = page.locator('input[type="email"], input[name="identifier"]').first();
@@ -965,7 +972,7 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
     const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => '');
     const text = await page.locator('body').innerText().catch(() => '');
     const challengeElement = page.locator('#captcha, iframe[src*="recaptcha"]').first();
-    const challengeUrl = /\/challenge\/|\/v3\/signin\/challenge(?:\/|\?|$)/i.test(page.url());
+    const challengeUrl = /\/signin\/(?:rejected|oauth\/error)(?:\/|\?|$)|\/challenge\/|\/v3\/signin\/challenge(?:\/|\?|$)/i.test(page.url());
     const challengeText = /suspicious|unusual traffic|connexion inhabituelle|security check|vérification de sécurité|this browser or app may not be secure|ce navigateur/i.test(`${heading} ${text}`);
     if (challengeUrl || challengeText || await challengeElement.count()) await fail(substage, `unexpected security check: ${heading || 'unknown heading'}`);
     return false;
