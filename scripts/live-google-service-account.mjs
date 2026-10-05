@@ -25,6 +25,10 @@ if (process.argv.includes('--auth-mode-check')) {
   assert(authMode({}) === 'sa', 'Auth mode must default to sa');
   assert(authMode({ KLASR_AUTH_MODE: 'user' }) === 'user', 'User auth mode must be accepted');
   assertThrows(() => authMode({ KLASR_AUTH_MODE: 'invalid' }), 'Invalid auth mode must fail closed');
+  assert(manualConsent({}, 'sa') === false, 'Manual consent must default to false');
+  assert(manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'user') === true, 'Manual consent must be accepted for user mode');
+  assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'invalid' }, 'user'), 'Invalid manual consent must fail closed');
+  assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'sa'), 'Manual consent must reject service-account mode');
   process.stdout.write('live runner auth mode check PASS\n');
   process.exit(0);
 }
@@ -127,6 +131,8 @@ const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineag
 const evidenceTask = process.argv.includes('--evidence-self-check') ? 't_selfcheck' : parseEvidenceTask(process.env);
 const quotaSafeMode = fixtureMode(process.env) === 'borrowed-carrier';
 const authenticationMode = authMode(process.env);
+const manualConsentMode = manualConsent(process.env, authenticationMode);
+const manualConsentTimeout = manualConsentMode ? manualConsentTimeoutMs(process.env) : undefined;
 const stagingAccountEmail = authenticationMode === 'user' ? required('KLASR_STAGING_ACCOUNT_EMAIL') : undefined;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -304,7 +310,7 @@ try {
     await new Promise(() => undefined);
   }
   assertPythonRuntime();
-  const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID', ...(authenticationMode === 'user' ? ['KLASR_STAGING_ACCOUNT_PASSWORD'] : [])].filter((name) => !process.env[name]);
+  const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID', ...(authenticationMode === 'user' && !manualConsentMode ? ['KLASR_STAGING_ACCOUNT_PASSWORD'] : [])].filter((name) => !process.env[name]);
   if (missing.length) { acceptanceBlocked = true; throw new Error(`Missing ${missing.join(', ')}`); }
   llmProvider = required('KLASR_LLM_PROVIDER');
   assert(llmProvider === 'anthropic', `Live UI LLM setup supports provider anthropic, received ${llmProvider}`);
@@ -344,7 +350,7 @@ try {
   failureStage = 'login-navigation';
   await page.goto(`${webBase}/login`);
   failureStage = 'acceptance-login-session';
-  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, required('KLASR_STAGING_ACCOUNT_PASSWORD'));
+  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, manualConsentMode ? undefined : required('KLASR_STAGING_ACCOUNT_PASSWORD'), manualConsentTimeout);
   else {
     await page.getByRole('button', { name: 'Validation Google staging' }).click();
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
@@ -713,6 +719,17 @@ function authMode(env) {
   assert(['sa', 'user'].includes(mode), 'KLASR_AUTH_MODE must be sa or user');
   return mode;
 }
+function manualConsent(env, mode) {
+  const value = env.KLASR_MANUAL_CONSENT ?? 'false';
+  assert(['true', 'false'].includes(value), 'KLASR_MANUAL_CONSENT must be true or false');
+  assert(value !== 'true' || mode === 'user', 'KLASR_MANUAL_CONSENT=true requires KLASR_AUTH_MODE=user');
+  return value === 'true';
+}
+function manualConsentTimeoutMs(env) {
+  const value = env.KLASR_MANUAL_CONSENT_TIMEOUT ?? '2400000';
+  assert(/^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0, 'KLASR_MANUAL_CONSENT_TIMEOUT must be a positive integer');
+  return Number(value);
+}
 function assertProviderMutationAllowed(mode, route, init) {
   assert(!(mode === 'borrowed-carrier' && init.method === 'POST' && /^\/(?:upload\/)?drive\/v3\/files(?:[/?]|$)/.test(route)), 'Borrowed carrier mode forbids provider file creates');
 }
@@ -933,7 +950,7 @@ function reviewRequiredPdf() {
 }
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
-async function loginWithGoogleUser(page, email, password) {
+async function loginWithGoogleUser(page, email, password, manualTimeout) {
   const stage = () => { failureStage = 'google-consent'; };
   const visible = async (locator, timeout = 100) => locator.waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
   const fail = async (substage, reason) => {
@@ -958,6 +975,18 @@ async function loginWithGoogleUser(page, email, password) {
   try { await page.waitForURL((url) => url.hostname === 'accounts.google.com' || /\/dashboard/.test(url.pathname), { timeout: 30_000 }); }
   catch { await fail('account-choice', 'Google OAuth redirect did not reach accounts.google.com or the dashboard'); }
   if (/\/dashboard/.test(new URL(page.url()).pathname)) return;
+  if (manualTimeout !== undefined) {
+    stage('manual-consent');
+    process.stdout.write(`MANUAL_CONSENT_WAITING_URL=${page.url()}\n`);
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < manualTimeout) {
+      const currentUrl = page.url();
+      if (/\/dashboard/.test(new URL(currentUrl).pathname)) return;
+      if (/\/signin\/(?:rejected|oauth\/error)(?:\/|\?|$)|\/challenge\//i.test(currentUrl)) await fail('manual-consent', 'Google manual consent reached an error page');
+      await page.waitForTimeout(Math.min(3_000, manualTimeout - (Date.now() - startedAt)));
+    }
+    await fail('manual-consent', `manual consent timed out after ${manualTimeout / 1000}s`);
+  }
 
   stage('account-choice');
   const account = page.locator('[role="link"], button').filter({ hasText: email }).first();
