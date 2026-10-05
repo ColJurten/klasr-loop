@@ -935,6 +935,7 @@ function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).to
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
 async function loginWithGoogleUser(page, email, password) {
   const stage = () => { failureStage = 'google-consent'; };
+  const visible = async (locator, timeout = 100) => locator.waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
   const fail = async (substage, reason) => {
     stage(substage);
     const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => 'no visible heading');
@@ -942,9 +943,15 @@ async function loginWithGoogleUser(page, email, password) {
     throw new Error(`substage=${substage}; ${reason}; URL=${page.url()}; heading=${heading}; visible page text=${text.slice(0, 1200)}`);
   };
   const challenge = async (substage) => {
+    const identifier = page.locator('input[type="email"], input[name="identifier"]').first();
+    if (await visible(identifier)) return false;
     const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => '');
     const text = await page.locator('body').innerText().catch(() => '');
-    if (/challenge|captcha|verify it'?s you|confirm.*identity|couldn.?t sign you in|suspicious|unusual activity|vérif|confirmez votre identité/i.test(`${page.url()} ${heading} ${text}`)) await fail(substage, `unexpected security check: ${heading || 'unknown heading'}`);
+    const challengeElement = page.locator('#captcha, iframe[src*="recaptcha"]').first();
+    const challengeUrl = /\/challenge\/|\/v3\/signin\/challenge(?:\/|\?|$)/i.test(page.url());
+    const challengeText = /suspicious|unusual traffic|connexion inhabituelle|security check|vérification de sécurité|this browser or app may not be secure|ce navigateur/i.test(`${heading} ${text}`);
+    if (challengeUrl || challengeText || await challengeElement.count()) await fail(substage, `unexpected security check: ${heading || 'unknown heading'}`);
+    return false;
   };
 
   await page.getByRole('button', { name: 'Continuer avec Google', exact: true }).click();
@@ -953,23 +960,29 @@ async function loginWithGoogleUser(page, email, password) {
   if (/\/dashboard/.test(new URL(page.url()).pathname)) return;
 
   stage('account-choice');
-  await challenge('account-choice');
   const account = page.locator('[role="link"], button').filter({ hasText: email }).first();
-  if (await account.isVisible({ timeout: 5_000 }).catch(() => false)) await account.click();
+  if (await visible(account, 2_000)) await account.click();
   else {
     stage('identifier');
+    const identifierUrl = /\/(?:v3\/signin|signin\/v2|signin\/oauth)\/identifier(?:\/|\?|$)/i.test(page.url());
     const identifier = page.locator('input[type="email"], input[name="identifier"]').first();
-    if (!await identifier.isVisible({ timeout: 15_000 }).catch(() => false)) await fail('identifier', 'Google account chooser showed neither the staging account nor an identifier field');
+    if (!await visible(identifier, 15_000)) {
+      await challenge('identifier');
+      await fail('identifier', `Google account chooser showed neither the staging account nor an identifier field${identifierUrl ? ' on the identifier page' : ''}`);
+    }
     await identifier.fill(email);
-    await page.locator('#identifierNext').getByRole('button').click();
+    await page.locator('#identifierNext').click();
   }
 
   stage('password');
   const passwordInput = page.locator('input[type="password"]').first();
-  if (await passwordInput.isVisible({ timeout: 15_000 }).catch(() => false)) {
+  if (await visible(passwordInput, 15_000)) {
     await passwordInput.fill(password);
-    await page.locator('#passwordNext').getByRole('button').click();
-  } else await challenge('password');
+    await page.locator('#passwordNext').click();
+  } else {
+    await challenge('password');
+    await fail('password', 'Google password field did not appear');
+  }
   await page.waitForTimeout(1_000);
   await challenge('password');
 
@@ -977,7 +990,7 @@ async function loginWithGoogleUser(page, email, password) {
   for (let step = 0; step < 2 && !/\/dashboard/.test(new URL(page.url()).pathname); step += 1) {
     await challenge('consent-screen');
     const consent = page.getByRole('button', { name: /^(?:Continue|Allow|Continuer|Autoriser)$/i }).last();
-    if (!await consent.isVisible().catch(() => false)) break;
+    if (!await visible(consent, 5_000)) break;
     await consent.click();
     await page.waitForTimeout(500);
   }
