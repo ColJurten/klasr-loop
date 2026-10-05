@@ -29,6 +29,8 @@ if (process.argv.includes('--auth-mode-check')) {
   assert(manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'user') === true, 'Manual consent must be accepted for user mode');
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'invalid' }, 'user'), 'Invalid manual consent must fail closed');
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'sa'), 'Manual consent must reject service-account mode');
+  assert(oauthDebugDump({}) === false && oauthDebugDump({ KLASR_OAUTH_DEBUG_DUMP: 'true' }) === true, 'OAuth debug dump flag must default false and accept true');
+  assertThrows(() => oauthDebugDump({ KLASR_OAUTH_DEBUG_DUMP: '1' }), 'Invalid OAuth debug dump flag must fail closed');
   assert(oauthCodeTimeoutMs({}) === 600_000, 'OAuth code timeout must default to ten minutes');
   assert(oauthCodeTimeoutMs({ KLASR_OAUTH_CODE_TIMEOUT: '2000' }) === 2_000, 'OAuth code timeout override must be accepted');
   assertThrows(() => oauthCodeTimeoutMs({ KLASR_OAUTH_CODE_TIMEOUT: 'nope' }), 'Invalid OAuth code timeout must fail closed');
@@ -49,6 +51,8 @@ if (process.argv.includes('--oauth-code-relay-check')) {
   const stubPage = stubGoogleChallengePage([{ text: 'Get a verification code', role: 'radio' }, { text: 'Get a call', type: 'submit' }, { text: 'Continue', type: 'submit' }]);
   assert(await googleCodePrimaryAction(stubPage).then((button) => button.innerText()) === 'Continue', 'Code option submit must exclude call actions');
   await googleCodePrimaryAction(stubGoogleChallengePage([{ text: 'Next' }, { text: 'OK' }])).then(() => assert(false, 'Ambiguous primary actions must fail'), (error) => assert(/^ambiguous Google code primary action/.test(error.message), 'Ambiguous primary actions must fail visibly'));
+  const dump = sanitizeOauthDebugDump([{ innerText: 'user@example.test Fake-Staging-Pass_123' }], 'user@example.test', 'Fake-Staging-Pass_123');
+  assert(!dump.includes('user@example.test') && !dump.includes('Fake-Staging-Pass_123') && dump.includes('[REDACTED]'), 'OAuth debug dump must redact staging credentials');
   process.stdout.write('OAuth code relay check PASS\n');
   process.exit(0);
 }
@@ -153,6 +157,7 @@ const evidenceTask = process.argv.includes('--evidence-self-check') ? 't_selfche
 const quotaSafeMode = fixtureMode(process.env) === 'borrowed-carrier';
 const authenticationMode = authMode(process.env);
 const manualConsentMode = manualConsent(process.env, authenticationMode);
+const oauthDebugDumpMode = oauthDebugDump(process.env);
 const manualConsentTimeout = manualConsentMode ? manualConsentTimeoutMs(process.env) : undefined;
 const stagingAccountEmail = authenticationMode === 'user' ? required('KLASR_STAGING_ACCOUNT_EMAIL') : undefined;
 const oauthCodeFile = authenticationMode === 'user' ? oauthCodeFilePath(process.env, root) : undefined;
@@ -378,7 +383,7 @@ try {
   failureStage = 'login-navigation';
   await page.goto(`${webBase}/login`);
   failureStage = 'acceptance-login-session';
-  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, manualConsentMode ? undefined : required('KLASR_STAGING_ACCOUNT_PASSWORD'), manualConsentTimeout, oauthCodeFile, oauthCodeTimeout);
+  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, manualConsentMode ? undefined : required('KLASR_STAGING_ACCOUNT_PASSWORD'), manualConsentTimeout, oauthCodeFile, oauthCodeTimeout, oauthDebugDumpMode);
   else {
     await page.getByRole('button', { name: 'Validation Google staging' }).click();
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
@@ -753,6 +758,11 @@ function manualConsent(env, mode) {
   assert(value !== 'true' || mode === 'user', 'KLASR_MANUAL_CONSENT=true requires KLASR_AUTH_MODE=user');
   return value === 'true';
 }
+function oauthDebugDump(env) {
+  const value = env.KLASR_OAUTH_DEBUG_DUMP ?? 'false';
+  assert(['true', 'false'].includes(value), 'KLASR_OAUTH_DEBUG_DUMP must be true or false');
+  return value === 'true';
+}
 function manualConsentTimeoutMs(env) {
   const value = env.KLASR_MANUAL_CONSENT_TIMEOUT ?? '2400000';
   assert(/^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0, 'KLASR_MANUAL_CONSENT_TIMEOUT must be a positive integer');
@@ -983,6 +993,9 @@ async function googleCodePrimaryAction(page) {
   if (byText.length === 1) return byText[0].button;
   throw new Error(`${byText.length ? 'ambiguous' : 'missing'} Google code primary action${byText.length ? `: ${byText.map(({ text }) => text).join(' | ')}` : ''}`);
 }
+function sanitizeOauthDebugDump(value, email, password) {
+  return redact(typeof value === 'string' ? value : JSON.stringify(value), [email, password]).replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[REDACTED]');
+}
 function stubGoogleChallengePage(elements) {
   const buttons = elements.filter(({ role }) => role !== 'radio');
   const locator = (items) => ({
@@ -1014,9 +1027,9 @@ function reviewRequiredPdf() {
 }
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
-async function loginWithGoogleUser(page, email, password, manualTimeout, codeFile, codeTimeout) {
+async function loginWithGoogleUser(page, email, password, manualTimeout, codeFile, codeTimeout, debugDump) {
   failureStage = 'google-consent';
-  try { return await loginWithGoogleUserFlow(page, email, password, manualTimeout, codeFile, codeTimeout); }
+  try { return await loginWithGoogleUserFlow(page, email, password, manualTimeout, codeFile, codeTimeout, debugDump); }
   catch (error) { throw await googleConsentError(page, error); }
 }
 async function googleConsentError(page, error) {
@@ -1025,7 +1038,7 @@ async function googleConsentError(page, error) {
   const pageText = redactOauthCodes(text.replace(/\s+/g, ' ').trim()).slice(0, 300) || '<no body text>';
   return new Error(redactOauthCodes(`PAGE_TEXT=${pageText}; ${error?.message ?? error ?? 'Unknown Google consent failure'}`));
 }
-async function loginWithGoogleUserFlow(page, email, password, manualTimeout, codeFile, codeTimeout) {
+async function loginWithGoogleUserFlow(page, email, password, manualTimeout, codeFile, codeTimeout, debugDump) {
   const stage = () => { failureStage = 'google-consent'; };
   const visible = async (locator, timeout = 100) => locator.waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
   const fail = async (substage, reason) => {
@@ -1117,7 +1130,26 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
       if (await visible(inputs.first(), 3_000)) return true;
       let primary;
       try { primary = await googleCodePrimaryAction(page); }
-      catch (error) { await fail('verification-code', error.message); }
+      catch (error) {
+        if (debugDump) {
+          await page.waitForTimeout(1_500);
+          const url = page.url();
+          const elements = await page.locator('button, [role="button"], [role="radio"], [role="link"], input, a').evaluateAll((nodes, clickedText) => nodes.slice(0, 60).map((element) => ({
+            tag: element.tagName.toLowerCase(),
+            role: element.getAttribute('role'),
+            'aria-label': element.getAttribute('aria-label'),
+            type: element.getAttribute('type'),
+            name: element.getAttribute('name'),
+            id: element.id || null,
+            innerText: (element.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
+            disabled: Boolean(element.disabled) || element.getAttribute('aria-disabled') === 'true',
+            'aria-checked': element.getAttribute('aria-checked'),
+            containsClickedOptionText: (element.innerText ?? '').replace(/\s+/g, ' ').trim().includes(clickedText),
+          })), found.texts[index]);
+          process.stdout.write(`OAUTH_DEBUG_DUMP_BEGIN\nURL=${sanitizeOauthDebugDump(url, email, password)}\n${sanitizeOauthDebugDump(elements, email, password)}\nOAUTH_DEBUG_DUMP_END\n`);
+        }
+        await fail('verification-code', error.message);
+      }
       await primary.click();
       if (await visible(inputs.first(), 8_000)) return true;
       reselections += 1;
