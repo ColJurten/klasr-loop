@@ -46,6 +46,7 @@ export default async function DashboardPage() {
     <main className="mx-auto max-w-4xl px-8 py-10">
       <header className="mb-8">
         <h1 className="text-2xl font-medium">Bonjour, {displayName}</h1>
+        {session.user.email && <p className="mt-1 text-sm text-ink/60">{session.user.email}</p>}
         <p className="mt-1 text-sm text-ink/60">
           Les propositions, métriques et historiques viennent de la base de données.
         </p>

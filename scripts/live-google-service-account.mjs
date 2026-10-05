@@ -11,13 +11,21 @@ import { assertTreeBinding, currentTreeBinding, parseObservedRecord, resolveEvid
 const fixtureNames = ['doc3.pdf', 'CDA_Oct25_18mois_Calendrier.pdf'];
 const removedFolderName = 'À traiter manuellement';
 const recoveryVersion = '1';
-const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
+const failureStages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'google-consent', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
 const failureOverrides = ['stage=analysis reason=job_failed', 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed', 'stage=ui-decisions-provider-metadata reason=legacy_folder_present'];
 
 if (process.argv.includes('--llm-setup-contract-check')) {
   assertLlmSetupSequence(['reset', 'configure', 'launch', 'reset', 'configure', 'launch']);
   assertThrows(() => assertLlmSetupSequence(['reset', 'launch']), 'Launch after reset without LLM setup must fail');
   process.stdout.write('live runner LLM setup sequence check PASS\n');
+  process.exit(0);
+}
+
+if (process.argv.includes('--auth-mode-check')) {
+  assert(authMode({}) === 'sa', 'Auth mode must default to sa');
+  assert(authMode({ KLASR_AUTH_MODE: 'user' }) === 'user', 'User auth mode must be accepted');
+  assertThrows(() => authMode({ KLASR_AUTH_MODE: 'invalid' }), 'Invalid auth mode must fail closed');
+  process.stdout.write('live runner auth mode check PASS\n');
   process.exit(0);
 }
 
@@ -118,6 +126,8 @@ const syntheticLineage = { sha: '0'.repeat(40), issue: 1, attempt: 1 };
 const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineage : parseLineage(process.env);
 const evidenceTask = process.argv.includes('--evidence-self-check') ? 't_selfcheck' : parseEvidenceTask(process.env);
 const quotaSafeMode = fixtureMode(process.env) === 'borrowed-carrier';
+const authenticationMode = authMode(process.env);
+const stagingAccountEmail = authenticationMode === 'user' ? required('KLASR_STAGING_ACCOUNT_EMAIL') : undefined;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fatalLifecycleCheck = process.argv.includes('--fatal-lifecycle-check');
@@ -227,7 +237,7 @@ const fixtureSnapshots = [];
 const observedReplacements = new Map();
 const children = [];
 const evidence = {
-  identity: 'Google service account (non-production acceptance; not end-user OAuth consent)',
+  identity: authenticationMode === 'user' ? `Google user OAuth consent (${stagingAccountEmail})` : 'Google service account non-production acceptance',
   serviceAccountAuth: 'FAIL', realDriveListing: 'FAIL', realDriveDownloadOcr: 'FAIL',
   realProposalReview: 'FAIL', realDriveConfirmMutation: 'FAIL', realDriveCorrectMutation: 'FAIL',
   realDriveIgnoreNoMutation: 'FAIL', terminalNoReenqueue: 'FAIL', desktopBrowser: 'FAIL',
@@ -294,7 +304,7 @@ try {
     await new Promise(() => undefined);
   }
   assertPythonRuntime();
-  const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID'].filter((name) => !process.env[name]);
+  const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID', ...(authenticationMode === 'user' ? ['KLASR_STAGING_ACCOUNT_PASSWORD'] : [])].filter((name) => !process.env[name]);
   if (missing.length) { acceptanceBlocked = true; throw new Error(`Missing ${missing.join(', ')}`); }
   llmProvider = required('KLASR_LLM_PROVIDER');
   assert(llmProvider === 'anthropic', `Live UI LLM setup supports provider anthropic, received ${llmProvider}`);
@@ -334,10 +344,13 @@ try {
   failureStage = 'login-navigation';
   await page.goto(`${webBase}/login`);
   failureStage = 'acceptance-login-session';
-  await page.getByRole('button', { name: 'Validation Google staging' }).click();
-  await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
+  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, required('KLASR_STAGING_ACCOUNT_PASSWORD'));
+  else {
+    await page.getByRole('button', { name: 'Validation Google staging' }).click();
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
+  }
   failureStage = 'dashboard-identity';
-  await page.getByText('Validation staging · identité de service Google').waitFor();
+  await page.getByText(authenticationMode === 'user' ? stagingAccountEmail : 'Validation staging · identité de service Google', { exact: true }).waitFor();
   failureStage = 'tenant-lookup';
   const tenant = await tenantRecord();
   organizationId = tenant.organizationId;
@@ -452,7 +465,7 @@ try {
   const mobilePage = await mobile.newPage();
   await copyCookies(context, mobile);
   await mobilePage.goto(`${webBase}/dashboard`);
-  await mobilePage.getByText('Validation staging · identité de service Google').waitFor();
+  await mobilePage.getByText(authenticationMode === 'user' ? stagingAccountEmail : 'Validation staging · identité de service Google', { exact: true }).waitFor();
   await mobilePage.screenshot({ path: path.join(screenshotDir, 'live-google-sa-mobile-390.png'), fullPage: true });
   evidence.mobile390Browser = 'PASS';
   await mobile.close();
@@ -595,7 +608,7 @@ function safeFailureReason(error) {
   if (error?.message === 'Ignore changed provider name or parents') return 'stage=ui-decisions-provider-metadata reason=ignore_metadata_changed';
   if (error?.message === 'Removed routing folder exists after ignore') return 'stage=ui-decisions-provider-metadata reason=legacy_folder_present';
 }
-function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, accessToken, internalSecret, nextAuthSecret, tokenKey]) {
+function sanitizeFailure(error, secrets = [process.env.KLASR_LLM_API_KEY, process.env.KLASR_STAGING_ACCOUNT_PASSWORD, accessToken, internalSecret, nextAuthSecret, tokenKey]) {
   return redact(error?.message ?? error ?? 'Unknown error', secrets)
     .split(/\r?\n/).filter((line) => !/^\s*Received\b/.test(line)).slice(0, 3).join(' ')
     .replace(/\s+/g, ' ').trim().slice(0, 500);
@@ -681,7 +694,7 @@ function sanitizedManifest(raw, proof, manifestLineage, tree, observed, complete
     && [...Object.values(results), ...Object.values(cleanupResult), ...Object.values(processes)].every((value) => value === true);
   return {
     version: 1,
-    identity: 'Google service account non-production acceptance',
+    identity: raw.identity ?? 'Google service account non-production acceptance',
     ...manifestLineage,
     status: passed ? 'PASS' : 'FAIL', failureDetail: detail ?? null, tree, observed: observed ?? null, results, cleanup: cleanupResult, processes,
   };
@@ -694,6 +707,11 @@ function parseLineage(env) {
 function fixtureMode(env) {
   if (Object.hasOwn(env, 'KLASR_LIVE_FIXTURE_MODE')) assert(['runner-owned', 'borrowed-carrier'].includes(env.KLASR_LIVE_FIXTURE_MODE), 'Live fixture mode is invalid');
   return env.KLASR_LIVE_FIXTURE_MODE ?? 'borrowed-carrier';
+}
+function authMode(env) {
+  const mode = env.KLASR_AUTH_MODE ?? 'sa';
+  assert(['sa', 'user'].includes(mode), 'KLASR_AUTH_MODE must be sa or user');
+  return mode;
 }
 function assertProviderMutationAllowed(mode, route, init) {
   assert(!(mode === 'borrowed-carrier' && init.method === 'POST' && /^\/(?:upload\/)?drive\/v3\/files(?:[/?]|$)/.test(route)), 'Borrowed carrier mode forbids provider file creates');
@@ -915,6 +933,57 @@ function reviewRequiredPdf() {
 }
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
+async function loginWithGoogleUser(page, email, password) {
+  const stage = () => { failureStage = 'google-consent'; };
+  const fail = async (substage, reason) => {
+    stage(substage);
+    const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => 'no visible heading');
+    const text = await page.locator('body').innerText().catch(() => 'no visible page text');
+    throw new Error(`substage=${substage}; ${reason}; URL=${page.url()}; heading=${heading}; visible page text=${text.slice(0, 1200)}`);
+  };
+  const challenge = async (substage) => {
+    const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => '');
+    const text = await page.locator('body').innerText().catch(() => '');
+    if (/challenge|captcha|verify it'?s you|confirm.*identity|couldn.?t sign you in|suspicious|unusual activity|vérif|confirmez votre identité/i.test(`${page.url()} ${heading} ${text}`)) await fail(substage, `unexpected security check: ${heading || 'unknown heading'}`);
+  };
+
+  await page.getByRole('button', { name: 'Continuer avec Google', exact: true }).click();
+  try { await page.waitForURL((url) => url.hostname === 'accounts.google.com' || /\/dashboard/.test(url.pathname), { timeout: 30_000 }); }
+  catch { await fail('account-choice', 'Google OAuth redirect did not reach accounts.google.com or the dashboard'); }
+  if (/\/dashboard/.test(new URL(page.url()).pathname)) return;
+
+  stage('account-choice');
+  await challenge('account-choice');
+  const account = page.locator('[role="link"], button').filter({ hasText: email }).first();
+  if (await account.isVisible({ timeout: 5_000 }).catch(() => false)) await account.click();
+  else {
+    stage('identifier');
+    const identifier = page.locator('input[type="email"], input[name="identifier"]').first();
+    if (!await identifier.isVisible({ timeout: 15_000 }).catch(() => false)) await fail('identifier', 'Google account chooser showed neither the staging account nor an identifier field');
+    await identifier.fill(email);
+    await page.locator('#identifierNext').getByRole('button').click();
+  }
+
+  stage('password');
+  const passwordInput = page.locator('input[type="password"]').first();
+  if (await passwordInput.isVisible({ timeout: 15_000 }).catch(() => false)) {
+    await passwordInput.fill(password);
+    await page.locator('#passwordNext').getByRole('button').click();
+  } else await challenge('password');
+  await page.waitForTimeout(1_000);
+  await challenge('password');
+
+  stage('consent-screen');
+  for (let step = 0; step < 2 && !/\/dashboard/.test(new URL(page.url()).pathname); step += 1) {
+    await challenge('consent-screen');
+    const consent = page.getByRole('button', { name: /^(?:Continue|Allow|Continuer|Autoriser)$/i }).last();
+    if (!await consent.isVisible().catch(() => false)) break;
+    await consent.click();
+    await page.waitForTimeout(500);
+  }
+  try { await page.waitForURL(/\/dashboard/, { timeout: 30_000 }); }
+  catch { await fail('consent-screen', 'Google consent did not return to the dashboard'); }
+}
 function selectFixtures(items) {
   return fixtureNames.map((name) => exact(items, name, 'application/pdf'));
 }
@@ -944,14 +1013,14 @@ function restorationVerified(snapshots, restored, replacements) {
 async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
   const python = path.join(root, 'apps/api-py/.venv/bin/python');
-  const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, ...runtimeEnv } = process.env;
-  const common = { ...runtimeEnv, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true', KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
+  const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, KLASR_STAGING_ACCOUNT_PASSWORD, ...runtimeEnv } = process.env;
+  const common = { ...runtimeEnv, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
   const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
   assert(migration.status === 0, 'Alembic migration failed');
   children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'inherit', env: common }), url: `${apiBase}/health` });
   await waitReachable(`${apiBase}/health`);
   children.push({ child: spawn(python, ['src/worker.py'], { cwd: path.join(root, 'apps/api-py'), detached: true, stdio: 'inherit', env: { ...common, KLASR_WORKER: 'true' } }) });
-  children.push({ child: spawn(process.execPath, [requireWeb.resolve('next/dist/bin/next'), 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: path.join(root, 'apps/web'), detached: true, stdio: 'inherit', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true' } }), url: webBase });
+  children.push({ child: spawn(process.execPath, [requireWeb.resolve('next/dist/bin/next'), 'dev', '-H', '127.0.0.1', '-p', String(webPort)], { cwd: path.join(root, 'apps/web'), detached: true, stdio: 'inherit', env: { ...common, NEXTAUTH_URL: webBase, NEXTAUTH_SECRET: nextAuthSecret, API_URL: apiBase, NEXT_PUBLIC_API_URL: apiBase, NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa') } }), url: webBase });
   await waitReachable(`${webBase}/login`);
 }
 function assertPythonRuntime() {
