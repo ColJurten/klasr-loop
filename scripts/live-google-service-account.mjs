@@ -31,6 +31,7 @@ if (process.argv.includes('--auth-mode-check')) {
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'sa'), 'Manual consent must reject service-account mode');
   assert(passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/pwd?x=1'), 'Password re-verification URL must be recognized');
   assert(passwordReverificationUrl('https://accounts.google.com/challenge/pwd'), 'Short password re-verification URL must be recognized');
+  assert(challengeSelectionUrl('https://accounts.google.com/v3/signin/challenge/selection'), 'Challenge selection URL must be recognized');
   assert(!passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/reen'), 'Other challenges must remain rejected');
   process.stdout.write('live runner auth mode check PASS\n');
   process.exit(0);
@@ -960,14 +961,23 @@ function reviewRequiredPdf() {
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
 async function loginWithGoogleUser(page, email, password, manualTimeout) {
+  failureStage = 'google-consent';
+  try { return await loginWithGoogleUserFlow(page, email, password, manualTimeout); }
+  catch (error) { throw await googleConsentError(page, error); }
+}
+async function googleConsentError(page, error) {
+  if (/^PAGE_TEXT=/.test(error?.message ?? '')) return error;
+  const text = await page.locator('body').innerText({ timeout: 1_000 }).catch(() => '');
+  const pageText = text.replace(/\s+/g, ' ').trim().slice(0, 300) || '<no body text>';
+  return new Error(`PAGE_TEXT=${pageText}; ${error?.message ?? error ?? 'Unknown Google consent failure'}`);
+}
+async function loginWithGoogleUserFlow(page, email, password, manualTimeout) {
   const stage = () => { failureStage = 'google-consent'; };
   const visible = async (locator, timeout = 100) => locator.waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
   const fail = async (substage, reason) => {
     stage(substage);
     const heading = await page.locator('h1, h2, [role="heading"]').first().innerText().catch(() => 'no visible heading');
-    const text = await page.locator('body').innerText().catch(() => 'no visible page text');
-    const bodyCopy = text.replace(/\s+/g, ' ').trim().slice(0, 300);
-    throw new Error(`substage=${substage}; ${reason}; URL=${page.url()}; heading=${heading}; body copy=${bodyCopy}`);
+    throw new Error(`substage=${substage}; ${reason}; URL=${page.url()}; heading=${heading}`);
   };
   const challenge = async (substage) => {
     const identifier = page.locator('input[type="email"], input[name="identifier"]').first();
@@ -979,6 +989,49 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
     const challengeText = /suspicious|unusual traffic|connexion inhabituelle|security check|vérification de sécurité|this browser or app may not be secure|ce navigateur/i.test(`${heading} ${text}`);
     if (challengeUrl || challengeText || await challengeElement.count()) await fail(substage, `unexpected security check: ${heading || 'unknown heading'}`);
     return false;
+  };
+  let passwordReentered = false;
+  const reenterPassword = async () => {
+    if (passwordReentered) await fail('password', 'password re-verification staged again');
+    passwordReentered = true;
+    const input = page.locator('input[type="password"]:visible').first();
+    if (!await visible(input, 15_000)) await fail('password', 'Google password re-verification field did not appear');
+    await input.fill(password);
+    const passwordNext = page.locator('#passwordNext').first();
+    const submit = await visible(passwordNext, 1_000) ? passwordNext : page.locator('button[type="submit"]').first();
+    if (!await visible(submit, 5_000)) await fail('password', 'Google password re-verification submit did not appear');
+    await submit.click();
+    await page.waitForTimeout(1_000);
+    if (passwordReverificationUrl(page.url())) await fail('password', 'password re-verification staged again');
+  };
+  const selectionOptions = async () => {
+    const options = page.locator('button:visible, a:visible, [role="button"]:visible, [role="link"]:visible, [role="radio"]:visible, label:visible');
+    await options.first().waitFor({ state: 'visible', timeout: 3_000 }).catch(() => undefined);
+    const texts = (await options.allTextContents()).map((text) => text.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    return { options, texts: [...new Set(texts)] };
+  };
+  const choosePasswordChallenge = async () => {
+    let found = await selectionOptions();
+    let index = found.texts.findIndex((text) => /passw|mot de passe/i.test(text));
+    if (index < 0) {
+      const alternate = found.texts.findIndex((text) => /try another way|essayer une autre méthode|autre méthode/i.test(text));
+      if (alternate >= 0) {
+        await found.options.filter({ hasText: found.texts[alternate] }).first().click();
+        await page.waitForTimeout(500);
+        found = await selectionOptions();
+        index = found.texts.findIndex((text) => /passw|mot de passe/i.test(text));
+      }
+    }
+    if (index < 0) await fail('password', `Google challenge selection offered no password option; options=${found.texts.join(' | ') || '<none>'}`);
+    await found.options.filter({ hasText: found.texts[index] }).first().click();
+    await page.waitForTimeout(1_000);
+    if (!passwordReverificationUrl(page.url())) await fail('password', `Google password option did not reach password re-verification; options=${found.texts.join(' | ')}`);
+  };
+  const challengePageStrategy = async () => {
+    if (challengeSelectionUrl(page.url())) await choosePasswordChallenge();
+    if (passwordReverificationUrl(page.url())) await reenterPassword();
+    if (challengeSelectionUrl(page.url())) await choosePasswordChallenge();
+    if (passwordReverificationUrl(page.url())) await reenterPassword();
   };
 
   await page.getByRole('button', { name: 'Continuer avec Google', exact: true }).click();
@@ -1023,21 +1076,12 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
     await fail('password', 'Google password field did not appear');
   }
   await page.waitForTimeout(1_000);
-  if (passwordReverificationUrl(page.url())) {
-    const reverificationInput = page.locator('input[type="password"]:visible').first();
-    if (!await visible(reverificationInput, 15_000)) await fail('password', 'Google password re-verification field did not appear');
-    await reverificationInput.fill(password);
-    const passwordNext = page.locator('#passwordNext').first();
-    const submit = await visible(passwordNext, 1_000) ? passwordNext : page.locator('button[type="submit"]').first();
-    if (!await visible(submit, 5_000)) await fail('password', 'Google password re-verification submit did not appear');
-    await submit.click();
-    await page.waitForTimeout(1_000);
-    if (passwordReverificationUrl(page.url())) await fail('password', 'password re-verification staged again');
-  }
+  await challengePageStrategy();
   await challenge('password');
 
   stage('consent-screen');
   for (let step = 0; step < 2 && !/\/dashboard/.test(new URL(page.url()).pathname); step += 1) {
+    await challengePageStrategy();
     await challenge('consent-screen');
     const consent = page.getByRole('button', { name: /^(?:Continue|Allow|Continuer|Autoriser)$/i }).last();
     if (!await visible(consent, 5_000)) break;
@@ -1048,6 +1092,7 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
   catch { await fail('consent-screen', 'Google consent did not return to the dashboard'); }
 }
 function passwordReverificationUrl(url) { return /\/challenge\/pwd(?:\/|\?|$)/i.test(url); }
+function challengeSelectionUrl(url) { return /\/challenge\/selection(?:\/|\?|$)/i.test(url); }
 function selectFixtures(items) {
   return fixtureNames.map((name) => exact(items, name, 'application/pdf'));
 }

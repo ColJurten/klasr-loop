@@ -429,6 +429,13 @@ test('live runner exposes only exact allowlisted failure stages', () => {
   assert.match(fatal, /failureStages\.includes\(failureStage\)/);
   assert.match(fatal, /failureDiagnostic \?\? `stage=\$\{failureStageAtFailure \?\? failureStage\}`/);
   assert.doesNotMatch(fatal, /error|message|stack|JSON\.stringify/i);
+  const login = functionBody(source, 'loginWithGoogleUserFlow');
+  assert.match(login, /challengeSelectionUrl\(page\.url\(\)\)[\s\S]*choosePasswordChallenge\(\)/);
+  assert.match(login, /passw\|mot de passe/i);
+  assert.match(login, /let passwordReentered = false[\s\S]*if \(passwordReentered\)[\s\S]*passwordReentered = true/);
+  assert.match(login, /timeout: 3_000/);
+  assert.match(functionBody(source, 'googleConsentError'), /PAGE_TEXT=\$\{pageText\}/);
+  assert.match(functionBody(source, 'googleConsentError'), /slice\(0, 300\) \|\| '<no body text>'/);
 });
 
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {
