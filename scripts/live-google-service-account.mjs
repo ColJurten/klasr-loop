@@ -38,6 +38,17 @@ if (process.argv.includes('--auth-mode-check')) {
   assert(passwordReverificationUrl('https://accounts.google.com/challenge/pwd'), 'Short password re-verification URL must be recognized');
   assert(challengeSelectionUrl('https://accounts.google.com/v3/signin/challenge/selection'), 'Challenge selection URL must be recognized');
   assert(!passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/reen'), 'Other challenges must remain rejected');
+  const fallbackPage = stubPasswordSubmitPage([{ text: 'Suivant', type: 'submit' }]);
+  await tolerantPasswordSubmit(fallbackPage, 'user@example.test', 'Fake-Staging-Pass_123', true);
+  assert(fallbackPage.clicked() === 'Suivant', 'Password submit must fall back to the unambiguous Google primary action');
+  const missingPage = stubPasswordSubmitPage([], 'Password page unavailable');
+  let dump = '';
+  const write = process.stdout.write;
+  process.stdout.write = (value) => { dump += value; return true; };
+  const missingError = await tolerantPasswordSubmit(missingPage, 'user@example.test', 'Fake-Staging-Pass_123', true).then(() => undefined, (error) => googleConsentError(missingPage, error));
+  process.stdout.write = write;
+  assert(dump.includes('OAUTH_DEBUG_DUMP_BEGIN\nURL=') && dump.includes('\nOAUTH_DEBUG_DUMP_END\n'), 'Missing password submit must emit an OAuth debug dump');
+  assert(/^PAGE_TEXT=Password page unavailable; password next timeout$/.test(missingError.message), 'Missing password submit must preserve the original error with page text');
   process.stdout.write('live runner auth mode check PASS\n');
   process.exit(0);
 }
@@ -1003,6 +1014,36 @@ async function googleCodePrimaryAction(page) {
   if (byText.length === 1) return byText[0].button;
   throw new Error(`${byText.length ? 'ambiguous' : 'missing'} Google code primary action${byText.length ? `: ${byText.map(({ text }) => text).join(' | ')}` : ''}`);
 }
+async function emitOauthDebugDump(page, email, password, clickedText = '') {
+  await page.waitForTimeout(1_500);
+  const url = page.url();
+  const elements = await page.locator('button, [role="button"], [role="radio"], [role="link"], input, a').evaluateAll((nodes, optionText) => nodes.slice(0, 60).map((element) => ({
+    tag: element.tagName.toLowerCase(),
+    role: element.getAttribute('role'),
+    'aria-label': element.getAttribute('aria-label'),
+    type: element.getAttribute('type'),
+    name: element.getAttribute('name'),
+    id: element.id || null,
+    innerText: (element.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
+    disabled: Boolean(element.disabled) || element.getAttribute('aria-disabled') === 'true',
+    'aria-checked': element.getAttribute('aria-checked'),
+    containsClickedOptionText: (element.innerText ?? '').replace(/\s+/g, ' ').trim().includes(optionText),
+  })), clickedText);
+  process.stdout.write(`OAUTH_DEBUG_DUMP_BEGIN\nURL=${sanitizeOauthDebugDump(url, email, password)}\n${sanitizeOauthDebugDump(elements, email, password)}\nOAUTH_DEBUG_DUMP_END\n`);
+}
+async function tolerantPasswordSubmit(page, email, password, debugDump) {
+  try {
+    const passwordNext = page.locator('#passwordNext:visible').first();
+    await passwordNext.waitFor({ state: 'visible', timeout: 6_000 });
+    await passwordNext.click();
+  } catch (originalError) {
+    try { await (await googleCodePrimaryAction(page)).click(); }
+    catch {
+      if (debugDump) await emitOauthDebugDump(page, email, password);
+      throw originalError;
+    }
+  }
+}
 function googleCodeInputSelector() {
   return 'input:not(#phoneNumberId)[autocomplete="one-time-code"]:visible, input:not(#phoneNumberId)[name="idvPin"]:visible, input:not(#phoneNumberId)[type="tel"][maxlength="6"]:visible, input:not(#phoneNumberId)[type="tel"][maxlength="8"]:visible, input:not(#phoneNumberId)[maxlength="1"]:visible';
 }
@@ -1061,6 +1102,25 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
       setTimeout(() => { ippVisible = true; }, delayedIpp.renderDelay);
     },
     showCode: () => { codeVisible = true; },
+    clicked: () => clicked,
+  };
+}
+function stubPasswordSubmitPage(elements, bodyText = '') {
+  let clicked;
+  const locator = (items) => ({
+    count: async () => items.length,
+    nth: (index) => locator(items.slice(index, index + 1)),
+    first: () => locator(items.slice(0, 1)),
+    innerText: async () => items[0]?.text ?? '',
+    getAttribute: async (name) => items[0]?.[name] ?? null,
+    waitFor: async () => { throw new Error('password next timeout'); },
+    click: async () => { clicked = items[0].text; },
+    evaluateAll: async (callback, argument) => callback([], argument),
+  });
+  return {
+    locator: (selector) => selector === 'button:visible' ? locator(elements) : selector === 'body' ? { innerText: async () => bodyText } : locator([]),
+    waitForTimeout: async () => undefined,
+    url: () => 'https://accounts.google.com/v3/signin/challenge/pwd',
     clicked: () => clicked,
   };
 }
@@ -1123,10 +1183,7 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
     const input = page.locator('input[type="password"]:visible').first();
     if (!await visible(input, 15_000)) await fail('password', 'Google password re-verification field did not appear');
     await input.fill(password);
-    const passwordNext = page.locator('#passwordNext').first();
-    const submit = await visible(passwordNext, 1_000) ? passwordNext : page.locator('button[type="submit"]').first();
-    if (!await visible(submit, 5_000)) await fail('password', 'Google password re-verification submit did not appear');
-    await submit.click();
+    await tolerantPasswordSubmit(page, email, password, debugDump);
     await page.waitForTimeout(1_000);
     if (passwordReverificationUrl(page.url())) await fail('password', 'password re-verification staged again');
   };
@@ -1193,23 +1250,7 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
       let primary;
       try { primary = await googleCodePrimaryAction(page); }
       catch (error) {
-        if (debugDump) {
-          await page.waitForTimeout(1_500);
-          const url = page.url();
-          const elements = await page.locator('button, [role="button"], [role="radio"], [role="link"], input, a').evaluateAll((nodes, clickedText) => nodes.slice(0, 60).map((element) => ({
-            tag: element.tagName.toLowerCase(),
-            role: element.getAttribute('role'),
-            'aria-label': element.getAttribute('aria-label'),
-            type: element.getAttribute('type'),
-            name: element.getAttribute('name'),
-            id: element.id || null,
-            innerText: (element.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
-            disabled: Boolean(element.disabled) || element.getAttribute('aria-disabled') === 'true',
-            'aria-checked': element.getAttribute('aria-checked'),
-            containsClickedOptionText: (element.innerText ?? '').replace(/\s+/g, ' ').trim().includes(clickedText),
-          })), found.texts[index]);
-          process.stdout.write(`OAUTH_DEBUG_DUMP_BEGIN\nURL=${sanitizeOauthDebugDump(url, email, password)}\n${sanitizeOauthDebugDump(elements, email, password)}\nOAUTH_DEBUG_DUMP_END\n`);
-        }
+        if (debugDump) await emitOauthDebugDump(page, email, password, found.texts[index]);
         await fail('verification-code', error.message);
       }
       await primary.click();
@@ -1277,7 +1318,7 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
   const passwordInput = page.locator('input[type="password"]').first();
   if (await visible(passwordInput, 15_000)) {
     await passwordInput.fill(password);
-    await page.locator('#passwordNext').click();
+    await tolerantPasswordSubmit(page, email, password, debugDump);
   } else {
     await challenge('password');
     await fail('password', 'Google password field did not appear');
