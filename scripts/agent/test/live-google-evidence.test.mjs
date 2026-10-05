@@ -444,7 +444,8 @@ test('live runner exposes only exact allowlisted failure stages', () => {
   assert.doesNotMatch(codeSelector, /input\[type="tel"\]:visible/);
   const ipp = functionBody(source, 'handleGoogleIppCollect');
   assert.match(ipp, /\/challenge\\\/ipp\\\//);
-  assert.match(ipp, /for \(let elapsed = 0; elapsed < 10_000; elapsed \+= 500\)[\s\S]*button:visible, \[role="button"\][\s\S]*\^send\$\/i[\s\S]*\^\(\?:send\|envoyer\)[\s\S]*waitForTimeout\(500\)[\s\S]*emitOauthDebugDump[\s\S]*\.click\(\)[\s\S]*10_000/);
+  assert.match(ipp, /boundingBox\(\)[\s\S]*box\.width < 1 \|\| box\.height < 1[\s\S]*for \(let elapsed = 0; elapsed < 20_000; elapsed \+= 500\)[\s\S]*button, \[role="button"\], input\[type="button"\], input\[type="submit"\][\s\S]*\^send\$\/i[\s\S]*\^\(\?:send\|envoyer\)[\s\S]*waitForTimeout\(500\)[\s\S]*emitOauthDebugDump[\s\S]*\.click\(\)[\s\S]*10_000/);
+  assert.doesNotMatch(ipp, /button:visible|\[role="button"\]:visible|input\[type="(?:button|submit)"\]:visible/);
   const relay = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--oauth-code-relay-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(relay.status, 0, relay.stderr);
   assert.equal(relay.stdout, 'OAuth code relay check PASS\n');
@@ -456,7 +457,7 @@ test('live runner settles Google IPP navigation and delayed phone input', () => 
   assert.match(login, /waitForURL\(\(url\) => !challengeSelectionUrl\(url\.pathname\), \{ timeout: 8_000 \}\)\.catch\(\(\) => undefined\)[\s\S]*handleGoogleIppCollect/);
   const ipp = functionBody(source, 'handleGoogleIppCollect');
   assert.match(ipp, /Promise\.race\([\s\S]*phone\.waitFor\([\s\S]*tel\.first\(\)\.waitFor\([\s\S]*timeout: 2_000/);
-  assert.match(source, /ippPage\.clicked\(\) === 'Send code'[\s\S]*sendDelay: 2_000[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'[\s\S]*Missing IPP Send action must emit an OAuth debug dump/);
+  assert.match(source, /ippPage\.clicked\(\) === 'Send code'[\s\S]*sendDelay: 2_000[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'[\s\S]*boundingBoxNulls: 3[\s\S]*handleGoogleIppCollect\(lateBoxIppPage, stubVisible\)[\s\S]*lateBoxIppPage\.clicked\(\) === 'Send'[\s\S]*Missing IPP Send action must emit an OAuth debug dump/);
 });
 
 test('live runner dispatches challenge selection before the initial password submit', () => {

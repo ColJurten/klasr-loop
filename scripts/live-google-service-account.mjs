@@ -76,6 +76,9 @@ if (process.argv.includes('--oauth-code-relay-check')) {
   delayedIppPage.clickCodeOption();
   assert(await handleGoogleIppCollect(delayedIppPage, stubVisible), 'IPP collect must tolerate navigation and input rendering after the code-option click');
   assert(delayedIppPage.clicked() === 'Send', 'Delayed IPP collect must click Send');
+  const lateBoxIppPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Send', type: 'button', boundingBoxNulls: 3, onClick: () => lateBoxIppPage.showCode() }], 'https://accounts.google.com/v3/signin/challenge/ipp/collect?x=1');
+  assert(await handleGoogleIppCollect(lateBoxIppPage, stubVisible), 'IPP collect must tolerate a late-rendering Send bounding box');
+  assert(lateBoxIppPage.clicked() === 'Send', 'Late-rendering IPP collect must click Send');
   const noSendPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Try another way', type: 'button' }], 'https://accounts.google.com/v3/signin/challenge/ipp/collect?x=1');
   let ippDump = '';
   const write = process.stdout.write;
@@ -1084,17 +1087,19 @@ async function handleGoogleIppCollect(page, visible, email = '', password = '') 
     && !/^(?:6|8)$/.test(await tel.first().getAttribute('maxlength') ?? '');
   if (!/\/challenge\/ipp\//i.test(page.url()) && !await visible(phone) && !plainSingleTel) return false;
   const excluded = ({ text }) => /call|phone|another|autre|computer/i.test(text);
-  const buttons = page.locator('button:visible');
+  const buttons = page.locator('button');
   const candidates = async (locator) => Promise.all(Array.from({ length: await locator.count() }, async (_, index) => {
     const clickable = locator.nth(index);
+    const box = await clickable.boundingBox();
+    if (!box || box.width < 1 || box.height < 1) return undefined;
     const text = ((await clickable.innerText().catch(() => '')) || await clickable.getAttribute('value') || '').replace(/\s+/g, ' ').trim();
     return { clickable, text, type: await clickable.getAttribute('type') };
-  }));
+  })).then((items) => items.filter(Boolean));
   let send = [];
-  for (let elapsed = 0; elapsed < 10_000; elapsed += 500) {
+  for (let elapsed = 0; elapsed < 20_000; elapsed += 500) {
     const submit = (await candidates(buttons)).filter((candidate) => candidate.type?.toLowerCase() === 'submit' && !excluded(candidate));
     send = submit.length ? submit : [];
-    const clickables = (await candidates(page.locator('button:visible, [role="button"]:visible, input[type="button"]:visible, input[type="submit"]:visible'))).filter((candidate) => !excluded(candidate));
+    const clickables = (await candidates(page.locator('button, [role="button"], input[type="button"], input[type="submit"]'))).filter((candidate) => !excluded(candidate));
     if (!send.length) send = clickables.filter(({ text }) => /^send$/i.test(text));
     if (!send.length) send = clickables.filter(({ text }) => /^(?:send|envoyer)/i.test(text));
     if (send.length > 1) throw new Error(`ambiguous Google IPP Send action: ${send.map(({ text }) => text).join(' | ')}`);
@@ -1119,12 +1124,20 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
   let ippVisible = !delayedIpp;
   let elapsed = 0;
   const visibleElements = () => elements.filter(({ id, text }) => (ippVisible || id !== 'phoneNumberId') && (!delayedIpp?.sendDelay || text !== 'Send' || elapsed >= delayedIpp.sendDelay));
+  const boxAttempts = new Map();
   const locator = (items) => ({
     count: async () => items().length,
     nth: (index) => locator(() => items().slice(index, index + 1)),
     first: () => locator(() => items().slice(0, 1)),
     innerText: async () => items()[0].text,
     getAttribute: async (name) => items()[0][name] ?? null,
+    boundingBox: async () => {
+      const item = items()[0];
+      if (!item) return null;
+      const attempts = boxAttempts.get(item) ?? 0;
+      boxAttempts.set(item, attempts + 1);
+      return attempts < (item.boundingBoxNulls ?? 0) ? null : { x: 0, y: 0, width: 100, height: 30 };
+    },
     waitFor: async ({ timeout = 0 } = {}) => {
       const deadline = Date.now() + timeout;
       while (!items().length && Date.now() < deadline) await delay(5);
@@ -1140,7 +1153,7 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
     })), argument),
   });
   return {
-    locator: (selector) => locator(() => selector === 'button:visible' || selector === 'button:visible, [role="button"]:visible, input[type="button"]:visible, input[type="submit"]:visible' ? visibleElements().filter(({ role, text }) => role !== 'radio' && text)
+    locator: (selector) => locator(() => selector === 'button' || selector === 'button:visible' || selector === 'button, [role="button"], input[type="button"], input[type="submit"]' ? visibleElements().filter(({ role, text }) => role !== 'radio' && text)
       : selector === 'input#phoneNumberId:visible' ? visibleElements().filter(({ id }) => id === 'phoneNumberId')
         : selector === 'input[type="tel"]:visible' ? visibleElements().filter(({ type }) => type === 'tel')
           : selector === 'button, [role="button"], [role="radio"], [role="link"], input, a' ? visibleElements()
