@@ -437,7 +437,14 @@ test('live runner exposes only exact allowlisted failure stages', () => {
   assert.match(functionBody(source, 'googleConsentError'), /PAGE_TEXT=\$\{pageText\}/);
   assert.match(functionBody(source, 'googleConsentError'), /slice\(0, 300\) \|\| '<no body text>'/);
   assert.match(login, /const chooseChallenge[\s\S]*verification code\|code de vérification\|envoyer un code/i);
+  assert.match(login, /handleGoogleIppCollect\(page, visible\)[\s\S]*relayOauthCode\(\)/);
   assert.match(login, /visible\(inputs\.first\(\), 3_000\)[\s\S]*googleCodePrimaryAction\(page\)[\s\S]*visible\(inputs\.first\(\), 8_000\)/);
+  const codeSelector = functionBody(source, 'googleCodeInputSelector');
+  assert.match(codeSelector, /:not\(#phoneNumberId\)/);
+  assert.doesNotMatch(codeSelector, /input\[type="tel"\]:visible/);
+  const ipp = functionBody(source, 'handleGoogleIppCollect');
+  assert.match(ipp, /\/challenge\\\/ipp\\\//);
+  assert.match(ipp, /\^send\$\/i[\s\S]*\.click\(\)[\s\S]*10_000/);
   const relay = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--oauth-code-relay-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(relay.status, 0, relay.stderr);
   assert.equal(relay.stdout, 'OAuth code relay check PASS\n');
