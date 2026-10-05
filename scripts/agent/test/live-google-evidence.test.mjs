@@ -459,6 +459,16 @@ test('live runner settles Google IPP navigation and delayed phone input', () => 
   assert.match(source, /ippPage\.clicked\(\) === 'Send code'[\s\S]*sendDelay: 2_000[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'[\s\S]*Missing IPP Send action must emit an OAuth debug dump/);
 });
 
+test('live runner dispatches challenge selection before the initial password submit', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const login = functionBody(source, 'loginWithGoogleUserFlow');
+  assert.match(login, /for \(let elapsed = 0; elapsed < 10_000; elapsed \+= 500\)[\s\S]*\/\\\/challenge\\\/\(\?:selection\|ipp\|pwd\)\/[\s\S]*challengePageStrategy\(\)[\s\S]*challengeBeforePassword = true/);
+  assert.match(login, /tolerantPasswordSubmit\(page, email, password, debugDump, challengePageStrategy\)/);
+  const authMode = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--auth-mode-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(authMode.status, 0, authMode.stderr);
+  assert.equal(authMode.stdout, 'live runner auth mode check PASS\n');
+});
+
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const transitions = [

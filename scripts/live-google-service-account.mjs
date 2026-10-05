@@ -49,6 +49,10 @@ if (process.argv.includes('--auth-mode-check')) {
   process.stdout.write = write;
   assert(dump.includes('OAUTH_DEBUG_DUMP_BEGIN\nURL=') && dump.includes('\nOAUTH_DEBUG_DUMP_END\n'), 'Missing password submit must emit an OAuth debug dump');
   assert(/^PAGE_TEXT=Password page unavailable; password next timeout$/.test(missingError.message), 'Missing password submit must preserve the original error with page text');
+  const challengeFirstPage = stubPasswordSubmitPage([], '', 'https://accounts.google.com/v3/signin/challenge/selection');
+  let codeOptionClicked = false;
+  await tolerantPasswordSubmit(challengeFirstPage, 'user@example.test', 'Fake-Staging-Pass_123', true, async () => { codeOptionClicked = true; });
+  assert(codeOptionClicked && challengeFirstPage.passwordClicks() === 0, 'Challenge-first login must dispatch the challenge strategy without entering the password submit path');
   process.stdout.write('live runner auth mode check PASS\n');
   process.exit(0);
 }
@@ -1039,10 +1043,23 @@ async function emitOauthDebugDump(page, email, password, clickedText = '') {
   })), clickedText);
   process.stdout.write(`OAUTH_DEBUG_DUMP_BEGIN\nURL=${sanitizeOauthDebugDump(url, email, password)}\n${sanitizeOauthDebugDump(elements, email, password)}\nOAUTH_DEBUG_DUMP_END\n`);
 }
-async function tolerantPasswordSubmit(page, email, password, debugDump) {
+async function tolerantPasswordSubmit(page, email, password, debugDump, challengeStrategy) {
   try {
     const passwordNext = page.locator('#passwordNext:visible').first();
-    await passwordNext.waitFor({ state: 'visible', timeout: 6_000 });
+    if (challengeStrategy) {
+      for (let elapsed = 0; elapsed < 10_000; elapsed += 500) {
+        if (await passwordNext.isVisible().catch(() => false)) {
+          await passwordNext.click();
+          return;
+        }
+        if (/\/challenge\/(?:selection|ipp|pwd)/i.test(page.url())) {
+          await challengeStrategy();
+          return;
+        }
+        await page.waitForTimeout(500);
+      }
+      throw new Error('password next timeout');
+    } else await passwordNext.waitFor({ state: 'visible', timeout: 6_000 });
     await passwordNext.click();
   } catch (originalError) {
     try { await (await googleCodePrimaryAction(page)).click(); }
@@ -1138,23 +1155,26 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
     clicked: () => clicked,
   };
 }
-function stubPasswordSubmitPage(elements, bodyText = '') {
+function stubPasswordSubmitPage(elements, bodyText = '', currentUrl = 'https://accounts.google.com/v3/signin/challenge/pwd') {
   let clicked;
+  let passwordClicks = 0;
   const locator = (items) => ({
     count: async () => items.length,
     nth: (index) => locator(items.slice(index, index + 1)),
     first: () => locator(items.slice(0, 1)),
     innerText: async () => items[0]?.text ?? '',
     getAttribute: async (name) => items[0]?.[name] ?? null,
+    isVisible: async () => items.length > 0,
     waitFor: async () => { throw new Error('password next timeout'); },
-    click: async () => { clicked = items[0].text; },
+    click: async () => { passwordClicks += 1; clicked = items[0].text; },
     evaluateAll: async (callback, argument) => callback([], argument),
   });
   return {
     locator: (selector) => selector === 'button:visible' ? locator(elements) : selector === 'body' ? { innerText: async () => bodyText } : locator([]),
     waitForTimeout: async () => undefined,
-    url: () => 'https://accounts.google.com/v3/signin/challenge/pwd',
+    url: () => currentUrl,
     clicked: () => clicked,
+    passwordClicks: () => passwordClicks,
   };
 }
 async function stubVisible(locator) { return locator.waitFor().then(() => true, () => false); }
@@ -1309,6 +1329,10 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
     await choosePasswordChallenge();
   };
   const challengePageStrategy = async () => {
+    if (/\/challenge\/ipp/i.test(page.url())) {
+      if (await handleGoogleIppCollect(page, visible, email, password)) await relayOauthCode();
+      return;
+    }
     if (challengeSelectionUrl(page.url())) await chooseChallenge();
     if (passwordReverificationUrl(page.url())) await reenterPassword();
     if (challengeSelectionUrl(page.url())) await chooseChallenge();
@@ -1349,10 +1373,21 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
 
   stage('password');
   const passwordInput = page.locator('input[type="password"]').first();
-  if (await visible(passwordInput, 15_000)) {
+  let challengeBeforePassword = false;
+  let passwordVisible = false;
+  for (let elapsed = 0; elapsed < 10_000; elapsed += 500) {
+    if (await visible(passwordInput)) { passwordVisible = true; break; }
+    if (/\/challenge\/(?:selection|ipp|pwd)/i.test(page.url())) {
+      await challengePageStrategy();
+      challengeBeforePassword = true;
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
+  if (passwordVisible) {
     await passwordInput.fill(password);
-    await tolerantPasswordSubmit(page, email, password, debugDump);
-  } else {
+    await tolerantPasswordSubmit(page, email, password, debugDump, challengePageStrategy);
+  } else if (!challengeBeforePassword) {
     await challenge('password');
     await fail('password', 'Google password field did not appear');
   }
