@@ -46,6 +46,9 @@ if (process.argv.includes('--oauth-code-relay-check')) {
   assert(redactOauthCodes('code 123456, phone 55, year 2026') === 'code [REDACTED], phone 55, year [REDACTED]', 'OAuth code runs must be redacted');
   let now = 0;
   await assertRejects(() => waitForOauthCode('/unused', 3_999, { read: () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }, remove: () => undefined, sleep: async () => { now += 2_000; }, now: () => now }), 'verification code relay timed out');
+  const stubPage = stubGoogleChallengePage([{ text: 'Get a verification code', role: 'radio' }, { text: 'Get a call', type: 'submit' }, { text: 'Continue', type: 'submit' }]);
+  assert(await googleCodePrimaryAction(stubPage).then((button) => button.innerText()) === 'Continue', 'Code option submit must exclude call actions');
+  await googleCodePrimaryAction(stubGoogleChallengePage([{ text: 'Next' }, { text: 'OK' }])).then(() => assert(false, 'Ambiguous primary actions must fail'), (error) => assert(/^ambiguous Google code primary action/.test(error.message), 'Ambiguous primary actions must fail visibly'));
   process.stdout.write('OAuth code relay check PASS\n');
   process.exit(0);
 }
@@ -966,6 +969,31 @@ function sameBytes(actual, expected) { return createHash('sha256').update(actual
 // Stable choice: lexicographically smallest matching pinned revision ID.
 function selectMatchingPinnedRevision(candidates) { return candidates.filter(({ matchesSnapshot }) => matchesSnapshot).sort((left, right) => left.id.localeCompare(right.id))[0]; }
 
+async function googleCodePrimaryAction(page) {
+  const buttons = page.locator('button:visible');
+  const candidates = await Promise.all(Array.from({ length: await buttons.count() }, async (_, index) => {
+    const button = buttons.nth(index);
+    return { button, text: (await button.innerText()).replace(/\s+/g, ' ').trim(), type: await button.getAttribute('type') };
+  }));
+  const excluded = ({ text }) => /call|phone|appel|another|autre|computer|confirm/i.test(text);
+  const submit = candidates.filter((candidate) => candidate.type?.toLowerCase() === 'submit' && !excluded(candidate));
+  if (submit.length === 1) return submit[0].button;
+  if (submit.length > 1) throw new Error(`ambiguous Google code primary action: ${submit.map(({ text }) => text).join(' | ')}`);
+  const byText = candidates.filter((candidate) => /send|continuer|next|ok|weiter/i.test(candidate.text) && !excluded(candidate));
+  if (byText.length === 1) return byText[0].button;
+  throw new Error(`${byText.length ? 'ambiguous' : 'missing'} Google code primary action${byText.length ? `: ${byText.map(({ text }) => text).join(' | ')}` : ''}`);
+}
+function stubGoogleChallengePage(elements) {
+  const buttons = elements.filter(({ role }) => role !== 'radio');
+  const locator = (items) => ({
+    count: async () => items.length,
+    nth: (index) => locator([items[index]]),
+    innerText: async () => items[0].text,
+    getAttribute: async (name) => items[0][name] ?? null,
+  });
+  return { locator: (selector) => locator(selector === 'button:visible' ? buttons : []) };
+}
+
 function syntheticInvoicePdf(reference) {
   const text = ['INVOICE', 'Northwind Office Supplies', 'Bill to: Klasr Consulting', `Invoice number: ${reference}`, 'Invoice date: 2026-08-15', 'Professional services: EUR 1,200.00', 'VAT 20%: EUR 240.00', 'TOTAL DUE: EUR 1,440.00', 'Payment terms: 30 days'];
   const stream = `BT /F1 24 Tf 72 760 Td ${text.map((line, index) => `${index ? '0 -52 Td ' : ''}(${line.replace(/[()\\]/g, '\\$&')}) Tj`).join(' ')} ET`;
@@ -1053,7 +1081,7 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
     await page.waitForTimeout(1_000);
     if (!passwordReverificationUrl(page.url())) await fail('password', `Google password option did not reach password re-verification; options=${found.texts.join(' | ')}`);
   };
-  const codeInputs = () => page.locator('input:visible:not([type="password"]):not([type="email"])');
+  const codeInputs = () => page.locator('input[autocomplete="one-time-code"]:visible, input[type="tel"]:visible, input[name="idvPin"]:visible, input[maxlength="1"]:visible, input[maxlength="6"]:visible, input[maxlength="8"]:visible');
   const submitOauthCode = async (inputs, code) => {
     const count = await inputs.count();
     const singleCharacterInputs = count > 1 && await Promise.all(Array.from({ length: count }, (_, index) => inputs.nth(index).getAttribute('maxlength'))).then((values) => values.every((value) => value === '1'));
@@ -1066,7 +1094,6 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
   };
   const relayOauthCode = async () => {
     const inputs = codeInputs();
-    if (!await visible(inputs.first(), 15_000)) await fail('verification-code', 'Google code option did not reveal a verification code input');
     const deadline = Date.now() + codeTimeout;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       process.stdout.write(`OAUTH_CODE_WAITING_AT=${new Date().toISOString()}\n`);
@@ -1079,13 +1106,35 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
     }
   };
   const chooseChallenge = async () => {
-    let found = await selectionOptions();
-    const findCode = () => found.texts.findIndex((text) => /get a verification code|envoyer un code/i.test(text));
+    let reselections = 0;
+    const chooseCode = async () => {
+      const found = await selectionOptions();
+      const index = found.texts.findIndex((text) => /verification code|code de vérification|envoyer un code/i.test(text));
+      if (index < 0) return false;
+      if (reselections > 1) await fail('verification-code', 'Google verification-code selection repeated twice');
+      await found.options.filter({ hasText: found.texts[index] }).first().click();
+      const inputs = codeInputs();
+      if (await visible(inputs.first(), 3_000)) return true;
+      let primary;
+      try { primary = await googleCodePrimaryAction(page); }
+      catch (error) { await fail('verification-code', error.message); }
+      await primary.click();
+      if (await visible(inputs.first(), 8_000)) return true;
+      reselections += 1;
+      const next = await selectionOptions();
+      if (next.texts.some((text) => /verification code|code de vérification|envoyer un code/i.test(text))) return chooseCode();
+      await fail('verification-code', 'Google code option did not reveal a verification code input');
+    };
+    if (await chooseCode()) {
+      await relayOauthCode();
+      return;
+    }
+    const found = await selectionOptions();
     const findCall = () => found.texts.findIndex((text) => /get a call|recevoir un appel|appel/i.test(text));
-    let index = findCode();
-    if (index < 0) index = findCall();
+    const index = findCall();
     if (index >= 0) {
       await found.options.filter({ hasText: found.texts[index] }).first().click();
+      if (!await visible(codeInputs().first(), 15_000)) await fail('verification-code', 'Google call option did not reveal a verification code input');
       await relayOauthCode();
       return;
     }
