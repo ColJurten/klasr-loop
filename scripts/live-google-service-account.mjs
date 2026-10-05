@@ -29,6 +29,9 @@ if (process.argv.includes('--auth-mode-check')) {
   assert(manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'user') === true, 'Manual consent must be accepted for user mode');
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'invalid' }, 'user'), 'Invalid manual consent must fail closed');
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'sa'), 'Manual consent must reject service-account mode');
+  assert(passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/pwd?x=1'), 'Password re-verification URL must be recognized');
+  assert(passwordReverificationUrl('https://accounts.google.com/challenge/pwd'), 'Short password re-verification URL must be recognized');
+  assert(!passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/reen'), 'Other challenges must remain rejected');
   process.stdout.write('live runner auth mode check PASS\n');
   process.exit(0);
 }
@@ -1020,6 +1023,17 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
     await fail('password', 'Google password field did not appear');
   }
   await page.waitForTimeout(1_000);
+  if (passwordReverificationUrl(page.url())) {
+    const reverificationInput = page.locator('input[type="password"]:visible').first();
+    if (!await visible(reverificationInput, 15_000)) await fail('password', 'Google password re-verification field did not appear');
+    await reverificationInput.fill(password);
+    const passwordNext = page.locator('#passwordNext').first();
+    const submit = await visible(passwordNext, 1_000) ? passwordNext : page.locator('button[type="submit"]').first();
+    if (!await visible(submit, 5_000)) await fail('password', 'Google password re-verification submit did not appear');
+    await submit.click();
+    await page.waitForTimeout(1_000);
+    if (passwordReverificationUrl(page.url())) await fail('password', 'password re-verification staged again');
+  }
   await challenge('password');
 
   stage('consent-screen');
@@ -1033,6 +1047,7 @@ async function loginWithGoogleUser(page, email, password, manualTimeout) {
   try { await page.waitForURL(/\/dashboard/, { timeout: 30_000 }); }
   catch { await fail('consent-screen', 'Google consent did not return to the dashboard'); }
 }
+function passwordReverificationUrl(url) { return /\/challenge\/pwd(?:\/|\?|$)/i.test(url); }
 function selectFixtures(items) {
   return fixtureNames.map((name) => exact(items, name, 'application/pdf'));
 }
