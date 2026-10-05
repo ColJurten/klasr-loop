@@ -408,14 +408,14 @@ test('live runner reports only allowlisted Item 4 provider assertion reasons', (
 
 test('live runner exposes only exact allowlisted failure stages', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const stages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
+  const stages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'google-consent', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
   assert.match(source, new RegExp(`const failureStages = \\[${stages.map((stage) => `'${stage}'`).join(', ')}\\]`));
   for (const stage of stages.slice(5)) assert.match(source, new RegExp(`failureStage = '${stage}'`));
   const browserBoundaries = [
     ['browser-launch', 'browser = await chromium.launch'],
     ['login-navigation', 'await page.goto'],
-    ['acceptance-login-session', "await page.getByRole('button', { name: 'Validation Google staging' }).click()"],
-    ['dashboard-identity', "await page.getByText('Validation staging · identité de service Google').waitFor()"],
+    ['acceptance-login-session', "if (authenticationMode === 'user') await loginWithGoogleUser"],
+    ['dashboard-identity', "await page.getByText(authenticationMode === 'user' ? stagingAccountEmail : 'Validation staging · identité de service Google', { exact: true }).waitFor()"],
     ['tenant-lookup', 'const tenant = await tenantRecord()'],
     ['drive-connection-readback', "const connectionBeforeSync = await db('connection', organizationId)"],
     ['tenant-reset', "assert(await db('count', organizationId, 'settings') === 0"],
