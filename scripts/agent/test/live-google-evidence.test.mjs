@@ -430,12 +430,16 @@ test('live runner exposes only exact allowlisted failure stages', () => {
   assert.match(fatal, /failureDiagnostic \?\? `stage=\$\{failureStageAtFailure \?\? failureStage\}`/);
   assert.doesNotMatch(fatal, /error|message|stack|JSON\.stringify/i);
   const login = functionBody(source, 'loginWithGoogleUserFlow');
-  assert.match(login, /challengeSelectionUrl\(page\.url\(\)\)[\s\S]*choosePasswordChallenge\(\)/);
+  assert.match(login, /challengeSelectionUrl\(page\.url\(\)\)[\s\S]*chooseChallenge\(\)/);
   assert.match(login, /passw\|mot de passe/i);
   assert.match(login, /let passwordReentered = false[\s\S]*if \(passwordReentered\)[\s\S]*passwordReentered = true/);
   assert.match(login, /timeout: 3_000/);
   assert.match(functionBody(source, 'googleConsentError'), /PAGE_TEXT=\$\{pageText\}/);
   assert.match(functionBody(source, 'googleConsentError'), /slice\(0, 300\) \|\| '<no body text>'/);
+  assert.match(login, /const chooseChallenge[\s\S]*get a verification code\|envoyer un code/i);
+  const relay = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--oauth-code-relay-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(relay.status, 0, relay.stderr);
+  assert.equal(relay.stdout, 'OAuth code relay check PASS\n');
 });
 
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {

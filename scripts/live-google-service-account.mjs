@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, sign } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -29,11 +29,24 @@ if (process.argv.includes('--auth-mode-check')) {
   assert(manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'user') === true, 'Manual consent must be accepted for user mode');
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'invalid' }, 'user'), 'Invalid manual consent must fail closed');
   assertThrows(() => manualConsent({ KLASR_MANUAL_CONSENT: 'true' }, 'sa'), 'Manual consent must reject service-account mode');
+  assert(oauthCodeTimeoutMs({}) === 600_000, 'OAuth code timeout must default to ten minutes');
+  assert(oauthCodeTimeoutMs({ KLASR_OAUTH_CODE_TIMEOUT: '2000' }) === 2_000, 'OAuth code timeout override must be accepted');
+  assertThrows(() => oauthCodeTimeoutMs({ KLASR_OAUTH_CODE_TIMEOUT: 'nope' }), 'Invalid OAuth code timeout must fail closed');
   assert(passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/pwd?x=1'), 'Password re-verification URL must be recognized');
   assert(passwordReverificationUrl('https://accounts.google.com/challenge/pwd'), 'Short password re-verification URL must be recognized');
   assert(challengeSelectionUrl('https://accounts.google.com/v3/signin/challenge/selection'), 'Challenge selection URL must be recognized');
   assert(!passwordReverificationUrl('https://accounts.google.com/v3/signin/challenge/reen'), 'Other challenges must remain rejected');
   process.stdout.write('live runner auth mode check PASS\n');
+  process.exit(0);
+}
+
+if (process.argv.includes('--oauth-code-relay-check')) {
+  assert(parseOauthCode(' 1234\n') === '1234' && parseOauthCode('1234567890') === '1234567890', 'OAuth code parser must accept 4-10 digits');
+  for (const invalid of ['', '123', '12345678901', '12 34', 'abcd', '1234\n5678']) assert(parseOauthCode(invalid) === undefined, 'OAuth code parser must reject non-code content');
+  assert(redactOauthCodes('code 123456, phone 55, year 2026') === 'code [REDACTED], phone 55, year [REDACTED]', 'OAuth code runs must be redacted');
+  let now = 0;
+  await assertRejects(() => waitForOauthCode('/unused', 3_999, { read: () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }, remove: () => undefined, sleep: async () => { now += 2_000; }, now: () => now }), 'verification code relay timed out');
+  process.stdout.write('OAuth code relay check PASS\n');
   process.exit(0);
 }
 
@@ -130,6 +143,7 @@ if (process.argv.includes('--byok-acceptance-self-check')) {
   process.exit(0);
 }
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const syntheticLineage = { sha: '0'.repeat(40), issue: 1, attempt: 1 };
 const lineage = process.argv.includes('--evidence-self-check') ? syntheticLineage : parseLineage(process.env);
 const evidenceTask = process.argv.includes('--evidence-self-check') ? 't_selfcheck' : parseEvidenceTask(process.env);
@@ -138,8 +152,9 @@ const authenticationMode = authMode(process.env);
 const manualConsentMode = manualConsent(process.env, authenticationMode);
 const manualConsentTimeout = manualConsentMode ? manualConsentTimeoutMs(process.env) : undefined;
 const stagingAccountEmail = authenticationMode === 'user' ? required('KLASR_STAGING_ACCOUNT_EMAIL') : undefined;
+const oauthCodeFile = authenticationMode === 'user' ? oauthCodeFilePath(process.env, root) : undefined;
+const oauthCodeTimeout = authenticationMode === 'user' ? oauthCodeTimeoutMs(process.env) : undefined;
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fatalLifecycleCheck = process.argv.includes('--fatal-lifecycle-check');
 const isolatedLifecycleCheck = fatalLifecycleCheck || process.argv.includes('--preflight-lifecycle-check') || process.argv.includes('--evidence-self-check');
 const evidenceRunId = process.env.KLASR_EVIDENCE_RUN_ID ?? `run-${Date.now()}`;
@@ -360,7 +375,7 @@ try {
   failureStage = 'login-navigation';
   await page.goto(`${webBase}/login`);
   failureStage = 'acceptance-login-session';
-  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, manualConsentMode ? undefined : required('KLASR_STAGING_ACCOUNT_PASSWORD'), manualConsentTimeout);
+  if (authenticationMode === 'user') await loginWithGoogleUser(page, stagingAccountEmail, manualConsentMode ? undefined : required('KLASR_STAGING_ACCOUNT_PASSWORD'), manualConsentTimeout, oauthCodeFile, oauthCodeTimeout);
   else {
     await page.getByRole('button', { name: 'Validation Google staging' }).click();
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
@@ -740,6 +755,16 @@ function manualConsentTimeoutMs(env) {
   assert(/^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0, 'KLASR_MANUAL_CONSENT_TIMEOUT must be a positive integer');
   return Number(value);
 }
+function oauthCodeFilePath(env, repositoryRoot) {
+  const value = path.resolve(env.KLASR_OAUTH_CODE_FILE ?? path.join(repositoryRoot, '.tmp/hermes/SINGLE-STACK-RUN/oauth-code.txt'));
+  assert(value.startsWith(`${path.join(repositoryRoot, '.tmp')}${path.sep}`), 'KLASR_OAUTH_CODE_FILE must be under the repository .tmp directory');
+  return value;
+}
+function oauthCodeTimeoutMs(env) {
+  const value = env.KLASR_OAUTH_CODE_TIMEOUT ?? '600000';
+  assert(/^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0, 'KLASR_OAUTH_CODE_TIMEOUT must be a positive integer');
+  return Number(value);
+}
 function assertProviderMutationAllowed(mode, route, init) {
   assert(!(mode === 'borrowed-carrier' && init.method === 'POST' && /^\/(?:upload\/)?drive\/v3\/files(?:[/?]|$)/.test(route)), 'Borrowed carrier mode forbids provider file creates');
 }
@@ -803,6 +828,7 @@ function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = fal
 function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) throw new Error('Live app URLs must use loopback'); return value.replace(/\/$/, ''); }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function assertThrows(action, message) { try { action(); } catch { return; } throw new Error(message); }
+async function assertRejects(action, message) { try { await action(); } catch (error) { assert(error?.message === message, message); return; } throw new Error(message); }
 function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath && typeof proposal.reviewReason === 'string' && proposal.reviewReason.trim().length > 0 && proposal.reviewReason !== 'extraction_failed'; }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }
 
@@ -960,18 +986,18 @@ function reviewRequiredPdf() {
 }
 function isPdf(bytes) { return Buffer.isBuffer(bytes) && bytes.subarray(0, 5).toString() === '%PDF-' && bytes.subarray(-6).toString().trim() === '%%EOF'; }
 function existingFixturePdf(bytes) { return Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.subarray(0, 5).toString() === '%PDF-'; }
-async function loginWithGoogleUser(page, email, password, manualTimeout) {
+async function loginWithGoogleUser(page, email, password, manualTimeout, codeFile, codeTimeout) {
   failureStage = 'google-consent';
-  try { return await loginWithGoogleUserFlow(page, email, password, manualTimeout); }
+  try { return await loginWithGoogleUserFlow(page, email, password, manualTimeout, codeFile, codeTimeout); }
   catch (error) { throw await googleConsentError(page, error); }
 }
 async function googleConsentError(page, error) {
   if (/^PAGE_TEXT=/.test(error?.message ?? '')) return error;
   const text = await page.locator('body').innerText({ timeout: 1_000 }).catch(() => '');
-  const pageText = text.replace(/\s+/g, ' ').trim().slice(0, 300) || '<no body text>';
-  return new Error(`PAGE_TEXT=${pageText}; ${error?.message ?? error ?? 'Unknown Google consent failure'}`);
+  const pageText = redactOauthCodes(text.replace(/\s+/g, ' ').trim()).slice(0, 300) || '<no body text>';
+  return new Error(redactOauthCodes(`PAGE_TEXT=${pageText}; ${error?.message ?? error ?? 'Unknown Google consent failure'}`));
 }
-async function loginWithGoogleUserFlow(page, email, password, manualTimeout) {
+async function loginWithGoogleUserFlow(page, email, password, manualTimeout, codeFile, codeTimeout) {
   const stage = () => { failureStage = 'google-consent'; };
   const visible = async (locator, timeout = 100) => locator.waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
   const fail = async (substage, reason) => {
@@ -1027,10 +1053,48 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout) {
     await page.waitForTimeout(1_000);
     if (!passwordReverificationUrl(page.url())) await fail('password', `Google password option did not reach password re-verification; options=${found.texts.join(' | ')}`);
   };
+  const codeInputs = () => page.locator('input:visible:not([type="password"]):not([type="email"])');
+  const submitOauthCode = async (inputs, code) => {
+    const count = await inputs.count();
+    const singleCharacterInputs = count > 1 && await Promise.all(Array.from({ length: count }, (_, index) => inputs.nth(index).getAttribute('maxlength'))).then((values) => values.every((value) => value === '1'));
+    if (singleCharacterInputs) for (let index = 0; index < Math.min(count, code.length); index += 1) await inputs.nth(index).fill(code[index]);
+    else await inputs.first().fill(code);
+    const preferred = page.locator('#idvPreregisteredPhoneNext, #idvAnyPhonePinNext, button[type="submit"]').first();
+    const submit = await visible(preferred, 1_000) ? preferred : page.getByRole('button').filter({ hasText: /^(?:Next|Continue|Verify|Suivant|Continuer|Vérifier)$/i }).last();
+    if (!await visible(submit, 5_000)) await fail('verification-code', 'Google verification code submit did not appear');
+    await submit.click();
+  };
+  const relayOauthCode = async () => {
+    const inputs = codeInputs();
+    if (!await visible(inputs.first(), 15_000)) await fail('verification-code', 'Google code option did not reveal a verification code input');
+    const deadline = Date.now() + codeTimeout;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      process.stdout.write(`OAUTH_CODE_WAITING_AT=${new Date().toISOString()}\n`);
+      const code = await waitForOauthCode(codeFile, deadline - Date.now());
+      await submitOauthCode(inputs, code);
+      const leftChallenge = await page.waitForURL((url) => !/\/challenge\//i.test(url.pathname), { timeout: Math.min(15_000, Math.max(1, deadline - Date.now())) }).then(() => true, () => false);
+      if (leftChallenge) return;
+      if (attempt === 0) continue;
+      await fail('verification-code', 'Google verification code was rejected');
+    }
+  };
+  const chooseChallenge = async () => {
+    let found = await selectionOptions();
+    const findCode = () => found.texts.findIndex((text) => /get a verification code|envoyer un code/i.test(text));
+    const findCall = () => found.texts.findIndex((text) => /get a call|recevoir un appel|appel/i.test(text));
+    let index = findCode();
+    if (index < 0) index = findCall();
+    if (index >= 0) {
+      await found.options.filter({ hasText: found.texts[index] }).first().click();
+      await relayOauthCode();
+      return;
+    }
+    await choosePasswordChallenge();
+  };
   const challengePageStrategy = async () => {
-    if (challengeSelectionUrl(page.url())) await choosePasswordChallenge();
+    if (challengeSelectionUrl(page.url())) await chooseChallenge();
     if (passwordReverificationUrl(page.url())) await reenterPassword();
-    if (challengeSelectionUrl(page.url())) await choosePasswordChallenge();
+    if (challengeSelectionUrl(page.url())) await chooseChallenge();
     if (passwordReverificationUrl(page.url())) await reenterPassword();
   };
 
@@ -1093,6 +1157,23 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout) {
 }
 function passwordReverificationUrl(url) { return /\/challenge\/pwd(?:\/|\?|$)/i.test(url); }
 function challengeSelectionUrl(url) { return /\/challenge\/selection(?:\/|\?|$)/i.test(url); }
+function parseOauthCode(value) { const code = String(value).trim(); return /^\d{4,10}$/.test(code) ? code : undefined; }
+function redactOauthCodes(value) { return String(value).replace(/\d{4,10}/g, '[REDACTED]'); }
+async function waitForOauthCode(file, timeout, operations = {}) {
+  const read = operations.read ?? ((target) => readFileSync(target, 'utf8'));
+  const remove = operations.remove ?? unlinkSync;
+  const sleep = operations.sleep ?? delay;
+  const now = operations.now ?? Date.now;
+  const deadline = now() + Math.max(0, timeout);
+  while (now() < deadline) {
+    try {
+      const code = parseOauthCode(read(file));
+      if (code) { remove(file); return code; }
+    } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    await sleep(Math.min(2_000, Math.max(0, deadline - now())));
+  }
+  throw new Error('verification code relay timed out');
+}
 function selectFixtures(items) {
   return fixtureNames.map((name) => exact(items, name, 'application/pdf'));
 }
