@@ -68,7 +68,7 @@ if (process.argv.includes('--oauth-code-relay-check')) {
   assert(await handleGoogleIppCollect(ippPage, stubVisible), 'IPP collect page must be handled');
   relayStarted = (await ippPage.locator(googleCodeInputSelector()).count()) > 0;
   assert(ippPage.clicked() === 'Send code' && relayStarted, 'IPP collect must click a Send prefix action and expose a code input before relay starts');
-  const delayedIppPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Send', type: 'button', onClick: () => delayedIppPage.showCode() }], 'https://accounts.google.com/v3/signin/challenge/selection', { navigationDelay: 10, renderDelay: 20 });
+  const delayedIppPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Send', type: 'button', onClick: () => delayedIppPage.showCode() }], 'https://accounts.google.com/v3/signin/challenge/selection', { navigationDelay: 10, renderDelay: 20, sendDelay: 2_000 });
   delayedIppPage.clickCodeOption();
   assert(await handleGoogleIppCollect(delayedIppPage, stubVisible), 'IPP collect must tolerate navigation and input rendering after the code-option click');
   assert(delayedIppPage.clicked() === 'Send', 'Delayed IPP collect must click Send');
@@ -1068,19 +1068,21 @@ async function handleGoogleIppCollect(page, visible, email = '', password = '') 
   if (!/\/challenge\/ipp\//i.test(page.url()) && !await visible(phone) && !plainSingleTel) return false;
   const excluded = ({ text }) => /call|phone|another|autre|computer/i.test(text);
   const buttons = page.locator('button:visible');
-  await buttons.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
   const candidates = async (locator) => Promise.all(Array.from({ length: await locator.count() }, async (_, index) => {
     const clickable = locator.nth(index);
     const text = ((await clickable.innerText().catch(() => '')) || await clickable.getAttribute('value') || '').replace(/\s+/g, ' ').trim();
     return { clickable, text, type: await clickable.getAttribute('type') };
   }));
-  const submit = (await candidates(buttons)).filter((candidate) => candidate.type?.toLowerCase() === 'submit' && !excluded(candidate));
-  let send = submit.length === 1 ? submit : [];
-  if (!send.length) {
+  let send = [];
+  for (let elapsed = 0; elapsed < 10_000; elapsed += 500) {
+    const submit = (await candidates(buttons)).filter((candidate) => candidate.type?.toLowerCase() === 'submit' && !excluded(candidate));
+    send = submit.length ? submit : [];
     const clickables = (await candidates(page.locator('button:visible, [role="button"]:visible, input[type="button"]:visible, input[type="submit"]:visible'))).filter((candidate) => !excluded(candidate));
-    send = clickables.filter(({ text }) => /^send$/i.test(text));
+    if (!send.length) send = clickables.filter(({ text }) => /^send$/i.test(text));
     if (!send.length) send = clickables.filter(({ text }) => /^(?:send|envoyer)/i.test(text));
     if (send.length > 1) throw new Error(`ambiguous Google IPP Send action: ${send.map(({ text }) => text).join(' | ')}`);
+    if (send.length === 1) break;
+    await page.waitForTimeout(500);
   }
   if (!send.length) {
     await emitOauthDebugDump(page, email, password);
@@ -1098,7 +1100,8 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
   let clicked;
   let currentUrl = initialUrl;
   let ippVisible = !delayedIpp;
-  const visibleElements = () => ippVisible ? elements : elements.filter(({ id, text }) => id !== 'phoneNumberId' && text !== 'Send');
+  let elapsed = 0;
+  const visibleElements = () => elements.filter(({ id, text }) => (ippVisible || id !== 'phoneNumberId') && (!delayedIpp?.sendDelay || text !== 'Send' || elapsed >= delayedIpp.sendDelay));
   const locator = (items) => ({
     count: async () => items().length,
     nth: (index) => locator(() => items().slice(index, index + 1)),
@@ -1125,7 +1128,7 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
         : selector === 'input[type="tel"]:visible' ? visibleElements().filter(({ type }) => type === 'tel')
           : selector === 'button, [role="button"], [role="radio"], [role="link"], input, a' ? visibleElements()
           : selector === googleCodeInputSelector() && codeVisible ? [{ name: 'idvPin', type: 'tel', maxlength: '6' }] : []),
-    waitForTimeout: async () => undefined,
+    waitForTimeout: async (timeout) => { elapsed += timeout; },
     url: () => currentUrl,
     clickCodeOption: () => {
       setTimeout(() => { currentUrl = 'https://accounts.google.com/v3/signin/challenge/ipp/collect'; }, delayedIpp.navigationDelay);
