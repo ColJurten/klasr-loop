@@ -450,6 +450,15 @@ test('live runner exposes only exact allowlisted failure stages', () => {
   assert.equal(relay.stdout, 'OAuth code relay check PASS\n');
 });
 
+test('live runner settles Google IPP navigation and delayed phone input', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const login = functionBody(source, 'loginWithGoogleUserFlow');
+  assert.match(login, /waitForURL\(\(url\) => !challengeSelectionUrl\(url\.pathname\), \{ timeout: 8_000 \}\)\.catch\(\(\) => undefined\)[\s\S]*handleGoogleIppCollect/);
+  const ipp = functionBody(source, 'handleGoogleIppCollect');
+  assert.match(ipp, /Promise\.race\([\s\S]*phone\.waitFor\([\s\S]*tel\.first\(\)\.waitFor\([\s\S]*timeout: 2_000/);
+  assert.match(source, /clickCodeOption\(\)[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'/);
+});
+
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const transitions = [
