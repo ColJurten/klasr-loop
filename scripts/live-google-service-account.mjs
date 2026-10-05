@@ -64,14 +64,22 @@ if (process.argv.includes('--oauth-code-relay-check')) {
   await googleCodePrimaryAction(stubGoogleChallengePage([{ text: 'Next' }, { text: 'OK' }])).then(() => assert(false, 'Ambiguous primary actions must fail'), (error) => assert(/^ambiguous Google code primary action/.test(error.message), 'Ambiguous primary actions must fail visibly'));
   assert(!googleCodeInputSelector().includes('input[type="tel"]:visible') && googleCodeInputSelector().includes(':not(#phoneNumberId)'), 'Phone confirmation must not match the OAuth code detector');
   let relayStarted = false;
-  const ippPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Send', type: 'button', onClick: () => ippPage.showCode() }, { text: 'Try another way', type: 'button' }], 'https://accounts.google.com/v3/signin/challenge/ipp/collect?x=1');
+  const ippPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Send code', type: 'button', onClick: () => ippPage.showCode() }, { text: 'Try another way', type: 'button' }], 'https://accounts.google.com/v3/signin/challenge/ipp/collect?x=1');
   assert(await handleGoogleIppCollect(ippPage, stubVisible), 'IPP collect page must be handled');
   relayStarted = (await ippPage.locator(googleCodeInputSelector()).count()) > 0;
-  assert(ippPage.clicked() === 'Send' && relayStarted, 'IPP collect must click Send and expose a code input before relay starts');
+  assert(ippPage.clicked() === 'Send code' && relayStarted, 'IPP collect must click a Send prefix action and expose a code input before relay starts');
   const delayedIppPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Send', type: 'button', onClick: () => delayedIppPage.showCode() }], 'https://accounts.google.com/v3/signin/challenge/selection', { navigationDelay: 10, renderDelay: 20 });
   delayedIppPage.clickCodeOption();
   assert(await handleGoogleIppCollect(delayedIppPage, stubVisible), 'IPP collect must tolerate navigation and input rendering after the code-option click');
   assert(delayedIppPage.clicked() === 'Send', 'Delayed IPP collect must click Send');
+  const noSendPage = stubGoogleChallengePage([{ id: 'phoneNumberId', type: 'tel' }, { text: 'Try another way', type: 'button' }], 'https://accounts.google.com/v3/signin/challenge/ipp/collect?x=1');
+  let ippDump = '';
+  const write = process.stdout.write;
+  process.stdout.write = (value) => { ippDump += value; return true; };
+  const noSendError = await handleGoogleIppCollect(noSendPage, stubVisible).then(() => undefined, (error) => error);
+  process.stdout.write = write;
+  assert(ippDump.includes('OAUTH_DEBUG_DUMP_BEGIN\nURL=') && ippDump.includes('\nOAUTH_DEBUG_DUMP_END\n'), 'Missing IPP Send action must emit an OAuth debug dump');
+  assert(noSendError?.message === 'missing Google IPP Send action', 'Missing IPP Send action must fail visibly');
   const dump = sanitizeOauthDebugDump([{ innerText: 'user@example.test Fake-Staging-Pass_123' }], 'user@example.test', 'Fake-Staging-Pass_123');
   assert(!dump.includes('user@example.test') && !dump.includes('Fake-Staging-Pass_123') && dump.includes('[REDACTED]'), 'OAuth debug dump must redact staging credentials');
   process.stdout.write('OAuth code relay check PASS\n');
@@ -1047,7 +1055,7 @@ async function tolerantPasswordSubmit(page, email, password, debugDump) {
 function googleCodeInputSelector() {
   return 'input:not(#phoneNumberId)[autocomplete="one-time-code"]:visible, input:not(#phoneNumberId)[name="idvPin"]:visible, input:not(#phoneNumberId)[type="tel"][maxlength="6"]:visible, input:not(#phoneNumberId)[type="tel"][maxlength="8"]:visible, input:not(#phoneNumberId)[maxlength="1"]:visible';
 }
-async function handleGoogleIppCollect(page, visible) {
+async function handleGoogleIppCollect(page, visible, email = '', password = '') {
   const phone = page.locator('input#phoneNumberId:visible').first();
   const tel = page.locator('input[type="tel"]:visible');
   await Promise.race([
@@ -1058,14 +1066,27 @@ async function handleGoogleIppCollect(page, visible) {
     && (await tel.first().getAttribute('autocomplete'))?.toLowerCase() !== 'one-time-code'
     && !/^(?:6|8)$/.test(await tel.first().getAttribute('maxlength') ?? '');
   if (!/\/challenge\/ipp\//i.test(page.url()) && !await visible(phone) && !plainSingleTel) return false;
+  const excluded = ({ text }) => /call|phone|another|autre|computer/i.test(text);
   const buttons = page.locator('button:visible');
   await buttons.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
-  const send = (await Promise.all(Array.from({ length: await buttons.count() }, async (_, index) => {
-    const button = buttons.nth(index);
-    return { button, text: (await button.innerText()).replace(/\s+/g, ' ').trim() };
-  }))).filter(({ text }) => /^send$/i.test(text));
-  if (send.length !== 1) throw new Error(`${send.length ? 'ambiguous' : 'missing'} Google IPP Send action`);
-  await send[0].button.click();
+  const candidates = async (locator) => Promise.all(Array.from({ length: await locator.count() }, async (_, index) => {
+    const clickable = locator.nth(index);
+    const text = ((await clickable.innerText().catch(() => '')) || await clickable.getAttribute('value') || '').replace(/\s+/g, ' ').trim();
+    return { clickable, text, type: await clickable.getAttribute('type') };
+  }));
+  const submit = (await candidates(buttons)).filter((candidate) => candidate.type?.toLowerCase() === 'submit' && !excluded(candidate));
+  let send = submit.length === 1 ? submit : [];
+  if (!send.length) {
+    const clickables = (await candidates(page.locator('button:visible, [role="button"]:visible, input[type="button"]:visible, input[type="submit"]:visible'))).filter((candidate) => !excluded(candidate));
+    send = clickables.filter(({ text }) => /^send$/i.test(text));
+    if (!send.length) send = clickables.filter(({ text }) => /^(?:send|envoyer)/i.test(text));
+    if (send.length > 1) throw new Error(`ambiguous Google IPP Send action: ${send.map(({ text }) => text).join(' | ')}`);
+  }
+  if (!send.length) {
+    await emitOauthDebugDump(page, email, password);
+    throw new Error('missing Google IPP Send action');
+  }
+  await send[0].clickable.click();
   if (!await visible(page.locator(googleCodeInputSelector()).first(), 10_000)) throw new Error('Google IPP Send did not reveal a verification code input');
   return true;
 }
@@ -1090,12 +1111,21 @@ function stubGoogleChallengePage(elements, initialUrl = '', delayedIpp) {
       if (!items().length) throw new Error('not visible');
     },
     click: async () => { const item = items()[0]; clicked = item.text; item.onClick?.(); },
+    evaluateAll: async (callback, argument) => callback(items().map(({ text = '', ...attributes }) => ({
+      tagName: attributes.type === 'tel' ? 'INPUT' : 'BUTTON',
+      innerText: text,
+      disabled: false,
+      id: attributes.id ?? '',
+      getAttribute: (name) => attributes[name] ?? null,
+    })), argument),
   });
   return {
-    locator: (selector) => locator(() => selector === 'button:visible' ? visibleElements().filter(({ role, text }) => role !== 'radio' && text)
+    locator: (selector) => locator(() => selector === 'button:visible' || selector === 'button:visible, [role="button"]:visible, input[type="button"]:visible, input[type="submit"]:visible' ? visibleElements().filter(({ role, text }) => role !== 'radio' && text)
       : selector === 'input#phoneNumberId:visible' ? visibleElements().filter(({ id }) => id === 'phoneNumberId')
         : selector === 'input[type="tel"]:visible' ? visibleElements().filter(({ type }) => type === 'tel')
+          : selector === 'button, [role="button"], [role="radio"], [role="link"], input, a' ? visibleElements()
           : selector === googleCodeInputSelector() && codeVisible ? [{ name: 'idvPin', type: 'tel', maxlength: '6' }] : []),
+    waitForTimeout: async () => undefined,
     url: () => currentUrl,
     clickCodeOption: () => {
       setTimeout(() => { currentUrl = 'https://accounts.google.com/v3/signin/challenge/ipp/collect'; }, delayedIpp.navigationDelay);
@@ -1244,7 +1274,7 @@ async function loginWithGoogleUserFlow(page, email, password, manualTimeout, cod
       await found.options.filter({ hasText: found.texts[index] }).first().click();
       await page.waitForURL((url) => !challengeSelectionUrl(url.pathname), { timeout: 8_000 }).catch(() => undefined);
       const inputs = codeInputs();
-      try { if (await handleGoogleIppCollect(page, visible)) return true; }
+      try { if (await handleGoogleIppCollect(page, visible, email, password)) return true; }
       catch (error) { await fail('verification-code', error.message); }
       if (await visible(inputs.first(), 3_000)) return true;
       let primary;

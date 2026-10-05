@@ -437,14 +437,14 @@ test('live runner exposes only exact allowlisted failure stages', () => {
   assert.match(functionBody(source, 'googleConsentError'), /PAGE_TEXT=\$\{pageText\}/);
   assert.match(functionBody(source, 'googleConsentError'), /slice\(0, 300\) \|\| '<no body text>'/);
   assert.match(login, /const chooseChallenge[\s\S]*verification code\|code de vérification\|envoyer un code/i);
-  assert.match(login, /handleGoogleIppCollect\(page, visible\)[\s\S]*relayOauthCode\(\)/);
+  assert.match(login, /handleGoogleIppCollect\(page, visible, email, password\)[\s\S]*relayOauthCode\(\)/);
   assert.match(login, /visible\(inputs\.first\(\), 3_000\)[\s\S]*googleCodePrimaryAction\(page\)[\s\S]*visible\(inputs\.first\(\), 8_000\)/);
   const codeSelector = functionBody(source, 'googleCodeInputSelector');
   assert.match(codeSelector, /:not\(#phoneNumberId\)/);
   assert.doesNotMatch(codeSelector, /input\[type="tel"\]:visible/);
   const ipp = functionBody(source, 'handleGoogleIppCollect');
   assert.match(ipp, /\/challenge\\\/ipp\\\//);
-  assert.match(ipp, /\^send\$\/i[\s\S]*\.click\(\)[\s\S]*10_000/);
+  assert.match(ipp, /button:visible, \[role="button"\][\s\S]*\^send\$\/i[\s\S]*\^\(\?:send\|envoyer\)[\s\S]*emitOauthDebugDump[\s\S]*\.click\(\)[\s\S]*10_000/);
   const relay = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--oauth-code-relay-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(relay.status, 0, relay.stderr);
   assert.equal(relay.stdout, 'OAuth code relay check PASS\n');
@@ -456,7 +456,7 @@ test('live runner settles Google IPP navigation and delayed phone input', () => 
   assert.match(login, /waitForURL\(\(url\) => !challengeSelectionUrl\(url\.pathname\), \{ timeout: 8_000 \}\)\.catch\(\(\) => undefined\)[\s\S]*handleGoogleIppCollect/);
   const ipp = functionBody(source, 'handleGoogleIppCollect');
   assert.match(ipp, /Promise\.race\([\s\S]*phone\.waitFor\([\s\S]*tel\.first\(\)\.waitFor\([\s\S]*timeout: 2_000/);
-  assert.match(source, /clickCodeOption\(\)[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'/);
+  assert.match(source, /ippPage\.clicked\(\) === 'Send code'[\s\S]*clickCodeOption\(\)[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'[\s\S]*Missing IPP Send action must emit an OAuth debug dump/);
 });
 
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {
