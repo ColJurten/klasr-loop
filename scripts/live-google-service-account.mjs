@@ -1013,8 +1013,8 @@ function restorationVerified(snapshots, restored, replacements) {
 async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
   const python = path.join(root, 'apps/api-py/.venv/bin/python');
-  const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, KLASR_STAGING_ACCOUNT_PASSWORD, ...runtimeEnv } = process.env;
-  const common = { ...runtimeEnv, NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
+  const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, KLASR_STAGING_ACCOUNT_PASSWORD, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ...runtimeEnv } = process.env;
+  const common = { ...runtimeEnv, ...(GOOGLE_CLIENT_ID && { GOOGLE_CLIENT_ID }), ...(GOOGLE_CLIENT_SECRET && { GOOGLE_CLIENT_SECRET }), NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
   const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
   assert(migration.status === 0, 'Alembic migration failed');
   children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'inherit', env: common }), url: `${apiBase}/health` });
