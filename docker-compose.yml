@@ -3,6 +3,7 @@
 # Stop the stack: docker compose --profile api down
 # Required local .env values: INTERNAL_API_SECRET, TOKEN_ENCRYPTION_KEY,
 # GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. LLM credentials are entered in the UI.
+# NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT is baked into the web image at build time.
 # ADR-007: the job queue lives in PostgreSQL (SKIP LOCKED, without pg-boss or Redis).
 
 x-api-image: &api-image
@@ -56,6 +57,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: ${NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT:-false}
     ports:
       - '127.0.0.1:3000:3000'
     environment:
