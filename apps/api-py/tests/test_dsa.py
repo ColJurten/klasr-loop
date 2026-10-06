@@ -18,7 +18,7 @@ class StubDocument:
         return "Supplier: Acme; invoice: INV-42; date: 2026-09-13"
 
     def export_to_markdown(self):
-        return "# Invoice\nSupplier: Acme"
+        return "# Invoice\nSupplier: Acme; invoice: INV-42; date: 2026-09-13"
 
 
 class StubConverter:
@@ -39,7 +39,12 @@ def test_supported_file_types_and_quality(tmp_path, stub_docling):
         path.write_bytes(b"synthetic")
         result = extract_document(str(path))
         assert result.quality == "ok" and "Acme" in result.text
-    assert extract_document(str(tmp_path / "bad.docx")).quality == "failed"
+    assert extract_document(str(tmp_path / "bad.xyz")).quality == "failed"
+
+
+def test_extract_bytes_defaults_to_markdown_with_explicit_text_fallback(stub_docling):
+    assert extract_bytes(b"synthetic", ".pdf").text.startswith("# Invoice")
+    assert extract_bytes(b"synthetic", ".pdf", markdown=False).text.startswith("Supplier: Acme")
 
 
 def test_offline_cli_filename_and_directory(monkeypatch, tmp_path, stub_docling, capsys):
@@ -183,10 +188,11 @@ def test_temp_file_deleted(monkeypatch):
 
     observed = []
 
-    def inspect_memory(stream, _markdown=False):
+    def inspect_memory(stream, markdown=True):
         assert isinstance(stream, io.BytesIO)
         assert stream.read() == b"synthetic"
         assert stream.name == "document.png"
+        assert markdown is True
         observed.append(stream)
         return ExtractionResult(text="", quality="empty")
 

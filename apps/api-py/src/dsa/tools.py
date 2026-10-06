@@ -7,7 +7,18 @@ from pydantic import BaseModel, Field
 
 from .schemas import ExtractionResult
 
-SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".gif", ".bmp"}
+SUPPORTED_SUFFIXES = {
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tiff",
+    ".gif",
+    ".bmp",
+    ".docx",
+    ".pptx",
+    ".xlsx",
+}
 
 # Signal patterns for quality assessment — content-aware verdicts.
 _DATE_RE = re.compile(r"\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b")
@@ -85,7 +96,7 @@ class DoclingArgs(BaseModel):
     file_path: str = Field(description="Local temporary document path")
 
 
-def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult:
+def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
     memory = isinstance(file_path, io.BytesIO)
     path = file_path if memory else Path(file_path)
     if not memory and path.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -100,11 +111,13 @@ def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult
     except Exception:
         return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
     content = content.strip()
+    if markdown and not re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip():
+        content = ""
     quality, warnings = _assess_quality(content)
     return ExtractionResult(text=content, quality=quality, warnings=warnings)
 
 
-def extract_bytes(data: bytes, suffix: str, markdown: bool = False) -> ExtractionResult:
+def extract_bytes(data: bytes, suffix: str, markdown: bool = True) -> ExtractionResult:
     if suffix.lower() not in SUPPORTED_SUFFIXES:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
     stream = io.BytesIO(data)
@@ -127,4 +140,4 @@ class DoclingTextTool(BaseTool):
     args_schema: type[BaseModel] = DoclingArgs
 
     def _run(self, file_path: str) -> str:
-        return extract_document(file_path).model_dump_json()
+        return extract_document(file_path, markdown=False).model_dump_json()

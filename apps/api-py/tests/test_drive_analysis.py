@@ -556,7 +556,9 @@ def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
             assert stream.stream.read() == b"private image bytes"
             seen.append(stream)
             return types.SimpleNamespace(
-                document=types.SimpleNamespace(export_to_text=lambda: "synthetic extracted text")
+                document=types.SimpleNamespace(
+                    export_to_markdown=lambda: "# Synthetic extracted text"
+                )
             )
 
     module = types.ModuleType("docling.document_converter")

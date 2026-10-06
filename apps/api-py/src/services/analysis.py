@@ -31,6 +31,9 @@ def extract_memory(content, mime_type, name):
         "image/png": ".png",
         "image/jpeg": ".jpg",
         "image/tiff": ".tiff",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     }.get(mime_type)
     if not suffix:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
