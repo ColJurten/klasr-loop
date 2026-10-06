@@ -32,8 +32,7 @@ declare module 'next-auth/jwt' {
   }
 }
 
-// Matches apps/web/lib/api.ts's API_URL convention exactly.
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
+const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 const DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive';
 const INTERNAL_VERIFIED_PROVIDERS = new Set(['google-service-account-acceptance']);
 

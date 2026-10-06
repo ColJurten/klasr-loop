@@ -28,6 +28,8 @@ describe('service-account acceptance browser authentication', () => {
       ...originalEnv,
       NODE_ENV: 'test',
       KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true',
+      API_URL: 'http://api.test/api/v1',
+      NEXT_PUBLIC_API_URL: 'http://browser.test/api/v1',
     };
     const request = vi.fn().mockResolvedValue({
       ok: true,
@@ -45,6 +47,7 @@ describe('service-account acceptance browser authentication', () => {
       isNewUser: false,
     });
 
+    expect(request.mock.calls[0][0]).toBe('http://api.test/api/v1/auth/onboarding');
     expect(JSON.parse(request.mock.calls[0][1].body)).toMatchObject({
       provider: 'google',
       emailVerified: true,

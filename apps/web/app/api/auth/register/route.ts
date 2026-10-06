@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isSameOrigin } from '@/lib/same-origin';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
+const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) return NextResponse.json({ code: 'forbidden' }, { status: 403 });

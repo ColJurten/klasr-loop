@@ -49,6 +49,8 @@ services:
     command: ["python", "src/worker.py"]
     depends_on: *database-dependencies
 
+  # Open the app at exactly http://localhost:3000 (the Google-registered callback host).
+  # Using 127.0.0.1:3000 breaks the OAuth state cookie because the browser cookie host differs from the callback host.
   web:
     profiles: [api]
     build:
