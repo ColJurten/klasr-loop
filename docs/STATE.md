@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-09-27 (destination fail-closed, revue round 2)
+> Last updated: 2026-10-06 (compose E2E chain: docling markdown-first + image OCR libs + dashboard poll + OCR fallback)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-10-06 — Chaîne docker-compose E2E (item-21, branche `backend-python-refacto`, poussée) : `feb79ee` Docling markdown par défaut (doc3.pdf 2904 c. qualité ok, calendrier vectoriel empty attendu, doc1.xlsx table md 323 c., 103 tests/1 skip, black+flake8 verts) ; `b0c0b44` libs runtime OpenCV dans l'image api (import cv2 + RapidOCR vérifiés in-image) ; `c1b73c3` dashboard ne bascule plus en échec à 30 s pendant analyse ; `381759e` repli OCR deux passes (OCR à la demande). Rounds compose (ports décalés 55432/27018/3101/3100, overlay SA, doc3.pdf, restauration exacte systématique) : round16 FAIL (proposal > fenêtre 30 s) → round17 PASS complet incl. confirm 201, mutation Drive renommée/parent + restauration exacte (dashboard-fix/) ; round18 proposal 92 % `DEVIS_658437_ACME_CSimms_20240229.pdf` → `/quotes`, reviewReason « Date février 29, 2024 valide mais rare », modèle claude-haiku-4-5, confirm 201, mutation+restauration PASS, verdict FAIL sur preuve (b) seule : log worker montre RapidOCR actif, le comportement texte-d'abord n'est pas attesté (voir `.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/`). Item ouvert build : diagnostic du premier passage sans OCR.
 
 - [x] 2026-09-27 — Revue destination fail-closed round 2 : fixture de revue dé-hintée, contrat applicatif couvert contre les réponses LLM incohérentes, prompt clarifié et test service isolé de l'environnement.
 
