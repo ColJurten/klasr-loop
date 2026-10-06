@@ -565,7 +565,7 @@ def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     module.DocumentConverter = Converter
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
     result = extract_bytes(b"private image bytes", ".png")
-    assert result.quality == "sparse" and len(seen) == 1
+    assert result.quality == "sparse" and len(seen) == 2
 
 
 @pytest.mark.asyncio

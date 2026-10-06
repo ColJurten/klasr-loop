@@ -47,6 +47,81 @@ def test_extract_bytes_defaults_to_markdown_with_explicit_text_fallback(stub_doc
     assert extract_bytes(b"synthetic", ".pdf", markdown=False).text.startswith("Supplier: Acme")
 
 
+def test_text_layer_does_not_initialize_ocr(monkeypatch):
+    calls = []
+
+    def converter(do_ocr=False):
+        calls.append(do_ocr)
+        if do_ocr:
+            raise RuntimeError("OCR engine unavailable")
+        return StubConverter()
+
+    monkeypatch.setattr("dsa.tools._build_converter", converter)
+
+    result = extract_bytes(b"synthetic", ".pdf")
+
+    assert result.quality == "ok"
+    assert "INV-42" in result.text
+    assert calls == [False]
+
+
+def test_image_only_page_attempts_ocr_after_empty_text_pass(monkeypatch):
+    calls = []
+
+    class EmptyDocument:
+        def export_to_markdown(self):
+            return ""
+
+    class OcrDocument:
+        def export_to_markdown(self):
+            return "# Invoice\nSupplier: Acme; invoice: INV-42; date: 2026-09-13"
+
+    class Converter:
+        def __init__(self, document):
+            self.document = document
+
+        def convert(self, _path):
+            return types.SimpleNamespace(document=self.document)
+
+    def converter(do_ocr=False):
+        calls.append(do_ocr)
+        return Converter(OcrDocument() if do_ocr else EmptyDocument())
+
+    monkeypatch.setattr("dsa.tools._build_converter", converter)
+
+    result = extract_bytes(b"synthetic", ".pdf")
+
+    assert result.quality == "ok"
+    assert "INV-42" in result.text
+    assert calls == [False, True]
+
+
+def test_ocr_init_failure_preserves_first_pass(monkeypatch):
+    warnings = []
+
+    class SparseDocument:
+        def export_to_markdown(self):
+            return "Invoice draft"
+
+    class Converter:
+        def convert(self, _path):
+            return types.SimpleNamespace(document=SparseDocument())
+
+    def converter(do_ocr=False):
+        if do_ocr:
+            raise RuntimeError("OCR engine unavailable")
+        return Converter()
+
+    monkeypatch.setattr("dsa.tools._build_converter", converter)
+    monkeypatch.setattr("dsa.tools.logger.warning", lambda *args: warnings.append(args))
+
+    result = extract_bytes(b"synthetic", ".pdf")
+
+    assert result.text == "Invoice draft"
+    assert result.quality == "sparse"
+    assert warnings and warnings[0][0].startswith("OCR fallback unavailable")
+
+
 def test_offline_cli_filename_and_directory(monkeypatch, tmp_path, stub_docling, capsys):
     from dsa.cli import directory_main, filename_main
 
@@ -634,11 +709,14 @@ def test_pdf_pipeline_options_are_wired_correctly():
 
     from dsa.tools import _build_converter
 
-    converter = _build_converter()
+    converter = _build_converter(do_ocr=False)
     assert isinstance(converter, DocumentConverter)
     option = converter.format_to_options.get(InputFormat.PDF)
     assert option is not None and isinstance(option, PdfFormatOption)
-    assert option.pipeline_options.do_ocr is True
+    assert option.pipeline_options.do_ocr is False
+
+    ocr_converter = _build_converter(do_ocr=True)
+    assert ocr_converter.format_to_options[InputFormat.PDF].pipeline_options.do_ocr is True
 
 
 def test_scanned_pdf_is_extracted_with_ocr():

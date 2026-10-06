@@ -1,4 +1,5 @@
 import io
+import logging
 import re
 from pathlib import Path
 
@@ -41,6 +42,8 @@ _MIN_SPARSE_LENGTH = 10
 # Docling conversion timeout (seconds).
 _DOCLING_TIMEOUT = 120.0
 
+logger = logging.getLogger(__name__)
+
 
 def _assess_quality(content: str) -> tuple[str, list[str]]:
     """Return (quality, warnings) based on content length and signal presence."""
@@ -70,7 +73,7 @@ def _assess_quality(content: str) -> tuple[str, list[str]]:
     return "ok", warnings
 
 
-def _build_converter():
+def _build_converter(do_ocr: bool = False):
     """Create a DocumentConverter with tuned PDF pipeline options."""
     from docling.document_converter import DocumentConverter
 
@@ -80,7 +83,7 @@ def _build_converter():
         from docling.document_converter import PdfFormatOption
 
         pdf_options = PdfPipelineOptions(
-            do_ocr=True,
+            do_ocr=do_ocr,
             document_timeout=_DOCLING_TIMEOUT,
             force_backend_text=False,
         )
@@ -105,11 +108,29 @@ def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
         if memory:
             from docling.datamodel.base_models import DocumentStream
 
-            path = DocumentStream(name=getattr(path, "name", "document.pdf"), stream=path)
-        document = _build_converter().convert(path).document
+            name = getattr(path, "name", "document.pdf")
+            data = path.getvalue()
+            path = DocumentStream(name=name, stream=io.BytesIO(data))
+        document = _build_converter(do_ocr=False).convert(path).document
         content = document.export_to_markdown() if markdown else document.export_to_text()
     except Exception:
         return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
+    content = content.strip()
+    if markdown and not re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip():
+        content = ""
+    quality, warnings = _assess_quality(content)
+    first_pass = ExtractionResult(text=content, quality=quality, warnings=warnings)
+    if quality == "ok":
+        return first_pass
+
+    try:
+        if memory:
+            path = DocumentStream(name=name, stream=io.BytesIO(data))
+        document = _build_converter(do_ocr=True).convert(path).document
+        content = document.export_to_markdown() if markdown else document.export_to_text()
+    except Exception as exc:
+        logger.warning("OCR fallback unavailable; using text-layer extraction: %s", exc)
+        return first_pass
     content = content.strip()
     if markdown and not re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip():
         content = ""
