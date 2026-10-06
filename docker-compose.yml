@@ -1,24 +1,71 @@
-# Stack de dev locale — Backend Python/FastAPI (apps/api-py) + PostgreSQL + MongoDB.
-# ADR-007 : la file de jobs est en PostgreSQL (SKIP LOCKED, sans pg-boss ni Redis).
+# Full local stack: docker compose --profile api up --build
+# Follow analysis progress (Docling/RapidOCR/LLM): docker compose logs -f worker api
+# Stop the stack: docker compose --profile api down
+# Required local .env values: INTERNAL_API_SECRET, TOKEN_ENCRYPTION_KEY,
+# GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET. LLM credentials are entered in the UI.
+# ADR-007: the job queue lives in PostgreSQL (SKIP LOCKED, without pg-boss or Redis).
+
+x-api-image: &api-image
+  image: klasr-api:local
+  build:
+    context: apps/api-py
+
+x-api-environment: &api-environment
+  KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/klasr
+  KLASR_MONGO_URL: mongodb://mongo:27017
+  NODE_ENV: development
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-replace-with-a-local-shared-secret}
+  TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-replace-with-google-client-id}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-replace-with-google-client-secret}
+
+x-database-dependencies: &database-dependencies
+  postgres:
+    condition: service_healthy
+  mongo:
+    condition: service_healthy
+
 services:
   api:
+    <<: *api-image
     profiles: [api]
-    build:
-      context: apps/api-py
     ports:
       - '127.0.0.1:3001:3001'
-    environment:
-      KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/klasr
-      KLASR_MONGO_URL: mongodb://mongo:27017
-      NODE_ENV: development
-      INTERNAL_API_SECRET: replace-with-a-local-shared-secret
-      TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-      GOOGLE_CLIENT_ID: replace-with-google-client-id
-      GOOGLE_CLIENT_SECRET: replace-with-google-client-secret
+    environment: *api-environment
     command: ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 3001 --app-dir src"]
+    depends_on: *database-dependencies
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/api/v1/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *api-image
+    profiles: [api]
+    environment:
+      <<: *api-environment
+      KLASR_WORKER: "true"
+    command: ["python", "src/worker.py"]
+    depends_on: *database-dependencies
+
+  web:
+    profiles: [api]
+    build:
+      context: apps/web
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      NEXTAUTH_URL: http://localhost:3000
+      API_URL: http://api:3001/api/v1
+      NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-replace-with-a-local-nextauth-secret}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-replace-with-a-local-shared-secret}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-replace-with-google-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-replace-with-google-client-secret}
     depends_on:
-      - postgres
-      - mongo
+      api:
+        condition: service_healthy
 
   postgres:
     image: postgres:16-alpine
@@ -28,11 +75,21 @@ services:
       POSTGRES_DB: klasr
     ports: ['127.0.0.1:5432:5432']
     volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d klasr"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   mongo:
     image: mongo:7
     ports: ['127.0.0.1:27017:27017']
     volumes: [mongodata:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
 volumes:
   pgdata:
