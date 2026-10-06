@@ -59,6 +59,23 @@ describe('DriveWorkflow production browser', () => {
     expect(router.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it('selects a reference folder when its radio input is clicked directly', async () => {
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems.slice(0, 2), nextPageToken: null });
+    clientApi.selectReferenceRoot.mockResolvedValue({});
+    render(<DriveWorkflow data={baseDashboard} llmConfigured />);
+
+    const row = (await screen.findByText('stg_tree')).closest('li')!;
+    const radio = row.querySelector<HTMLInputElement>('input[type="radio"][name="drive-folder"]')!;
+    radio.click();
+
+    expect(radio.checked).toBe(true);
+    const choose = screen.getByRole('button', { name: 'Choisir ce dossier' });
+    expect(choose).toHaveProperty('disabled', false);
+    choose.click();
+    await waitFor(() => expect(clientApi.selectReferenceRoot).toHaveBeenCalledTimes(1));
+    expect(clientApi.selectReferenceRoot).toHaveBeenCalledWith('folder_real');
+  });
+
   it('shows a root PDF, marks XLSX unsupported, and launches the selected PDF', async () => {
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
