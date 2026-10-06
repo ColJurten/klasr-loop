@@ -50,7 +50,14 @@ services:
       <<: *api-environment
       KLASR_WORKER: "true"
     command: ["python", "src/worker.py"]
-    depends_on: *database-dependencies
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      api:
+        condition: service_healthy
 
   # Open the app at exactly http://localhost:3000 (the Google-registered callback host).
   # Using 127.0.0.1:3000 breaks the OAuth state cookie because the browser cookie host differs from the callback host.

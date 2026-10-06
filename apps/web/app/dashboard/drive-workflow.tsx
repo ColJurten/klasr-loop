@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, Folder, FolderCheck, Play, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import type { DashboardView, DriveInputItemView, FolderChoiceView } from '@/lib/
 
 const PRODUCTION_INPUT_SELECTION_KEY = 'klasr-drive-input-selection';
 const PRODUCTION_LAUNCH_KEY = 'klasr-drive-launch';
+const MAX_POLL_DURATION_MS = 15 * 60 * 1_000;
 type DrivePath = Array<{ id: string; name: string }>;
 type DriveSelection = { selected: string; path: DrivePath };
 type LaunchSnapshot = { state: 'running' | 'done'; baseline: { outcomes: number; failures: number }; target: number | null; startedAt: number };
@@ -16,13 +17,14 @@ type LaunchSnapshot = { state: 'running' | 'done'; baseline: { outcomes: number;
 export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardView | null; llmConfigured?: boolean }) {
   const router = useRouter();
   const [referenceState, setReferenceState] = useState<'idle' | 'running' | 'error'>('idle');
-  const [launchState, setLaunchState] = useState<'idle' | 'running' | 'error' | 'done'>('idle');
+  const [launchState, setLaunchState] = useState<'idle' | 'running' | 'error' | 'done' | 'interrupted'>('idle');
   const [launchBaseline, setLaunchBaseline] = useState({ outcomes: 0, failures: 0 });
   const [launchTarget, setLaunchTarget] = useState<number | null>(null);
   const [launchStartedAt, setLaunchStartedAt] = useState<number | null>(null);
   const [selectedInput, setSelectedInput] = useState('');
   const [restoredInputPath, setRestoredInputPath] = useState<DrivePath | null>(null);
   const [showReferencePicker, setShowReferencePicker] = useState(() => Boolean(data && !data.referenceRoot));
+  const launchDataRef = useRef<DashboardView | null>(null);
 
   useEffect(() => {
     const selection = savedProductionInputSelection();
@@ -65,14 +67,33 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
       clearProductionLaunch();
       setLaunchState('error');
       setLaunchStartedAt(null);
+      return;
+    }
+    if (data !== launchDataRef.current && data?.queue.queued === 0 && data.queue.active === 0) {
+      clearProductionLaunch();
+      setLaunchState('interrupted');
+      setLaunchStartedAt(null);
     }
   }, [data, launchBaseline.failures, launchState, launchTarget]);
 
   useEffect(() => {
     if (launchState !== 'running' && launchState !== 'done') return;
     if (launchStartedAt === null) return;
-    const interval = window.setInterval(() => router.refresh(), 1_000);
-    return () => window.clearInterval(interval);
+    let delay = 1_000;
+    let timeout: number;
+    const poll = () => {
+      if (Date.now() - launchStartedAt >= MAX_POLL_DURATION_MS) {
+        clearProductionLaunch();
+        setLaunchState('interrupted');
+        setLaunchStartedAt(null);
+        return;
+      }
+      router.refresh();
+      delay = Math.min(delay * 2, 15_000);
+      timeout = window.setTimeout(poll, delay);
+    };
+    timeout = window.setTimeout(poll, delay);
+    return () => window.clearTimeout(timeout);
   }, [launchStartedAt, launchState, router]);
 
   function selectInput(itemExternalId: string, path?: DrivePath) {
@@ -107,6 +128,7 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
     setLaunchTarget(null);
     setLaunchStartedAt(startedAt);
     setLaunchState('running');
+    launchDataRef.current = data;
     saveProductionLaunch({ state: 'running', baseline, target: null, startedAt });
     try {
       const result = await launchDriveItem(itemExternalId);
@@ -192,6 +214,11 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
         {launchState === 'error' && (
           <p role="alert" className="mt-3 rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
             L&apos;analyse a échoué. Vérifiez la connexion Drive puis relancez ce fichier. Aucun contenu documentaire n&apos;a été conservé.
+          </p>
+        )}
+        {launchState === 'interrupted' && (
+          <p role="status" className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink/70">
+            Analyse interrompue. Aucun traitement n&apos;est encore en cours ; vous pouvez relancer ce fichier.
           </p>
         )}
       </section>

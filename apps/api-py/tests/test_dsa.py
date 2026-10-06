@@ -28,9 +28,13 @@ class StubConverter:
 
 @pytest.fixture
 def stub_docling(monkeypatch):
+    from dsa.tools import _build_converter
+
     module = types.ModuleType("docling.document_converter")
     module.DocumentConverter = StubConverter
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
+    yield
+    _build_converter.cache_clear()  # Real docling tests must not reuse a stub converter.
 
 
 def test_supported_file_types_and_quality(tmp_path, stub_docling):
@@ -42,9 +46,11 @@ def test_supported_file_types_and_quality(tmp_path, stub_docling):
     assert extract_document(str(tmp_path / "bad.xyz")).quality == "failed"
 
 
-def test_extract_bytes_defaults_to_markdown_with_explicit_text_fallback(stub_docling):
-    assert extract_bytes(b"synthetic", ".pdf").text.startswith("# Invoice")
-    assert extract_bytes(b"synthetic", ".pdf", markdown=False).text.startswith("Supplier: Acme")
+def test_extract_bytes_exports_plain_text_and_markdown_from_one_conversion(stub_docling):
+    result = extract_bytes(b"synthetic", ".pdf")
+    assert result.text.startswith("Supplier: Acme")
+    assert not result.text.startswith("#")
+    assert result.markdown.startswith("# Invoice")
 
 
 def test_text_layer_does_not_initialize_ocr(monkeypatch):
@@ -69,10 +75,16 @@ def test_image_only_page_attempts_ocr_after_empty_text_pass(monkeypatch):
     calls = []
 
     class EmptyDocument:
+        def export_to_text(self):
+            return ""
+
         def export_to_markdown(self):
             return ""
 
     class OcrDocument:
+        def export_to_text(self):
+            return "Supplier: Acme; invoice: INV-42; date: 2026-09-13"
+
         def export_to_markdown(self):
             return "# Invoice\nSupplier: Acme; invoice: INV-42; date: 2026-09-13"
 
@@ -100,6 +112,9 @@ def test_ocr_init_failure_preserves_first_pass(monkeypatch):
     warnings = []
 
     class SparseDocument:
+        def export_to_text(self):
+            return "Invoice draft"
+
         def export_to_markdown(self):
             return "Invoice draft"
 

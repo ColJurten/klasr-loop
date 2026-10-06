@@ -546,25 +546,35 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
 
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     import sys
-    from dsa.tools import extract_bytes
+    from dsa.tools import _build_converter, extract_bytes
+
+    # Never serve a real converter or leak this stub into later tests.
+    _build_converter.cache_clear()
 
     seen = []
 
     class Converter:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
         def convert(self, stream):
             assert stream.name == "document.png"
             assert stream.stream.read() == b"private image bytes"
             seen.append(stream)
             return types.SimpleNamespace(
                 document=types.SimpleNamespace(
-                    export_to_markdown=lambda: "# Synthetic extracted text"
+                    export_to_text=lambda: "Synthetic extracted text",
+                    export_to_markdown=lambda: "# Synthetic extracted text",
                 )
             )
 
     module = types.ModuleType("docling.document_converter")
     module.DocumentConverter = Converter
+    module.PdfFormatOption = types.SimpleNamespace
+    module.ImageFormatOption = types.SimpleNamespace
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
     result = extract_bytes(b"private image bytes", ".png")
+    _build_converter.cache_clear()
     assert result.quality == "sparse" and len(seen) == 2
 
 

@@ -48,13 +48,28 @@ async def run_worker(settings, engine, stop, analyses=None):
     try:
         await analyses.initialize()
         async with httpx.AsyncClient() as client:
+            retry_delay = 1
             while not stop.is_set():
-                with Session(engine, expire_on_commit=False) as session:
-                    drive = drive_executor(session, settings, client)
-                    handler = AnalysisService(
-                        session, settings, drive, ProviderClientService(settings, client), analyses
-                    )
-                    worked = await work_once(session, handler.analyze)
+                try:
+                    with Session(engine, expire_on_commit=False) as session:
+                        drive = drive_executor(session, settings, client)
+                        handler = AnalysisService(
+                            session,
+                            settings,
+                            drive,
+                            ProviderClientService(settings, client),
+                            analyses,
+                        )
+                        worked = await work_once(session, handler.analyze)
+                    retry_delay = 1
+                except Exception as exc:
+                    logger.warning("queue operation failed; retrying: %s", type(exc).__name__)
+                    try:
+                        await asyncio.wait_for(stop.wait(), timeout=retry_delay)
+                    except TimeoutError:
+                        pass
+                    retry_delay = min(retry_delay * 2, 15)
+                    continue
                 if not worked:
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=1)

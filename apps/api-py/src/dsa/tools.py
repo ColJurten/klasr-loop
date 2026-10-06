@@ -1,6 +1,7 @@
 import io
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from crewai.tools import BaseTool
@@ -73,30 +74,47 @@ def _assess_quality(content: str) -> tuple[str, list[str]]:
     return "ok", warnings
 
 
+@lru_cache(maxsize=2)
 def _build_converter(do_ocr: bool = False):
     """Create a DocumentConverter with tuned PDF pipeline options."""
+    # ponytail: module-level converter cache — fine for single-worker process;
+    # revisit if multiworker.
     from docling.document_converter import DocumentConverter
 
     try:
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import PdfFormatOption
+        from docling.document_converter import PdfFormatOption, ImageFormatOption
 
-        pdf_options = PdfPipelineOptions(
-            do_ocr=do_ocr,
-            document_timeout=_DOCLING_TIMEOUT,
-            force_backend_text=False,
-        )
+        def options():
+            return PdfPipelineOptions(
+                do_ocr=do_ocr,
+                document_timeout=_DOCLING_TIMEOUT,
+                force_backend_text=False,
+            )
+
+        pdf_options = options()
         pdf_options.ocr_options.lang = ["fra", "eng"]
+        image_options = options()
+        image_options.ocr_options.lang = ["fra", "eng"]
         return DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)}
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
+                InputFormat.IMAGE: ImageFormatOption(pipeline_options=image_options),
+            }
         )
     except (AttributeError, ImportError, TypeError, ValueError):
+        if do_ocr:
+            raise
         return DocumentConverter()
 
 
 class DoclingArgs(BaseModel):
     file_path: str = Field(description="Local temporary document path")
+
+
+def _export(document) -> tuple[str, str]:
+    return document.export_to_text().strip(), document.export_to_markdown().strip()
 
 
 def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
@@ -112,30 +130,35 @@ def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
             data = path.getvalue()
             path = DocumentStream(name=name, stream=io.BytesIO(data))
         document = _build_converter(do_ocr=False).convert(path).document
-        content = document.export_to_markdown() if markdown else document.export_to_text()
+        text, markdown_content = _export(document)
     except Exception:
         return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
-    content = content.strip()
-    if markdown and not re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip():
-        content = ""
-    quality, warnings = _assess_quality(content)
-    first_pass = ExtractionResult(text=content, quality=quality, warnings=warnings)
-    if quality == "ok":
+    if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
+        markdown_content = ""
+    quality, warnings = _assess_quality(text)
+    first_pass = ExtractionResult(
+        text=text, markdown=markdown_content, quality=quality, warnings=warnings
+    )
+    suffix = Path(name if memory else path).suffix.lower()
+    if quality == "ok" or suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".gif", ".bmp"}:
         return first_pass
 
     try:
         if memory:
             path = DocumentStream(name=name, stream=io.BytesIO(data))
         document = _build_converter(do_ocr=True).convert(path).document
-        content = document.export_to_markdown() if markdown else document.export_to_text()
+        text, markdown_content = _export(document)
     except Exception as exc:
-        logger.warning("OCR fallback unavailable; using text-layer extraction: %s", exc)
+        logger.warning(
+            "OCR fallback unavailable; using text-layer extraction: %s", type(exc).__name__
+        )
         return first_pass
-    content = content.strip()
-    if markdown and not re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip():
-        content = ""
-    quality, warnings = _assess_quality(content)
-    return ExtractionResult(text=content, quality=quality, warnings=warnings)
+    if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
+        markdown_content = ""
+    quality, warnings = _assess_quality(text)
+    return ExtractionResult(
+        text=text, markdown=markdown_content, quality=quality, warnings=warnings
+    )
 
 
 def extract_bytes(data: bytes, suffix: str, markdown: bool = True) -> ExtractionResult:
@@ -152,7 +175,8 @@ class DoclingMarkdownTool(BaseTool):
     args_schema: type[BaseModel] = DoclingArgs
 
     def _run(self, file_path: str) -> str:
-        return extract_document(file_path, markdown=True).model_dump_json()
+        result = extract_document(file_path)
+        return result.model_copy(update={"text": result.markdown}).model_dump_json()
 
 
 class DoclingTextTool(BaseTool):

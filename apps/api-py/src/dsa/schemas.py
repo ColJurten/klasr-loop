@@ -30,6 +30,7 @@ class Signal(BaseModel):
 
 class ExtractionResult(BaseModel):
     text: str = Field(repr=False)
+    markdown: str = Field(default="", repr=False)
     quality: Literal["ok", "sparse", "empty", "failed"]
     warnings: list[str] = []
 

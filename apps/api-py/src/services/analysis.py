@@ -25,7 +25,7 @@ def extract_memory(content, mime_type, name):
         if not text:
             return ExtractionResult(text="", quality="empty")
         quality, warnings = _assess_extraction_quality(text)
-        return ExtractionResult(text=text, quality=quality, warnings=warnings)
+        return ExtractionResult(text=text, markdown=text, quality=quality, warnings=warnings)
     suffix = {
         "application/pdf": ".pdf",
         "image/png": ".png",
