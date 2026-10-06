@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-10-06 (compose E2E chain: docling markdown-first + image OCR libs + dashboard poll + OCR fallback)
+> Last updated: 2026-10-06 (reviewer batch round 1: poll safety, dual text/md export, worker resilience, OCR pass cost)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-10-06 — Reviewer batch round 1 (items 2-8 de review-batch-20261006.md, branche `backend-python-refacto`) : `99ccf7e` poussé (12 fichiers, +165/−69) — poll dashboard borné (état neutre « analyse interrompue » quand queue 0/0 et cible non atteinte, backoff 1 s→15 s, plafond absolu 15 min) ; export double text+markdown en un seul passage Docling (LLM en md, règles/qualité en texte brut) ; worker survit aux erreurs DB transitoires (reap/claim dans la boucle retry, backoff 1→15 s, `restart: unless-stopped`, depends_on api healthy) ; cache de convertisseurs lru_cache, passe OCR uniquement pdf/images, fallback respecte do_ocr ; logs type-only ; Dockerfile apt avant COPY ; .gitignore nettoyé. docs/COMPOSE_E2E_HARNESS.md (91ea596) expurgé, reproductible avec SA. Gates reverifiés : pytest 103 passed/1 skipped, black+flake8 clean, web 129 passed, typecheck clean, lint exit 0.
 
 - [x] 2026-10-06 — Chaîne docker-compose E2E (item-21, branche `backend-python-refacto`, poussée) : `feb79ee` Docling markdown par défaut (doc3.pdf 2904 c. qualité ok, calendrier vectoriel empty attendu, doc1.xlsx table md 323 c., 103 tests/1 skip, black+flake8 verts) ; `b0c0b44` libs runtime OpenCV dans l'image api (import cv2 + RapidOCR vérifiés in-image) ; `c1b73c3` dashboard ne bascule plus en échec à 30 s pendant analyse ; `381759e` repli OCR deux passes (OCR à la demande). Rounds compose (ports décalés 55432/27018/3101/3100, overlay SA, doc3.pdf, restauration exacte systématique) : round16 FAIL (proposal > fenêtre 30 s) → round17 PASS complet incl. confirm 201, mutation Drive renommée/parent + restauration exacte (dashboard-fix/) ; round18 proposal 92 % `DEVIS_658437_ACME_CSimms_20240229.pdf` → `/quotes`, reviewReason « Date février 29, 2024 valide mais rare », modèle claude-haiku-4-5, confirm 201, mutation+restauration PASS, verdict FAIL sur preuve (b) seule : log worker montre RapidOCR actif, le comportement texte-d'abord n'est pas attesté (voir `.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/`). Item ouvert build : diagnostic du premier passage sans OCR.
 
