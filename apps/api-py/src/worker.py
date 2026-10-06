@@ -33,11 +33,11 @@ async def work_once(session, handler):
             session.commit()
         else:
             session.rollback()
-    except Exception as exc:
+    except Exception:
         session.rollback()
         jobs.fail(job)
         session.commit()
-        logger.exception("job handler failed: %s", type(exc).__name__)
+        logger.error("job handler failed")
     return True
 
 
@@ -69,7 +69,7 @@ async def run_worker(settings, engine, stop, analyses=None):
                 except SQLAlchemyError as exc:
                     retry_attempts += 1
                     if retry_attempts >= MAX_QUEUE_RETRIES:
-                        logger.exception(
+                        logger.error(
                             "queue operation failed after %d attempts: %s",
                             retry_attempts,
                             type(exc).__name__,

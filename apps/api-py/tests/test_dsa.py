@@ -109,14 +109,47 @@ def test_image_uses_one_ocr_enabled_pass(monkeypatch):
 def test_office_file_skips_ocr_pass(monkeypatch):
     calls = []
 
+    class SparseOfficeDocument:
+        def export_to_text(self):
+            return "R&D"
+
+        def export_to_markdown(self):
+            return "R&amp;D"
+
+    class SparseOfficeConverter:
+        def convert(self, _path):
+            return types.SimpleNamespace(document=SparseOfficeDocument())
+
     def converter(do_ocr=False):
         calls.append(do_ocr)
-        return StubConverter()
+        return SparseOfficeConverter()
 
     monkeypatch.setattr("dsa.tools._build_converter", converter)
 
-    assert extract_bytes(b"synthetic", ".docx").quality == "ok"
+    assert extract_bytes(b"synthetic", ".docx").quality == "sparse"
     assert calls == [False]
+
+
+def test_ocr_fallback_keeps_better_first_pass(monkeypatch):
+    class Document:
+        def __init__(self, text):
+            self.text = text
+
+        def export_to_text(self):
+            return self.text
+
+        def export_to_markdown(self):
+            return self.text
+
+    def converter(do_ocr=False):
+        text = "x" if do_ocr else "Invoice draft with useful surrounding details"
+        return types.SimpleNamespace(
+            convert=lambda _path: types.SimpleNamespace(document=Document(text))
+        )
+
+    monkeypatch.setattr("dsa.tools._build_converter", converter)
+    result = extract_bytes(b"synthetic", ".pdf")
+    assert result.text == "Invoice draft with useful surrounding details"
 
 
 def test_ocr_init_failure_preserves_first_pass(monkeypatch):
@@ -764,12 +797,14 @@ def test_converter_fallback_preserves_no_ocr_options(monkeypatch):
 
     monkeypatch.setattr(converter_module, "DocumentConverter", CapturingConverter)
     monkeypatch.setattr(converter_module, "ImageFormatOption", unavailable_image_options)
-    converter = _build_converter(do_ocr=False)
+    try:
+        converter = _build_converter(do_ocr=False)
 
-    assert converter is not None
-    assert captured["format_options"][InputFormat.PDF].pipeline_options.do_ocr is False
-    assert captured["format_options"][InputFormat.IMAGE].pipeline_options.do_ocr is False
-    _build_converter.cache_clear()
+        assert converter is not None
+        assert captured["format_options"][InputFormat.PDF].pipeline_options.do_ocr is False
+        assert captured["format_options"][InputFormat.IMAGE].pipeline_options.do_ocr is False
+    finally:
+        _build_converter.cache_clear()
 
 
 def test_scanned_pdf_is_extracted_with_ocr():

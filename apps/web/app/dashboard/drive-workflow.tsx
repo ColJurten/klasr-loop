@@ -12,13 +12,13 @@ const PRODUCTION_LAUNCH_KEY = 'klasr-drive-launch';
 const MAX_POLL_DURATION_MS = 15 * 60 * 1_000;
 type DrivePath = Array<{ id: string; name: string }>;
 type DriveSelection = { selected: string; path: DrivePath };
-type LaunchSnapshot = { state: 'running' | 'done'; baseline: { outcomes: number; failures: number }; target: number | null; startedAt: number };
+type LaunchSnapshot = { state: 'running' | 'done'; baseline: { outcomes: number; failures: number; documentsIn: number }; target: number | null; startedAt: number };
 
 export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardView | null; llmConfigured?: boolean }) {
   const router = useRouter();
   const [referenceState, setReferenceState] = useState<'idle' | 'running' | 'error'>('idle');
   const [launchState, setLaunchState] = useState<'idle' | 'running' | 'error' | 'done' | 'interrupted'>('idle');
-  const [launchBaseline, setLaunchBaseline] = useState({ outcomes: 0, failures: 0 });
+  const [launchBaseline, setLaunchBaseline] = useState({ outcomes: 0, failures: 0, documentsIn: 0 });
   const [launchTarget, setLaunchTarget] = useState<number | null>(null);
   const [launchStartedAt, setLaunchStartedAt] = useState<number | null>(null);
   const [selectedInput, setSelectedInput] = useState('');
@@ -43,6 +43,23 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
       setLaunchState('error');
       return;
     }
+    if (launch.state === 'running' && launch.target === null) {
+      const queued = data ? data.queue.queued + data.queue.ready + data.queue.active : 0;
+      const enqueued = (data?.metrics.documentsIn ?? launch.baseline.documentsIn) - launch.baseline.documentsIn;
+      if (enqueued > 0) {
+        const target = launch.baseline.outcomes + enqueued;
+        setLaunchBaseline(launch.baseline);
+        setLaunchTarget(target);
+        setLaunchStartedAt(launch.startedAt);
+        setLaunchState('done');
+        saveProductionLaunch({ ...launch, state: 'done', target });
+        return;
+      }
+      if (queued === 0) {
+        clearProductionLaunch();
+        return;
+      }
+    }
     setLaunchBaseline(launch.baseline);
     setLaunchTarget(launch.target);
     setLaunchStartedAt(launch.startedAt);
@@ -54,6 +71,23 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
       setShowReferencePicker(true);
     }
   }, [data]);
+
+  useEffect(() => {
+    if (launchState !== 'running' || launchTarget !== null || launchDataRef.current !== null || !data) return;
+    const enqueued = data.metrics.documentsIn - launchBaseline.documentsIn;
+    if (enqueued > 0) {
+      const target = launchBaseline.outcomes + enqueued;
+      setLaunchTarget(target);
+      setLaunchState('done');
+      saveProductionLaunch({ state: 'done', baseline: launchBaseline, target, startedAt: launchStartedAt ?? Date.now() });
+      return;
+    }
+    if (data.queue.queued + data.queue.ready + data.queue.active === 0) {
+      clearProductionLaunch();
+      setLaunchState('idle');
+      setLaunchStartedAt(null);
+    }
+  }, [data, launchBaseline, launchStartedAt, launchState, launchTarget]);
 
   useEffect(() => {
     if (launchState !== 'done') return;
@@ -69,12 +103,14 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
       setLaunchStartedAt(null);
       return;
     }
-    if (data !== launchDataRef.current && data && data.queue.queued + data.queue.ready + data.queue.active === 0) {
+    if (data !== launchDataRef.current && data
+      && data.metrics.documentsIn > launchBaseline.documentsIn
+      && data.queue.queued + data.queue.ready + data.queue.active === 0) {
       clearProductionLaunch();
       setLaunchState('interrupted');
       setLaunchStartedAt(null);
     }
-  }, [data, launchBaseline.failures, launchState, launchTarget]);
+  }, [data, launchBaseline.documentsIn, launchBaseline.failures, launchState, launchTarget]);
 
   useEffect(() => {
     if (launchState !== 'running' && launchState !== 'done') return;
@@ -122,7 +158,11 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
   }
 
   async function launchSelectedItem(itemExternalId: string) {
-    const baseline = { outcomes: data?.metrics.outcomes ?? 0, failures: data?.analysisFailures ?? 0 };
+    const baseline = {
+      outcomes: data?.metrics.outcomes ?? 0,
+      failures: data?.analysisFailures ?? 0,
+      documentsIn: data?.metrics.documentsIn ?? 0,
+    };
     const startedAt = Date.now();
     setLaunchBaseline(baseline);
     setLaunchTarget(null);
@@ -361,6 +401,7 @@ function isLaunchSnapshot(value: unknown): value is LaunchSnapshot {
     snapshot && typeof snapshot === 'object'
     && (snapshot.state === 'running' || snapshot.state === 'done')
     && snapshot.baseline && typeof snapshot.baseline.outcomes === 'number' && typeof snapshot.baseline.failures === 'number'
+    && typeof snapshot.baseline.documentsIn === 'number'
     && (typeof snapshot.target === 'number' || snapshot.target === null)
     && typeof snapshot.startedAt === 'number',
   );

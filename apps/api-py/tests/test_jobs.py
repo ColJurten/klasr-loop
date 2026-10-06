@@ -55,6 +55,22 @@ def test_worker_immediately_retries_failure():
     assert jobs.queue_state()["ready"] == 1
 
 
+def test_worker_retry_exhaustion_stays_failed_without_crashing():
+    session, jobs = service()
+    jobs.enqueue({"organizationId": "org", "documentId": "doc"})
+
+    def fail(_payload):
+        raise RuntimeError
+
+    for _ in range(4):
+        jobs.work_once(fail)
+    job = session.query(Job).one()
+    assert job.status == JobStatus.FAILED and job.retry_count == 3
+    assert jobs.work_once(fail) is False
+    assert job.status == JobStatus.FAILED
+    session.close()
+
+
 def test_stale_worker_cannot_finish_reclaimed_job():
     session, jobs = service()
     jobs.enqueue({"organizationId": "org", "documentId": "doc"})

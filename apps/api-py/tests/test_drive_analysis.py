@@ -22,7 +22,7 @@ from services.drive import (
     GoogleDriveExecutor,
     GoogleTokenService,
 )
-from services.analysis import AnalysisService
+from services.analysis import AnalysisService, apply_rules
 from services.llm_settings import ProviderClientService
 from worker import work_once, run_worker
 
@@ -637,6 +637,45 @@ async def test_mongo_whitelist_ttl_and_tenant_queries():
 
 from dsa.schemas import ExtractionResult, SuggestionResult
 from services.analysis import local_suggestion
+
+
+def test_plain_text_drives_rules_and_local_while_llm_keeps_markdown(monkeypatch):
+    extraction = ExtractionResult(
+        text="R&D invoice INV-42 dated 2026-09-13",
+        markdown="R&amp;D invoice INV-42 dated 2026-09-13",
+        quality="ok",
+    )
+    document = types.SimpleNamespace(name="source.pdf", mime_type="application/pdf")
+    rules = [
+        {
+            "priority": 1,
+            "conditions": [{"field": "CONTENT", "operator": "CONTAINS", "value": "R&D"}],
+            "destinationPath": "/R&D",
+            "suggestedNameTemplate": "matched.pdf",
+        }
+    ]
+    assert apply_rules(document, extraction.text, ["/R&D"], rules)["proposed_name"] == "matched.pdf"
+    local = local_suggestion(extraction, ["/Invoices"])
+    assert local == local_suggestion(
+        extraction.model_copy(update={"markdown": "ignored"}), ["/Invoices"]
+    )
+
+    captured = []
+    output = types.SimpleNamespace(
+        pydantic={"value": "matched.pdf", "confidence": 0.9, "signals": []},
+        to_dict=lambda: {},
+    )
+    crew = types.SimpleNamespace(kickoff=lambda inputs: captured.append(inputs) or output)
+    fake_crews = types.ModuleType("dsa.crews")
+    fake_crews.DocumentSortingAssistantCrew = lambda: types.SimpleNamespace(
+        naming_crew=lambda: crew
+    )
+    monkeypatch.setitem(__import__("sys").modules, "dsa.crews", fake_crews)
+    monkeypatch.setenv("KLASR_LLM_PROVIDER", "anthropic")
+    import dsa
+
+    dsa._decision("filename", extraction, ["/R&D"])
+    assert captured[0]["content"].startswith("R&amp;D")
 
 
 def test_local_suggestion_no_zero_evidence_fallback():

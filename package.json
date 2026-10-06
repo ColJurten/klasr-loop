@@ -5,7 +5,7 @@
   "scripts": {
     "lint": "pnpm --recursive --if-present run lint",
     "typecheck": "pnpm --recursive --if-present run typecheck",
-    "test": "pnpm --recursive --if-present run test && node --test scripts/test/*.test.mjs",
+    "test": "pnpm --recursive --if-present run test && node --test scripts/test/*.test.mjs && apps/e2e/scripts/e2e-launchers.test.sh",
     "build": "pnpm --recursive --if-present run build",
     "test:integration": "cd apps/api-py && .venv/bin/pytest",
     "test:e2e": "pnpm --filter @klasr/web exec playwright test",

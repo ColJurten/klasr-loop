@@ -19,14 +19,18 @@ KLASR_GOOGLE_DRIVE_ROOT_ID='...'
 KLASR_SA_FILE_OVERRIDE='/chemin/absolu/hors-depot/service-account.json'
 KLASR_GOOGLE_SERVICE_ACCOUNT_FILE='/chemin/absolu/hors-depot/service-account.json'
 KLASR_LLM_API_KEY='...'
-KLASR_LLM_MODEL='...'
-KLASR_E2E_PROBE='.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/head-e2e/probe.mjs'
+KLASR_LLM_MODEL='claude-haiku-4-5-20251001'
+KLASR_E2E_PROBE='apps/e2e/scripts/probe.mjs'
 KLASR_LOCAL_MVP=false
 ```
 
 `KLASR_SA_FILE_OVERRIDE` est le chemin hôte monté en lecture seule dans les
 conteneurs. `KLASR_GOOGLE_SERVICE_ACCOUNT_FILE` est le même chemin hôte lu par
-le probe. Aucun secret n'est écrit dans le template ou dans l'override rendu.
+le probe. `KLASR_LLM_MODEL` contient le nom nu du modèle (par exemple
+`claude-haiku-4-5-20251001`) ; le fournisseur est sélectionné séparément dans
+l'interface. Aucun secret n'est écrit dans le template ou dans l'override rendu.
+Le launcher refuse de démarrer si un secret requis ou le chemin du compte de
+service est vide, et force le mode `0600` sur le fichier d'environnement.
 
 ## Démarrage et probe
 
@@ -46,12 +50,20 @@ Exécuter ensuite exactement la ligne imprimée par le launcher :
 set -a; source .hosttest; set +a; node "$KLASR_E2E_PROBE"
 ```
 
-`KLASR_E2E_PROBE` doit désigner le `probe.mjs` sauvegardé pour l'attempt. Ce
-fichier reste la source unique du parcours navigateur : ne pas recopier son
-flux dans un launcher. Pour inspecter l'overlay sans Docker :
+`KLASR_E2E_PROBE` désigne par défaut le probe versionné
+`apps/e2e/scripts/probe.mjs`. Ce fichier reste la source unique du parcours
+navigateur : ne pas recopier son flux dans un launcher. Pour inspecter
+l'overlay sans Docker :
 
 ```sh
 apps/e2e/scripts/e2e-up.sh --dry-run
+```
+
+La gate de sanity des launchers (substitution fermée et ports isolés) fait
+partie de `pnpm test` et peut aussi être lancée seule :
+
+```sh
+apps/e2e/scripts/e2e-launchers.test.sh
 ```
 
 ## Restauration et teardown obligatoires

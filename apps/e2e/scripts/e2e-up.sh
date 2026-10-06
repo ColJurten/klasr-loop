@@ -9,14 +9,23 @@ template=docs/e2e/docker-compose.e2e.yml
 rendered=.tmp/hermes/compose-e2e/docker-compose.e2e.yml
 
 [[ -f "$env_file" ]] || { echo "Missing $env_file" >&2; exit 1; }
+chmod 600 "$env_file"
 set -a
 # shellcheck disable=SC1090 # The caller may select another env-only file for a dry run.
 source "$env_file"
 set +a
 
-: "${KLASR_SA_FILE_OVERRIDE:?Set KLASR_SA_FILE_OVERRIDE in $env_file}"
 : "${KLASR_GOOGLE_DRIVE_ROOT_ID:?Set KLASR_GOOGLE_DRIVE_ROOT_ID in $env_file}"
-: "${KLASR_E2E_PROBE:?Set KLASR_E2E_PROBE in $env_file}"
+required=(TOKEN_ENCRYPTION_KEY INTERNAL_API_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET KLASR_LLM_API_KEY KLASR_SA_FILE_OVERRIDE)
+missing=()
+for name in "${required[@]}"; do
+  [[ -n ${!name:-} ]] || missing+=("$name")
+done
+if ((${#missing[@]})); then
+  printf 'Missing required E2E values: %s\n' "${missing[*]}" >&2
+  exit 1
+fi
+export KLASR_E2E_PROBE=${KLASR_E2E_PROBE:-apps/e2e/scripts/probe.mjs}
 export KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT=true
 export NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT=true
 
@@ -29,6 +38,7 @@ import sys
 
 source, destination = map(pathlib.Path, sys.argv[1:])
 destination.write_text(string.Template(source.read_text()).substitute(os.environ))
+destination.chmod(0o600)
 PY
 
 if [[ ${1:-} == --dry-run ]]; then

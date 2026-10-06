@@ -38,7 +38,7 @@ afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.useRealTimers(); 
 describe('DriveWorkflow production browser', () => {
   it('does not read persisted browser state during render', () => {
     window.sessionStorage.setItem(selectionKey, JSON.stringify({ selected: 'nested_pdf', path: [{ id: 'folder_real', name: 'stg_tree' }] }));
-    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() }));
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: 1, startedAt: Date.now() }));
     const getItem = vi.spyOn(Object.getPrototypeOf(window.sessionStorage), 'getItem');
     renderToString(<DriveWorkflow data={{ ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } }} />);
     expect(getItem).not.toHaveBeenCalled();
@@ -199,7 +199,7 @@ describe('DriveWorkflow production browser', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(/analyse a échoué/i);
   });
 
-  it('stops polling with a neutral state when no work remains and the target is unmet', async () => {
+  it('waits for reflected enqueue metrics before interrupting a drained launch', async () => {
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
     const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
@@ -209,6 +209,9 @@ describe('DriveWorkflow production browser', () => {
     fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
     await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalled());
     view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, queued: 0, active: 0 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, documentsIn: 1 } }} />);
     await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/analyse interrompue/i));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(window.sessionStorage.getItem(launchKey)).toBeNull();
@@ -229,19 +232,32 @@ describe('DriveWorkflow production browser', () => {
     expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
   });
 
-  it('does not interrupt a restored launch before enqueue completes', async () => {
-    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'running', baseline: { outcomes: 0, failures: 0 }, target: null, startedAt: Date.now() }));
+  it('clears a restored target-less launch when the queue and metrics are unchanged', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'running', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: null, startedAt: Date.now() }));
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(window.sessionStorage.getItem(launchKey)).toBeNull();
+  });
+
+  it('keeps a restored target-less launch running while work is in flight', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'running', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: null, startedAt: Date.now() }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' }, queue: { ...baseDashboard.queue, active: 1 } };
     const view = render(<DriveWorkflow data={data} />);
     await screen.findByText('document-test.pdf');
-    view.rerender(<DriveWorkflow data={{ ...data }} />);
     expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
     expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, documentsIn: 1 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    view.rerender(<DriveWorkflow data={{ ...data, queue: baseDashboard.queue, metrics: { ...data.metrics, documentsIn: 1, outcomes: 1 } }} />);
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   });
 
   it('increases polling intervals up to the backoff ceiling', async () => {
-    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() }));
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: 1, startedAt: Date.now() }));
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     vi.useFakeTimers();
     render(<DriveWorkflow data={{ ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' }, queue: { ...baseDashboard.queue, active: 1 } }} />);
@@ -256,7 +272,7 @@ describe('DriveWorkflow production browser', () => {
   });
 
   it('stops polling at the absolute backoff cap', async () => {
-    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() - 15 * 60 * 1_000 }));
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: 1, startedAt: Date.now() - 15 * 60 * 1_000 }));
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
     vi.useFakeTimers();

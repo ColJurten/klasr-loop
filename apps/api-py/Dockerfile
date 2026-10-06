@@ -9,5 +9,5 @@ RUN pip install --no-cache-dir .
 # extraction fails closed into manual review.
 COPY alembic.ini .
 COPY alembic alembic
-ENV PYTHONPATH=/app/src KLASR_CONTAINER=true CREWAI_DISABLE_TELEMETRY=true OTEL_SDK_DISABLED=true
+ENV PYTHONPATH=/app/src NODE_ENV=production KLASR_CONTAINER=true CREWAI_DISABLE_TELEMETRY=true OTEL_SDK_DISABLED=true
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3001", "--app-dir", "src"]

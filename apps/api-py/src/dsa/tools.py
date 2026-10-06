@@ -91,9 +91,6 @@ def _build_converter(do_ocr: bool = False):
             document_timeout=_DOCLING_TIMEOUT,
             force_backend_text=False,
         )
-        # ponytail: OcrAutoOptions ignores lang; rely on its automatic defaults
-        # unless language-specific OCR is shown to matter.
-        pipeline_options.ocr_options.lang = ["fra", "eng"]
         return pipeline_options
 
     format_options = {
@@ -157,9 +154,17 @@ def extract_document(file_path: str) -> ExtractionResult:
     if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
         markdown_content = ""
     quality, warnings = _assess_quality(text)
-    return ExtractionResult(
+    second_pass = ExtractionResult(
         text=text, markdown=markdown_content, quality=quality, warnings=warnings
     )
+    quality_rank = {"failed": 0, "empty": 1, "sparse": 2, "ok": 3}
+    if quality_rank[second_pass.quality] < quality_rank[first_pass.quality] or (
+        second_pass.quality == first_pass.quality
+        and len(second_pass.text.strip()) < len(first_pass.text.strip())
+    ):
+        logger.warning("OCR fallback was lower quality; using text-layer extraction")
+        return first_pass
+    return second_pass
 
 
 def extract_bytes(data: bytes, suffix: str) -> ExtractionResult:
