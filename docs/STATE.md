@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-10-06 (reviewer batch round 2: ready-aware interrupts, OCR pass discipline, worker retry hardened)
+> Last updated: 2026-10-06 (compose E2E harness locked to one template and launcher path)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-10-06 — Contrat compose E2E verrouillé : template versionné `docs/e2e/docker-compose.e2e.yml`, `.hosttest*` local ignoré, launchers uniques `apps/e2e/scripts/e2e-{up,down}.sh`, probe navigateur réutilisé par chemin, rendu `--dry-run`, healthcheck API et teardown avec contrôle conteneurs/ports. Aucun recours à `apps/api/.env` ou au launcher live protégé.
 
 - [x] 2026-10-06 — Reviewer batch round 2 (findings H1, M1–M6 de review-batch-20261006.md, branche `backend-python-refacto`) : `8371db7` poussé — interrupt dashboard requiert `queued+ready+active===0` après `done` (jamais pendant pre-enqueue `running`) ; options `PdfPipelineOptions(do_ocr=...)` explicites sur les deux constructeurs convertisseur, suffixes image sur passe OCR unique, Office une passe, PDF clairsemés passe 2 ; boucle worker retry catch `SQLAlchemyError` seul, backoff 1→15 s, abandon après 5 échecs consécutifs ; .gitignore couvre `.hosttest*` ; `restart: unless-stopped` api+web ; paramètre mort `markdown` retiré de `extract_document`/`extract_bytes` ; limite du cache deux-convertisseurs et dialecte OcrAutoOptions documentés. Gates revisités : pytest 106 passed/1 skipped, black+flake8 propres, web 132 passed (18 fichiers), typecheck propre, `git diff --check` propre. Handoff : `.tmp/hermes/SINGLE-STACK-RUN/handoffs/REVIEWER_BATCH_R2_HANDOFF.md`.
 

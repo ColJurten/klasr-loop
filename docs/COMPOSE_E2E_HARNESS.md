@@ -1,66 +1,74 @@
-# Harnais E2E Docker Compose avec compte de service
+# Contrat unique du harnais E2E Docker Compose
 
-Ce document décrit l'overlay local utilisé pour valider le parcours Drive réel sans versionner de secret. Le fichier d'environnement local est nommé `.hosttest` ; son contenu reste **confidentiel et expurgé** des preuves.
+Ce document est prescriptif. Les seuls points d'entrée sont
+`apps/e2e/scripts/e2e-up.sh` et `apps/e2e/scripts/e2e-down.sh`. Ne pas appeler
+Compose directement et ne pas utiliser `scripts/live-google-service-account.mjs`.
 
-## Pré-requis
+## Fichier local `.hosttest`
 
-- une clé JSON de compte de service hors dépôt ;
-- l'identifiant du dossier Drive partagé avec ce compte (`KLASR_GOOGLE_DRIVE_ROOT_ID`) ;
-- les secrets applicatifs locaux habituels dans `.hosttest` ;
-- `KLASR_LOCAL_MVP=false`.
-
-## Structure de l'overlay
-
-Créer un fichier local ignoré `docker-compose-test.yaml` avec les surcharges suivantes :
-
-```yaml
-services:
-  api:
-    ports: ["127.0.0.1:3101:3001"]
-    environment:
-      KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: "true"
-      KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google-service-account.json
-      KLASR_GOOGLE_DRIVE_ROOT_ID: ${KLASR_GOOGLE_DRIVE_ROOT_ID}
-    volumes:
-      - ${SA_FILE}:/run/secrets/google-service-account.json:ro
-  worker:
-    environment:
-      KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: "true"
-      KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/google-service-account.json
-      KLASR_GOOGLE_DRIVE_ROOT_ID: ${KLASR_GOOGLE_DRIVE_ROOT_ID}
-    volumes:
-      - ${SA_FILE}:/run/secrets/google-service-account.json:ro
-  web:
-    ports: ["127.0.0.1:3100:3000"]
-    environment:
-      NODE_ENV: development
-      NEXTAUTH_URL: http://localhost:3100
-      API_URL: http://api:3001/api/v1
-      NEXT_PUBLIC_API_URL: http://localhost:3101/api/v1
-      KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: "true"
-    build:
-      args:
-        NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: "true"
-  postgres:
-    ports: ["127.0.0.1:55432:5432"]
-  mongo:
-    ports: ["127.0.0.1:27018:27017"]
-```
-
-`SA_FILE` désigne uniquement le chemin hôte de la clé. La clé n'est ni copiée dans une image, ni enregistrée dans le dépôt. Le navigateur utilise `http://localhost:3100`, l'API hôte `http://localhost:3101/api/v1`, PostgreSQL `55432` et MongoDB `27018`.
-
-## Exécution et contrat de restauration
-
-Lancer avec les deux fichiers Compose et l'environnement expurgé :
+Créer `.hosttest` à la racine. `.gitignore` exclut `.hosttest*` et
+`.hosttest/`; ce fichier ne doit jamais être copié dans une preuve ou commité.
+Il contient uniquement des affectations shell `NOM=valeur` (guillemets requis
+si une valeur contient des caractères interprétés par Bash) :
 
 ```sh
-docker compose --env-file .hosttest -f docker-compose.yml -f docker-compose-test.yaml --profile api up --build
+INTERNAL_API_SECRET='...'
+TOKEN_ENCRYPTION_KEY='...'
+NEXTAUTH_SECRET='...'
+KLASR_GOOGLE_DRIVE_ROOT_ID='...'
+KLASR_SA_FILE_OVERRIDE='/chemin/absolu/hors-depot/service-account.json'
+KLASR_GOOGLE_SERVICE_ACCOUNT_FILE='/chemin/absolu/hors-depot/service-account.json'
+KLASR_LLM_API_KEY='...'
+KLASR_LLM_MODEL='...'
+KLASR_E2E_PROBE='.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/head-e2e/probe.mjs'
+KLASR_LOCAL_MVP=false
 ```
 
-Le scénario part du dossier racine désigné par `KLASR_GOOGLE_DRIVE_ROOT_ID`. Il doit relever avant mutation l'identifiant, le nom et les parents du fichier de test. Après validation de la proposition, il restaure exactement ces trois valeurs et supprime toute donnée applicative créée pour le tenant de test.
+`KLASR_SA_FILE_OVERRIDE` est le chemin hôte monté en lecture seule dans les
+conteneurs. `KLASR_GOOGLE_SERVICE_ACCOUNT_FILE` est le même chemin hôte lu par
+le probe. Aucun secret n'est écrit dans le template ou dans l'override rendu.
 
-Le teardown doit ensuite exécuter `docker compose ... down --volumes --remove-orphans`, vérifier qu'aucun conteneur du projet ne subsiste et que les ports `3100`, `3101`, `27018` et `55432` sont libres. Une interruption du scénario n'annule jamais cette obligation de restauration.
+## Démarrage et probe
 
-## Preuves
+Le template versionné `docs/e2e/docker-compose.e2e.yml` est l'unique overlay.
+Le launcher charge `.hosttest`, force les deux flags d'acceptation à `true`,
+rend l'overlay sous `.tmp/hermes/compose-e2e/`, construit et démarre le projet
+`klasr-e2e`, puis attend `http://127.0.0.1:3101/api/v1/health`. Les ports sont
+fixés à web `3100`, API `3101`, MongoDB `27018` et PostgreSQL `55432`.
 
-Les rapports, captures, résultats JSON, état Compose et extraits de logs expurgés sont déposés sous `.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/`. `.tmp` et l'overlay restent jetables ; ce document est le contrat reproductible et révisable. Aucun contenu de `.hosttest`, jeton, clé privée ou document client ne doit apparaître dans les preuves.
+```sh
+apps/e2e/scripts/e2e-up.sh
+```
+
+Exécuter ensuite exactement la ligne imprimée par le launcher :
+
+```sh
+set -a; source .hosttest; set +a; node "$KLASR_E2E_PROBE"
+```
+
+`KLASR_E2E_PROBE` doit désigner le `probe.mjs` sauvegardé pour l'attempt. Ce
+fichier reste la source unique du parcours navigateur : ne pas recopier son
+flux dans un launcher. Pour inspecter l'overlay sans Docker :
+
+```sh
+apps/e2e/scripts/e2e-up.sh --dry-run
+```
+
+## Restauration et teardown obligatoires
+
+Avant toute mutation, `probe.mjs` doit relever l'identifiant, le nom et les
+parents du fichier Drive. Son bloc de finalisation doit restaurer exactement
+ces valeurs et supprimer les données applicatives du tenant de test. Une
+interruption ou un échec n'annule jamais cette obligation : terminer ou
+reprendre la restauration avant le teardown.
+
+Après vérification de la restauration, exécuter :
+
+```sh
+apps/e2e/scripts/e2e-down.sh
+```
+
+Ce script lance `down --volumes --remove-orphans`, refuse de réussir si un
+conteneur du projet subsiste, puis vérifie que les quatre ports décalés sont
+libres. Les preuves expurgées vont sous `.tmp/hermes/`; elles ne doivent
+contenir ni `.hosttest`, ni jeton, ni clé privée, ni document client.
