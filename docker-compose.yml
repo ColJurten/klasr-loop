@@ -67,6 +67,8 @@ services:
     ports:
       - '127.0.0.1:3000:3000'
     environment:
+      # Overrides the Dockerfile's baked production ENV so the acceptance path + dev server run in the dev stack; production deployments do not use this compose.
+      NODE_ENV: development
       NEXTAUTH_URL: http://localhost:3000
       API_URL: http://api:3001/api/v1
       NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
