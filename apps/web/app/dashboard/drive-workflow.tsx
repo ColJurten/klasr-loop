@@ -32,11 +32,6 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
     }
     const launch = savedProductionLaunch();
     if (!launch) return;
-    if (Date.now() - launch.startedAt >= 30_000) {
-      clearProductionLaunch();
-      setLaunchState('error');
-      return;
-    }
     if (launch.state === 'done' && launch.target !== null && (data?.metrics.outcomes ?? 0) >= launch.target) {
       clearProductionLaunch();
       return;
@@ -76,20 +71,8 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
   useEffect(() => {
     if (launchState !== 'running' && launchState !== 'done') return;
     if (launchStartedAt === null) return;
-    const remaining = 30_000 - (Date.now() - launchStartedAt);
-    if (remaining <= 0) {
-      clearProductionLaunch();
-      setLaunchState('error');
-      setLaunchStartedAt(null);
-      return;
-    }
     const interval = window.setInterval(() => router.refresh(), 1_000);
-    const timeout = window.setTimeout(() => {
-      clearProductionLaunch();
-      setLaunchState('error');
-      setLaunchStartedAt(null);
-    }, remaining);
-    return () => { window.clearInterval(interval); window.clearTimeout(timeout); };
+    return () => window.clearInterval(interval);
   }, [launchStartedAt, launchState, router]);
 
   function selectInput(itemExternalId: string, path?: DrivePath) {

@@ -182,7 +182,7 @@ describe('DriveWorkflow production browser', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(/analyse a échoué/i);
   });
 
-  it('bounds polling by wall clock even while refreshed dashboard data changes', async () => {
+  it('keeps waiting past 30 seconds while the analysis is still in flight', async () => {
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
     const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
@@ -198,38 +198,23 @@ describe('DriveWorkflow production browser', () => {
       view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 1 } }} />);
       view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 1, documentsIn: 1 } }} />);
       act(() => vi.advanceTimersByTime(10_001));
-      expect(screen.getByRole('alert').textContent).toMatch(/analyse a échoué/i);
-      view.unmount();
-      vi.useRealTimers();
-      render(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 0 } }} />);
-      await screen.findByText('document-test.pdf');
-      expect(screen.queryByRole('status')).toBeNull();
-      expect(screen.getByRole('button', { name: /lancer l'organisation/i })).not.toHaveProperty('disabled', true);
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('status')).toBeDefined();
+      expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('uses only the saved remaining timeout after a busy remount', async () => {
+  it('restores a launch older than 30 seconds without reporting a false failure', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() - 30_001 }));
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
-    clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
     const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
-    const view = render(<DriveWorkflow data={data} />);
+    render(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 1 } }} />);
     await screen.findByText('document-test.pdf');
-    vi.useFakeTimers();
-    fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
-    fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
-    await act(async () => { await Promise.resolve(); });
-    act(() => vi.advanceTimersByTime(20_000));
-    view.unmount();
-    render(<DriveWorkflow data={data} />);
-    await act(async () => { await Promise.resolve(); });
     expect(screen.getByRole('status')).toBeDefined();
-    act(() => vi.advanceTimersByTime(9_999));
     expect(screen.queryByRole('alert')).toBeNull();
-    act(() => vi.advanceTimersByTime(2));
-    expect(screen.getByRole('alert').textContent).toMatch(/analyse a échoué/i);
-    expect(window.sessionStorage.getItem(launchKey)).toBeNull();
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
   });
 
   it('does not wait for an already-terminal manual item', async () => {
