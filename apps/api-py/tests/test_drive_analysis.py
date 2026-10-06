@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -243,7 +244,7 @@ def pending(session, org, name="input.txt", external="synthetic-input", mime="te
 
 
 @pytest.mark.asyncio
-async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant):
+async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant, caplog, monkeypatch):
     _, app, engine, identity, _ = tenant
     org = identity["organizationId"]
     sink = MetadataSink()
@@ -271,9 +272,14 @@ async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant):
         service = AnalysisService(session, app.state.settings, drive, providers, sink)
         payload = dict(organizationId=org, userId=identity["userId"], documentId=doc.id)
         jobs = JobsService(session)
-        jobs.enqueue(payload)
+        job = jobs.enqueue(payload)
         session.commit()
-        assert await work_once(session, service.analyze)
+        monkeypatch.setattr(logging.getLogger("worker"), "disabled", False)
+        with caplog.at_level("INFO", logger="worker"):
+            assert await work_once(session, service.analyze)
+        assert (
+            f"analysis[{job.id}] first_pass quality=ok text_chars=47 md_chars=47" in caplog.messages
+        )
         assert not await work_once(session, service.analyze)
         row = session.scalar(select(ClassificationProposal))
         assert row.source == "RULE" and row.confidence == 0.95 and row.filename_confidence == 0.9

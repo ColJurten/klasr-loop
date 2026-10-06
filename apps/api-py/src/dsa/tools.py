@@ -136,7 +136,13 @@ def extract_document(file_path: str) -> ExtractionResult:
         markdown_content = ""
     quality, warnings = _assess_quality(text)
     first_pass = ExtractionResult(
-        text=text, markdown=markdown_content, quality=quality, warnings=warnings
+        text=text,
+        markdown=markdown_content,
+        quality=quality,
+        warnings=warnings,
+        first_pass_quality=quality,
+        first_pass_text_chars=len(text),
+        first_pass_md_chars=len(markdown_content),
     )
     if image or quality == "ok" or suffix != ".pdf":
         return first_pass
@@ -150,12 +156,19 @@ def extract_document(file_path: str) -> ExtractionResult:
         logger.warning(
             "OCR fallback unavailable; using text-layer extraction: %s", type(exc).__name__
         )
-        return first_pass
+        return first_pass.model_copy(update={"ocr_pass": True})
     if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
         markdown_content = ""
     quality, warnings = _assess_quality(text)
     second_pass = ExtractionResult(
-        text=text, markdown=markdown_content, quality=quality, warnings=warnings
+        text=text,
+        markdown=markdown_content,
+        quality=quality,
+        warnings=warnings,
+        first_pass_quality=first_pass.quality,
+        first_pass_text_chars=len(first_pass.text),
+        first_pass_md_chars=len(first_pass.markdown),
+        ocr_pass=True,
     )
     quality_rank = {"failed": 0, "empty": 1, "sparse": 2, "ok": 3}
     if quality_rank[second_pass.quality] < quality_rank[first_pass.quality] or (
@@ -163,7 +176,7 @@ def extract_document(file_path: str) -> ExtractionResult:
         and len(second_pass.text.strip()) < len(first_pass.text.strip())
     ):
         logger.warning("OCR fallback was lower quality; using text-layer extraction")
-        return first_pass
+        return first_pass.model_copy(update={"ocr_pass": True})
     return second_pass
 
 

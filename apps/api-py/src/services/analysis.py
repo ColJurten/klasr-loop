@@ -23,9 +23,17 @@ def extract_memory(content, mime_type, name):
     if mime_type.startswith("text/") or mime_type == "application/json":
         text = content.decode("utf-8", errors="replace").strip()
         if not text:
-            return ExtractionResult(text="", quality="empty")
+            return ExtractionResult(text="", quality="empty", first_pass_quality="empty")
         quality, warnings = _assess_extraction_quality(text)
-        return ExtractionResult(text=text, markdown=text, quality=quality, warnings=warnings)
+        return ExtractionResult(
+            text=text,
+            markdown=text,
+            quality=quality,
+            warnings=warnings,
+            first_pass_quality=quality,
+            first_pass_text_chars=len(text),
+            first_pass_md_chars=len(text),
+        )
     suffix = {
         "application/pdf": ".pdf",
         "image/png": ".png",
@@ -265,6 +273,12 @@ class AnalysisService:
                 extract_memory, content, document.mime_type, document.name
             )
             del content
+        first_pass = (
+            extraction.first_pass_quality,
+            extraction.first_pass_text_chars,
+            extraction.first_pass_md_chars,
+            extraction.ocr_pass,
+        )
         folders = self.folders.inherited(org)
         paths = [folder["path"] for folder in folders]
         proposal = apply_rules(document, extraction.text, paths, self.rules.list(org))
@@ -298,6 +312,7 @@ class AnalysisService:
                 ruleMatches=int(proposal["source"] == "RULE"),
                 llmCalls=proposal["llm_calls_used"],
             )
+        return first_pass
 
     async def suggest(self, org, document, extraction, paths):
         extension = Path(document.name).suffix.lower()

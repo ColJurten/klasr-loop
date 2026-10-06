@@ -28,7 +28,17 @@ async def work_once(session, handler):
         return False
     session.expunge(job)  # Keep the claimed lease immutable across rollback/reclamation.
     try:
-        await handler(job.payload)
+        first_pass = await handler(job.payload)
+        if first_pass and first_pass[0] in ("ok", "sparse", "empty"):
+            quality, text_chars, md_chars, ocr_pass = first_pass
+            logger.info(
+                "analysis[%s] first_pass quality=%s text_chars=%d md_chars=%d%s",
+                job.id,
+                quality,
+                text_chars,
+                md_chars,
+                " ocr_pass=true" if ocr_pass else "",
+            )
         if jobs.complete(job):
             session.commit()
         else:

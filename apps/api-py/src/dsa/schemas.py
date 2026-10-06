@@ -33,6 +33,10 @@ class ExtractionResult(BaseModel):
     markdown: str = Field(default="", repr=False)
     quality: Literal["ok", "sparse", "empty", "failed"]
     warnings: list[str] = []
+    first_pass_quality: Literal["ok", "sparse", "empty"] | None = Field(default=None, exclude=True)
+    first_pass_text_chars: int = Field(default=0, exclude=True)
+    first_pass_md_chars: int = Field(default=0, exclude=True)
+    ocr_pass: bool = Field(default=False, exclude=True)
 
 
 class DecisionResult(BaseModel):
