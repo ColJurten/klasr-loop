@@ -77,36 +77,36 @@ def _assess_quality(content: str) -> tuple[str, list[str]]:
 @lru_cache(maxsize=2)
 def _build_converter(do_ocr: bool = False):
     """Create a DocumentConverter with tuned PDF pipeline options."""
-    # ponytail: module-level converter cache — fine for single-worker process;
-    # revisit if multiworker.
+    # ponytail: two cached converters hold two model sets; revisit the module-level
+    # cache if model memory becomes a constraint.
     from docling.document_converter import DocumentConverter
 
-    try:
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import PdfFormatOption, ImageFormatOption
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import PdfFormatOption
 
-        def options():
-            return PdfPipelineOptions(
-                do_ocr=do_ocr,
-                document_timeout=_DOCLING_TIMEOUT,
-                force_backend_text=False,
-            )
-
-        pdf_options = options()
-        pdf_options.ocr_options.lang = ["fra", "eng"]
-        image_options = options()
-        image_options.ocr_options.lang = ["fra", "eng"]
-        return DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
-                InputFormat.IMAGE: ImageFormatOption(pipeline_options=image_options),
-            }
+    def options():
+        pipeline_options = PdfPipelineOptions(
+            do_ocr=do_ocr,
+            document_timeout=_DOCLING_TIMEOUT,
+            force_backend_text=False,
         )
+        # ponytail: OcrAutoOptions ignores lang; rely on its automatic defaults
+        # unless language-specific OCR is shown to matter.
+        pipeline_options.ocr_options.lang = ["fra", "eng"]
+        return pipeline_options
+
+    format_options = {
+        InputFormat.PDF: PdfFormatOption(pipeline_options=options()),
+    }
+    try:
+        from docling.document_converter import ImageFormatOption
+
+        format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=options())
     except (AttributeError, ImportError, TypeError, ValueError):
-        if do_ocr:
-            raise
-        return DocumentConverter()
+        logger.warning("Docling image options unavailable; using PDF options")
+        format_options[InputFormat.IMAGE] = PdfFormatOption(pipeline_options=options())
+    return DocumentConverter(format_options=format_options)
 
 
 class DoclingArgs(BaseModel):
@@ -117,19 +117,21 @@ def _export(document) -> tuple[str, str]:
     return document.export_to_text().strip(), document.export_to_markdown().strip()
 
 
-def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
+def extract_document(file_path: str) -> ExtractionResult:
     memory = isinstance(file_path, io.BytesIO)
     path = file_path if memory else Path(file_path)
     if not memory and path.suffix.lower() not in SUPPORTED_SUFFIXES:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
+    name = getattr(path, "name", "document.pdf") if memory else path.name
+    suffix = Path(name).suffix.lower()
+    image = suffix in {".png", ".jpg", ".jpeg", ".tiff", ".gif", ".bmp"}
     try:
         if memory:
             from docling.datamodel.base_models import DocumentStream
 
-            name = getattr(path, "name", "document.pdf")
             data = path.getvalue()
             path = DocumentStream(name=name, stream=io.BytesIO(data))
-        document = _build_converter(do_ocr=False).convert(path).document
+        document = _build_converter(do_ocr=image).convert(path).document
         text, markdown_content = _export(document)
     except Exception:
         return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
@@ -139,8 +141,7 @@ def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
     first_pass = ExtractionResult(
         text=text, markdown=markdown_content, quality=quality, warnings=warnings
     )
-    suffix = Path(name if memory else path).suffix.lower()
-    if quality == "ok" or suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".gif", ".bmp"}:
+    if image or quality == "ok" or suffix != ".pdf":
         return first_pass
 
     try:
@@ -161,12 +162,12 @@ def extract_document(file_path: str, markdown: bool = True) -> ExtractionResult:
     )
 
 
-def extract_bytes(data: bytes, suffix: str, markdown: bool = True) -> ExtractionResult:
+def extract_bytes(data: bytes, suffix: str) -> ExtractionResult:
     if suffix.lower() not in SUPPORTED_SUFFIXES:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
     stream = io.BytesIO(data)
     stream.name = "document" + suffix.lower()
-    return extract_document(stream, markdown)
+    return extract_document(stream)
 
 
 class DoclingMarkdownTool(BaseTool):
@@ -185,4 +186,4 @@ class DoclingTextTool(BaseTool):
     args_schema: type[BaseModel] = DoclingArgs
 
     def _run(self, file_path: str) -> str:
-        return extract_document(file_path, markdown=False).model_dump_json()
+        return extract_document(file_path).model_dump_json()

@@ -31,6 +31,7 @@ x-database-dependencies: &database-dependencies
 services:
   api:
     <<: *api-image
+    restart: unless-stopped
     profiles: [api]
     ports:
       - '127.0.0.1:3001:3001'
@@ -63,6 +64,7 @@ services:
   # Using 127.0.0.1:3000 breaks the OAuth state cookie because the browser cookie host differs from the callback host.
   web:
     profiles: [api]
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/web/Dockerfile

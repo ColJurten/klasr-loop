@@ -5,6 +5,7 @@ import logging
 import signal
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from core.settings import Settings
 from db.session import make_engine
@@ -15,6 +16,7 @@ from services.drive import drive_executor
 from services.llm_settings import ProviderClientService
 
 logger = logging.getLogger(__name__)
+MAX_QUEUE_RETRIES = 5
 
 
 async def work_once(session, handler):
@@ -49,6 +51,7 @@ async def run_worker(settings, engine, stop, analyses=None):
         await analyses.initialize()
         async with httpx.AsyncClient() as client:
             retry_delay = 1
+            retry_attempts = 0
             while not stop.is_set():
                 try:
                     with Session(engine, expire_on_commit=False) as session:
@@ -62,15 +65,30 @@ async def run_worker(settings, engine, stop, analyses=None):
                         )
                         worked = await work_once(session, handler.analyze)
                     retry_delay = 1
-                except Exception as exc:
-                    logger.warning("queue operation failed; retrying: %s", type(exc).__name__)
+                    retry_attempts = 0
+                except SQLAlchemyError as exc:
+                    retry_attempts += 1
+                    if retry_attempts >= MAX_QUEUE_RETRIES:
+                        logger.exception(
+                            "queue operation failed after %d attempts: %s",
+                            retry_attempts,
+                            type(exc).__name__,
+                        )
+                        raise
+                    logger.warning(
+                        "queue operation failed (attempt %d/%d); retrying in %ds: %s",
+                        retry_attempts,
+                        MAX_QUEUE_RETRIES,
+                        retry_delay,
+                        type(exc).__name__,
+                    )
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=retry_delay)
                     except TimeoutError:
                         pass
                     retry_delay = min(retry_delay * 2, 15)
                     continue
-                if not worked:
+                if not worked and not stop.is_set():
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=1)
                     except TimeoutError:

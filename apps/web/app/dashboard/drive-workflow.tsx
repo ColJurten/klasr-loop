@@ -69,7 +69,7 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
       setLaunchStartedAt(null);
       return;
     }
-    if (data !== launchDataRef.current && data?.queue.queued === 0 && data.queue.active === 0) {
+    if (data !== launchDataRef.current && data && data.queue.queued + data.queue.ready + data.queue.active === 0) {
       clearProductionLaunch();
       setLaunchState('interrupted');
       setLaunchStartedAt(null);

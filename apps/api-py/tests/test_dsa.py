@@ -22,6 +22,9 @@ class StubDocument:
 
 
 class StubConverter:
+    def __init__(self, **_kwargs):
+        pass
+
     def convert(self, _path):
         return types.SimpleNamespace(document=StubDocument())
 
@@ -32,6 +35,8 @@ def stub_docling(monkeypatch):
 
     module = types.ModuleType("docling.document_converter")
     module.DocumentConverter = StubConverter
+    module.PdfFormatOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.ImageFormatOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
     yield
     _build_converter.cache_clear()  # Real docling tests must not reuse a stub converter.
@@ -71,15 +76,8 @@ def test_text_layer_does_not_initialize_ocr(monkeypatch):
     assert calls == [False]
 
 
-def test_image_only_page_attempts_ocr_after_empty_text_pass(monkeypatch):
+def test_image_uses_one_ocr_enabled_pass(monkeypatch):
     calls = []
-
-    class EmptyDocument:
-        def export_to_text(self):
-            return ""
-
-        def export_to_markdown(self):
-            return ""
 
     class OcrDocument:
         def export_to_text(self):
@@ -97,15 +95,28 @@ def test_image_only_page_attempts_ocr_after_empty_text_pass(monkeypatch):
 
     def converter(do_ocr=False):
         calls.append(do_ocr)
-        return Converter(OcrDocument() if do_ocr else EmptyDocument())
+        return Converter(OcrDocument())
 
     monkeypatch.setattr("dsa.tools._build_converter", converter)
 
-    result = extract_bytes(b"synthetic", ".pdf")
+    result = extract_bytes(b"synthetic", ".png")
 
     assert result.quality == "ok"
     assert "INV-42" in result.text
-    assert calls == [False, True]
+    assert calls == [True]
+
+
+def test_office_file_skips_ocr_pass(monkeypatch):
+    calls = []
+
+    def converter(do_ocr=False):
+        calls.append(do_ocr)
+        return StubConverter()
+
+    monkeypatch.setattr("dsa.tools._build_converter", converter)
+
+    assert extract_bytes(b"synthetic", ".docx").quality == "ok"
+    assert calls == [False]
 
 
 def test_ocr_init_failure_preserves_first_pass(monkeypatch):
@@ -278,11 +289,10 @@ def test_temp_file_deleted(monkeypatch):
 
     observed = []
 
-    def inspect_memory(stream, markdown=True):
+    def inspect_memory(stream):
         assert isinstance(stream, io.BytesIO)
         assert stream.read() == b"synthetic"
         assert stream.name == "document.png"
-        assert markdown is True
         observed.append(stream)
         return ExtractionResult(text="", quality="empty")
 
@@ -732,6 +742,34 @@ def test_pdf_pipeline_options_are_wired_correctly():
 
     ocr_converter = _build_converter(do_ocr=True)
     assert ocr_converter.format_to_options[InputFormat.PDF].pipeline_options.do_ocr is True
+    assert _build_converter(do_ocr=False) is converter
+    assert _build_converter(do_ocr=True) is ocr_converter
+
+
+def test_converter_fallback_preserves_no_ocr_options(monkeypatch):
+    import docling.document_converter as converter_module
+    from docling.datamodel.base_models import InputFormat
+
+    from dsa.tools import _build_converter
+
+    _build_converter.cache_clear()
+    captured = {}
+
+    class CapturingConverter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    def unavailable_image_options(**_kwargs):
+        raise ValueError("unsupported")
+
+    monkeypatch.setattr(converter_module, "DocumentConverter", CapturingConverter)
+    monkeypatch.setattr(converter_module, "ImageFormatOption", unavailable_image_options)
+    converter = _build_converter(do_ocr=False)
+
+    assert converter is not None
+    assert captured["format_options"][InputFormat.PDF].pipeline_options.do_ocr is False
+    assert captured["format_options"][InputFormat.IMAGE].pipeline_options.do_ocr is False
+    _build_converter.cache_clear()
 
 
 def test_scanned_pdf_is_extracted_with_ocr():

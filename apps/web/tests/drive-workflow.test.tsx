@@ -198,6 +198,46 @@ describe('DriveWorkflow production browser', () => {
     expect(screen.getByRole('button', { name: /lancer l'organisation/i })).not.toHaveProperty('disabled', true);
   });
 
+  it('keeps polling while a newly enqueued job is ready', async () => {
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    const view = render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
+    fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
+    await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalled());
+    view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, ready: 1 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+  });
+
+  it('does not interrupt a restored launch before enqueue completes', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'running', baseline: { outcomes: 0, failures: 0 }, target: null, startedAt: Date.now() }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    const view = render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    view.rerender(<DriveWorkflow data={{ ...data }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+  });
+
+  it('increases polling intervals up to the backoff ceiling', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    vi.useFakeTimers();
+    render(<DriveWorkflow data={{ ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' }, queue: { ...baseDashboard.queue, active: 1 } }} />);
+    await act(async () => { await Promise.resolve(); });
+    for (const [index, interval] of [1_000, 2_000, 4_000, 8_000, 15_000, 15_000].entries()) {
+      act(() => vi.advanceTimersByTime(interval - 1));
+      expect(router.refresh).toHaveBeenCalledTimes(index);
+      act(() => vi.advanceTimersByTime(1));
+      await act(async () => { await Promise.resolve(); });
+    }
+    expect(router.refresh).toHaveBeenCalledTimes(6);
+  });
+
   it('stops polling at the absolute backoff cap', async () => {
     window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() - 15 * 60 * 1_000 }));
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });

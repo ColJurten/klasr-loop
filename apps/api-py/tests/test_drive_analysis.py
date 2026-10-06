@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select, func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from core.security import TokenEncryptionService, decode
@@ -544,6 +545,33 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
     assert started == [(True, engine, None)]
 
 
+@pytest.mark.asyncio
+async def test_worker_retries_transient_job_store_error(tenant, monkeypatch):
+    _, app, engine, _, _ = tenant
+    sink, stop = MetadataSink(), asyncio.Event()
+    attempts, delays = [], []
+
+    async def flaky_work_once(_session, _handler):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OperationalError("claim", {}, RuntimeError("transient"))
+        stop.set()
+        return False
+
+    async def immediate_wait_for(_awaitable, timeout):
+        delays.append(timeout)
+        _awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr("worker.work_once", flaky_work_once)
+    monkeypatch.setattr("worker.asyncio.wait_for", immediate_wait_for)
+
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+
+    assert len(attempts) == 2
+    assert delays == [1]
+
+
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     import sys
     from dsa.tools import _build_converter, extract_bytes
@@ -575,7 +603,7 @@ def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
     result = extract_bytes(b"private image bytes", ".png")
     _build_converter.cache_clear()
-    assert result.quality == "sparse" and len(seen) == 2
+    assert result.quality == "sparse" and len(seen) == 1
 
 
 @pytest.mark.asyncio
