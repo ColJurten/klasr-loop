@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-10-06 (reviewer batch round 1: poll safety, dual text/md export, worker resilience, OCR pass cost)
+> Last updated: 2026-10-06 (reviewer batch round 2: ready-aware interrupts, OCR pass discipline, worker retry hardened)
 
 ## In progress
 
@@ -29,6 +29,8 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-10-06 — Reviewer batch round 2 (findings H1, M1–M6 de review-batch-20261006.md, branche `backend-python-refacto`) : `8371db7` poussé — interrupt dashboard requiert `queued+ready+active===0` après `done` (jamais pendant pre-enqueue `running`) ; options `PdfPipelineOptions(do_ocr=...)` explicites sur les deux constructeurs convertisseur, suffixes image sur passe OCR unique, Office une passe, PDF clairsemés passe 2 ; boucle worker retry catch `SQLAlchemyError` seul, backoff 1→15 s, abandon après 5 échecs consécutifs ; .gitignore couvre `.hosttest*` ; `restart: unless-stopped` api+web ; paramètre mort `markdown` retiré de `extract_document`/`extract_bytes` ; limite du cache deux-convertisseurs et dialecte OcrAutoOptions documentés. Gates revisités : pytest 106 passed/1 skipped, black+flake8 propres, web 132 passed (18 fichiers), typecheck propre, `git diff --check` propre. Handoff : `.tmp/hermes/SINGLE-STACK-RUN/handoffs/REVIEWER_BATCH_R2_HANDOFF.md`.
 
 - [x] 2026-10-06 — Reviewer batch round 1 (items 2-8 de review-batch-20261006.md, branche `backend-python-refacto`) : `99ccf7e` poussé (12 fichiers, +165/−69) — poll dashboard borné (état neutre « analyse interrompue » quand queue 0/0 et cible non atteinte, backoff 1 s→15 s, plafond absolu 15 min) ; export double text+markdown en un seul passage Docling (LLM en md, règles/qualité en texte brut) ; worker survit aux erreurs DB transitoires (reap/claim dans la boucle retry, backoff 1→15 s, `restart: unless-stopped`, depends_on api healthy) ; cache de convertisseurs lru_cache, passe OCR uniquement pdf/images, fallback respecte do_ocr ; logs type-only ; Dockerfile apt avant COPY ; .gitignore nettoyé. docs/COMPOSE_E2E_HARNESS.md (91ea596) expurgé, reproductible avec SA. Gates reverifiés : pytest 103 passed/1 skipped, black+flake8 clean, web 129 passed, typecheck clean, lint exit 0.
 
