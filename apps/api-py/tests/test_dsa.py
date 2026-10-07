@@ -38,6 +38,7 @@ def stub_docling(monkeypatch):
     module.PdfFormatOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
     module.ImageFormatOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
+    _build_converter.cache_clear()  # Never reuse a real converter in stubbed tests.
     yield
     _build_converter.cache_clear()  # Real docling tests must not reuse a stub converter.
 
@@ -178,7 +179,7 @@ def test_ocr_init_failure_preserves_first_pass(monkeypatch):
 
     assert result.text == "Invoice draft"
     assert result.quality == "sparse"
-    assert warnings and warnings[0][0].startswith("OCR fallback unavailable")
+    assert warnings == [("%s", "RuntimeError")]  # Only the exception type, no message body.
 
 
 def test_offline_cli_filename_and_directory(monkeypatch, tmp_path, stub_docling, capsys):
@@ -777,34 +778,6 @@ def test_pdf_pipeline_options_are_wired_correctly():
     assert ocr_converter.format_to_options[InputFormat.PDF].pipeline_options.do_ocr is True
     assert _build_converter(do_ocr=False) is converter
     assert _build_converter(do_ocr=True) is ocr_converter
-
-
-def test_converter_fallback_preserves_no_ocr_options(monkeypatch):
-    import docling.document_converter as converter_module
-    from docling.datamodel.base_models import InputFormat
-
-    from dsa.tools import _build_converter
-
-    _build_converter.cache_clear()
-    captured = {}
-
-    class CapturingConverter:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    def unavailable_image_options(**_kwargs):
-        raise ValueError("unsupported")
-
-    monkeypatch.setattr(converter_module, "DocumentConverter", CapturingConverter)
-    monkeypatch.setattr(converter_module, "ImageFormatOption", unavailable_image_options)
-    try:
-        converter = _build_converter(do_ocr=False)
-
-        assert converter is not None
-        assert captured["format_options"][InputFormat.PDF].pipeline_options.do_ocr is False
-        assert captured["format_options"][InputFormat.IMAGE].pipeline_options.do_ocr is False
-    finally:
-        _build_converter.cache_clear()
 
 
 def test_scanned_pdf_is_extracted_with_ocr():

@@ -4,9 +4,6 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from crewai.tools import BaseTool
-from pydantic import BaseModel, Field
-
 from .schemas import ExtractionResult
 
 SUPPORTED_SUFFIXES = {
@@ -96,18 +93,10 @@ def _build_converter(do_ocr: bool = False):
     format_options = {
         InputFormat.PDF: PdfFormatOption(pipeline_options=options()),
     }
-    try:
-        from docling.document_converter import ImageFormatOption
+    from docling.document_converter import ImageFormatOption
 
-        format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=options())
-    except (AttributeError, ImportError, TypeError, ValueError):
-        logger.warning("Docling image options unavailable; using PDF options")
-        format_options[InputFormat.IMAGE] = PdfFormatOption(pipeline_options=options())
+    format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=options())
     return DocumentConverter(format_options=format_options)
-
-
-class DoclingArgs(BaseModel):
-    file_path: str = Field(description="Local temporary document path")
 
 
 def _export(document) -> tuple[str, str]:
@@ -153,9 +142,7 @@ def extract_document(file_path: str) -> ExtractionResult:
         document = _build_converter(do_ocr=True).convert(path).document
         text, markdown_content = _export(document)
     except Exception as exc:
-        logger.warning(
-            "OCR fallback unavailable; using text-layer extraction: %s", type(exc).__name__
-        )
+        logger.warning("%s", type(exc).__name__)
         return first_pass.model_copy(update={"ocr_pass": True})
     if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
         markdown_content = ""
@@ -186,22 +173,3 @@ def extract_bytes(data: bytes, suffix: str) -> ExtractionResult:
     stream = io.BytesIO(data)
     stream.name = "document" + suffix.lower()
     return extract_document(stream)
-
-
-class DoclingMarkdownTool(BaseTool):
-    name: str = "docling_markdown"
-    description: str = "Extract a supported document as Markdown"
-    args_schema: type[BaseModel] = DoclingArgs
-
-    def _run(self, file_path: str) -> str:
-        result = extract_document(file_path)
-        return result.model_copy(update={"text": result.markdown}).model_dump_json()
-
-
-class DoclingTextTool(BaseTool):
-    name: str = "docling_text"
-    description: str = "Extract plain text from a supported document"
-    args_schema: type[BaseModel] = DoclingArgs
-
-    def _run(self, file_path: str) -> str:
-        return extract_document(file_path).model_dump_json()

@@ -51,11 +51,11 @@ async def work_once(session, handler):
             session.commit()
         else:
             session.rollback()
-    except Exception:
+    except Exception as exc:
         session.rollback()
         jobs.fail(job)
         session.commit()
-        logger.error("job handler failed")
+        logger.error("job handler failed: %s", type(exc).__name__)
     return True
 
 
