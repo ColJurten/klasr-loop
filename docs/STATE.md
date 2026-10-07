@@ -90,6 +90,8 @@
 
 ## Decisions log
 
+- 2026-10-07 — Compose E2E round 31 à HEAD R5 `4130b9a` : PASS en un seul run (`e2e-up.sh`, proposition sans rechargement), job `fe238373186d4a34b4d1a7696d8ab6e5` terminé avec `retryCount=0`, propositions REST/dashboard = 1, ligne worker `first_pass quality=empty text_chars=0 md_chars=0 ocr_pass=true`, confirmation directe, mutation Drive puis restauration relue exacte (nom, parent, md5), et M1 neutre après rechargement ; preuves `round31-*` sous `.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/head-e2e/`.
+
 - 2026-07-14 — GitHub is the code host; GitHub Actions is the CI (jury dossier note: GitLab CI equivalent documented in docs/BRANCHING.md §CI portability).
 - 2026-07-14 — GitFlow-lite: main (tags only) / develop / feature / fix / hotfix / release.
 - 2026-07-14 — ADR-001 TypeScript unique ; ADR-002 PostgreSQL + Mongo minimal (C8) ; ADR-003 suppression MinIO (streaming Drive) ; ADR-004 pg-boss au lieu de Redis/BullMQ ; ADR-005 monolithe modulaire + worker ; ADR-006 Compose pour la démo, K8s en bonus.
