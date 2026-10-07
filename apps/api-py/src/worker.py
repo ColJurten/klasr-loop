@@ -19,6 +19,23 @@ logger = logging.getLogger(__name__)
 MAX_QUEUE_RETRIES = 5
 
 
+def configure_logging():
+    logging.basicConfig(level=logging.INFO)
+
+
+def log_first_pass(job_id, first_pass):
+    if first_pass and first_pass[0] in ("ok", "sparse", "empty"):
+        quality, text_chars, md_chars, ocr_pass = first_pass
+        logger.info(
+            "analysis[%s] first_pass quality=%s text_chars=%d md_chars=%d%s",
+            job_id,
+            quality,
+            text_chars,
+            md_chars,
+            " ocr_pass=true" if ocr_pass else "",
+        )
+
+
 async def work_once(session, handler):
     jobs = JobsService(session, consuming=True)
     jobs.reap_expired()
@@ -29,16 +46,7 @@ async def work_once(session, handler):
     session.expunge(job)  # Keep the claimed lease immutable across rollback/reclamation.
     try:
         first_pass = await handler(job.payload)
-        if first_pass and first_pass[0] in ("ok", "sparse", "empty"):
-            quality, text_chars, md_chars, ocr_pass = first_pass
-            logger.info(
-                "analysis[%s] first_pass quality=%s text_chars=%d md_chars=%d%s",
-                job.id,
-                quality,
-                text_chars,
-                md_chars,
-                " ocr_pass=true" if ocr_pass else "",
-            )
+        log_first_pass(job.id, first_pass)
         if jobs.complete(job):
             session.commit()
         else:
@@ -109,6 +117,7 @@ async def run_worker(settings, engine, stop, analyses=None):
 
 
 async def main():
+    configure_logging()
     settings = Settings()
     settings.validate_runtime()
     engine = make_engine(settings.database_url)

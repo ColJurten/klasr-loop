@@ -66,6 +66,18 @@ partie de `pnpm test` et peut aussi être lancée seule :
 apps/e2e/scripts/e2e-launchers.test.sh
 ```
 
+## Vérification du log de qualité du premier passage
+
+Après avoir placé un PDF de test dans `.tmp/hermes/SINGLE-STACK-RUN/doc3.pdf`,
+vérifier dans l'image du worker que l'extraction DSA produit bien le log INFO :
+
+```sh
+docker compose --profile api build api
+docker compose --profile api run --rm --no-deps -v "$PWD/.tmp/hermes/SINGLE-STACK-RUN/doc3.pdf:/tmp/doc3.pdf:ro" worker python -c 'from services.analysis import extract_memory; from worker import configure_logging, log_first_pass; configure_logging(); result = extract_memory(open("/tmp/doc3.pdf", "rb").read(), "application/pdf", "doc3.pdf"); log_first_pass("container-check", (result.first_pass_quality, result.first_pass_text_chars, result.first_pass_md_chars, result.ocr_pass))'
+```
+
+La sortie doit contenir `analysis[container-check] first_pass quality=`.
+
 ## Restauration et teardown obligatoires
 
 Avant toute mutation, `probe.mjs` doit relever l'identifiant, le nom et les
