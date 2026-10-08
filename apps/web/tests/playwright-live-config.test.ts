@@ -94,10 +94,11 @@ describe('Playwright live OAuth runtime', () => {
     } finally { rmSync(fixture, { recursive: true, force: true }); }
   });
 
-  it('disconnects the local evidence Prisma client in a finally block', () => {
+  it('uses the Python-stack database probe and always cleans up the local evidence user', () => {
     const source = readFileSync('e2e/item-1-auth.spec.ts', 'utf8');
-    expect(source).toMatch(/test\.afterAll[\s\S]*?try\s*{[\s\S]*?}\s*finally\s*{[\s\S]*?\$disconnect\(\)/);
-    expect(source).toMatch(/const prisma = new PrismaClient\(\);\s*try\s*{[\s\S]*?organization\.count[\s\S]*?}\s*finally\s*{[\s\S]*?\$disconnect\(\)/);
+    expect(source).not.toContain('@prisma/client');
+    expect(source).toMatch(/test\.afterAll[\s\S]*?db\('e2e-cleanup', \{ email \}\)/);
+    expect(source).toMatch(/db\('e2e-user', \{ email, password \}\)/);
   });
 
   it('validates provenance before the live spec can read protected credentials', () => {

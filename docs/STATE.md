@@ -4,7 +4,7 @@
 
 > Persistent memory of the engineering loop. Read at session start, update before
 > session end. Keep entries short; link to issues/PRs for detail.
-> Last updated: 2026-08-12 (OCR suggestion quality)
+> Last updated: 2026-10-06 (compose E2E harness locked to one template and launcher path)
 
 ## In progress
 
@@ -29,6 +29,28 @@
 8. [ ] #TBD — Eco-design instrumentation: LLM-call counter, cascade metrics
 
 ## Done
+
+- [x] 2026-10-06 — Contrat compose E2E verrouillé : template versionné `docs/e2e/docker-compose.e2e.yml`, `.hosttest*` local ignoré, launchers uniques `apps/e2e/scripts/e2e-{up,down}.sh`, probe navigateur réutilisé par chemin, rendu `--dry-run`, healthcheck API et teardown avec contrôle conteneurs/ports. Aucun recours à `apps/api/.env` ou au launcher live protégé.
+
+- [x] 2026-10-06 — Reviewer batch round 2 (findings H1, M1–M6 de review-batch-20261006.md, branche `backend-python-refacto`) : `8371db7` poussé — interrupt dashboard requiert `queued+ready+active===0` après `done` (jamais pendant pre-enqueue `running`) ; options `PdfPipelineOptions(do_ocr=...)` explicites sur les deux constructeurs convertisseur, suffixes image sur passe OCR unique, Office une passe, PDF clairsemés passe 2 ; boucle worker retry catch `SQLAlchemyError` seul, backoff 1→15 s, abandon après 5 échecs consécutifs ; .gitignore couvre `.hosttest*` ; `restart: unless-stopped` api+web ; paramètre mort `markdown` retiré de `extract_document`/`extract_bytes` ; limite du cache deux-convertisseurs et dialecte OcrAutoOptions documentés. Gates revisités : pytest 106 passed/1 skipped, black+flake8 propres, web 132 passed (18 fichiers), typecheck propre, `git diff --check` propre. Handoff : `.tmp/hermes/SINGLE-STACK-RUN/handoffs/REVIEWER_BATCH_R2_HANDOFF.md`.
+
+- [x] 2026-10-06 — Reviewer batch round 1 (items 2-8 de review-batch-20261006.md, branche `backend-python-refacto`) : `99ccf7e` poussé (12 fichiers, +165/−69) — poll dashboard borné (état neutre « analyse interrompue » quand queue 0/0 et cible non atteinte, backoff 1 s→15 s, plafond absolu 15 min) ; export double text+markdown en un seul passage Docling (LLM en md, règles/qualité en texte brut) ; worker survit aux erreurs DB transitoires (reap/claim dans la boucle retry, backoff 1→15 s, `restart: unless-stopped`, depends_on api healthy) ; cache de convertisseurs lru_cache, passe OCR uniquement pdf/images, fallback respecte do_ocr ; logs type-only ; Dockerfile apt avant COPY ; .gitignore nettoyé. docs/COMPOSE_E2E_HARNESS.md (91ea596) expurgé, reproductible avec SA. Gates reverifiés : pytest 103 passed/1 skipped, black+flake8 clean, web 129 passed, typecheck clean, lint exit 0.
+
+- [x] 2026-10-06 — Chaîne docker-compose E2E (item-21, branche `backend-python-refacto`, poussée) : `feb79ee` Docling markdown par défaut (doc3.pdf 2904 c. qualité ok, calendrier vectoriel empty attendu, doc1.xlsx table md 323 c., 103 tests/1 skip, black+flake8 verts) ; `b0c0b44` libs runtime OpenCV dans l'image api (import cv2 + RapidOCR vérifiés in-image) ; `c1b73c3` dashboard ne bascule plus en échec à 30 s pendant analyse ; `381759e` repli OCR deux passes (OCR à la demande). Rounds compose (ports décalés 55432/27018/3101/3100, overlay SA, doc3.pdf, restauration exacte systématique) : round16 FAIL (proposal > fenêtre 30 s) → round17 PASS complet incl. confirm 201, mutation Drive renommée/parent + restauration exacte (dashboard-fix/) ; round18 proposal 92 % `DEVIS_658437_ACME_CSimms_20240229.pdf` → `/quotes`, reviewReason « Date février 29, 2024 valide mais rare », modèle claude-haiku-4-5, confirm 201, mutation+restauration PASS, verdict FAIL sur preuve (b) seule : log worker montre RapidOCR actif, le comportement texte-d'abord n'est pas attesté (voir `.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/`). Item ouvert build : diagnostic du premier passage sans OCR.
+
+- [x] 2026-09-27 — Revue destination fail-closed round 2 : fixture de revue dé-hintée, contrat applicatif couvert contre les réponses LLM incohérentes, prompt clarifié et test service isolé de l'environnement.
+
+- [x] 2026-09-27 — Live acceptance attempt 12 : la fixture de revue sans correspondance a été classée à tort dans `stg_tree/quotes` à confiance 0,90 ; diagnostic confirmé hors ligne, puis correctif fail-closed du prompt et de la validation de destination.
+
+- [x] 2026-09-27 — Live acceptance attempt 11 : les appels Anthropic aboutissent, puis la sortie dérive en `signals` chaînes et échoue au parsing `DecisionResult`. Le correctif normalise toute chaîne non vide en signal structuré lossless avec warning `unlabelled_signal`, conserve les signaux internes structurés, rejette les warnings/signaux malformés et renforce le prompt sans date concrète copiable.
+
+- [x] 2026-09-27 — Live acceptance attempts 9–10 : correctif à la frontière fournisseur (`cache_breakpoint` supprimé pour tous les fournisseurs ; phase d’exécution `completion`).
+
+- [x] 2026-09-19 — Backend recalé sur Python 3.13 : CrewAI 1.15.21 / ChromaDB 1.1.1 ne sont pas prêts pour Python 3.14 (`pydantic.v1 ConfigError` sur `chroma_server_nofile`). L’import des deux bibliothèques est validé sous Python 3.13 ; le backend et les environnements locaux doivent donc utiliser Python 3.13. Gate en attente : la suite pytest complète n’a pas encore été exécutée sous Python 3.13 réel (le venv local est en 3.14 ; l’utilisateur l’exécute localement en 3.13).
+
+- [x] 2026-09-19 — Plancher Python 3.14 tenté (`bce6da7`) puis abandonné : CrewAI / ChromaDB ne sont pas compatibles avec Python 3.14 ; voir le recalage sur Python 3.13 ci-dessus.
+
+- [x] 2026-09-13 — Migration backend Python unique : squelette FastAPI/Alembic (`fa3cd3e`), port domaine et tests de parité (`4be7798`), corrections de revue (`c183b8c`), cutover et suppression NestJS (`41ea3a9`), puis qualité de suggestion Docling (`c27ebf1`). État courant : FastAPI/SQLAlchemy, table PostgreSQL `jobs` avec worker inline optionnel, MongoDB limité aux métadonnées TTL, routes disponibles avec et sans `/api/v1`, et schéma Prisma final conservé comme fixture de parité. Écarts assumés : `queueState` est désormais tenant-scoped (corrige la fuite globale NestJS) ; les deux préfixes doublent la surface historique. La CI exécute pytest deux fois et son job d'intégration dépend implicitement de Node pour le test crypto ; `test:integration` désigne désormais pytest, pas l'ancien harness complet. Aucun chemin de révocation n'existe dans l'ancien ou le nouveau backend : la parité est une absence partagée.
 
 - [x] UX clarity Item 1 — SSO marqué et compte local : chaîne acceptée `t_9570e0af` → `t_4245d6fd`. Revue code `claude-opus-5` approuvée (`providerAccepted=false`) dans `.tmp/hermes/ux-clarity/evidence/item-1/claude-review-attempt5f-direct.json` ; revue fournisseur finale `claude-opus-5` approuvée (`approved=true`, `providerAccepted=true`, `reviewerEditedFiles=false`) dans `.tmp/hermes/ux-clarity/evidence/item-1/claude-service-account-final-review.json`. Le manifeste attempt 67 est PASS (`f5fda516`), avec les 16 résultats fournisseur/navigateur/workflow vrais, Drive service-account réel, desktop + 390 px, assertions mutation/ignorer et restauration exacte sans orphelin ; OAuth consumer n’est pas le gate d’acceptation de cette route hors production.
 - [x] UX clarity Item 2 — Onboarding clé LLM et sélecteur visuel : `t_8f8b2279`, revue exacte `claude-opus-5` approuvée (`approved=true`, `reviewerEditedFiles=false`) ; lint/typecheck/build verts, 358/358 tests sans skip, API ciblée 8/8, intégration fournisseur 18/18, cinq captures 1280 px, zéro violation axe, RED→GREEN, liaison à l’arbre et nettoyage vérifiés.
@@ -58,8 +80,6 @@
 
 - [x] 2026-08-06 — Agent loop v3 (#13) : spec v2 et hiérarchie de preuves, manifeste/finaliseur lié issue-tentative-SHA, états/lineage/supersession, rôle `acceptance-validator` en lecture seule du code produit, gate CI pnpm toujours présent avec intégration/E2E/acceptation Google conditionnelle et artefacts, CODEOWNERS, sync Projects v2 fail-safe, documentation et tests node:test. Aucun changement produit ni second orchestrateur.
 
-- [x] 2026-07-30 — One-shot MVP local jury-ready : workspace pnpm racine (`pnpm install/lint/typecheck/test/build`), suppression des anciens lockfiles npm, écran `/demo` sans OAuth ni secrets avec propositions fictives, correction en formulaire/dialogue accessible, validation unitaire ou "Tout valider", échec partiel déterministe + retry, état vide/succès, activité récente et bannière RGPD conforme. Vérification : `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (API 31, web 21, agent 50), `pnpm build`, lancement local `http://127.0.0.1:3000` et routes `/` + `/demo` en HTTP 200. Compromis : pas de capture navigateur réelle, aucun binaire Chromium/Chrome disponible sur l'hôte ; vérification de lancement + inspection HTML/CSS effectuées.
-
 - [x] 2026-07-16 — Agent loop v2 (spec-driven, event-driven) : suppression du cron triage ; adapters intake/feedback/ci-recovery → repository_dispatch → worker (dédup, MAX_AGENT_CYCLES, concurrence par tâche) → _claude-run réutilisable ; spec klasr-agent-spec:v1 + validateur ; machine à états agent:* + commentaire de contrôle unique ; rôles orchestrator (code déterministe)/spec-writer/implementer/verifier/security-reviewer/feedback-responder ; issues auto fingerprint-dédupliquées sur échec CI branche protégée ; 48 tests node:test verts ; actionlint clean. Voir docs/AGENT_LOOP_SPEC.md.
 
 - [x] 2026-07-14 — Revue d'architecture REAC (docs/ARCHITECTURE.md, ADR-001…006) : TypeScript unique (suppression FastAPI, pipeline porté en NestJS + 9 tests), suppression MinIO et Redis (pg-boss), MongoDB réduit à la collection `analyses` (compétence C8, module dédié). API : 16 tests verts.
@@ -69,6 +89,8 @@
 - [x] 2026-07-14 — Loop engineering setup: branching model, CI, skills, agents, hooks, state file
 
 ## Decisions log
+
+- 2026-10-07 — Compose E2E round 31 à HEAD R5 `4130b9a` : PASS en un seul run (`e2e-up.sh`, proposition sans rechargement), job `fe238373186d4a34b4d1a7696d8ab6e5` terminé avec `retryCount=0`, propositions REST/dashboard = 1, ligne worker `first_pass quality=empty text_chars=0 md_chars=0 ocr_pass=true`, confirmation directe, mutation Drive puis restauration relue exacte (nom, parent, md5), et M1 neutre après rechargement ; preuves `round31-*` sous `.tmp/hermes/ux-clarity/evidence/item-21/compose-e2e/head-e2e/`.
 
 - 2026-07-14 — GitHub is the code host; GitHub Actions is the CI (jury dossier note: GitLab CI equivalent documented in docs/BRANCHING.md §CI portability).
 - 2026-07-14 — GitFlow-lite: main (tags only) / develop / feature / fix / hotfix / release.

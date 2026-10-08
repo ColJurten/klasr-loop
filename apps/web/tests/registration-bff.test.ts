@@ -5,6 +5,7 @@ beforeEach(() => {
   vi.resetModules();
   process.env.INTERNAL_API_SECRET = 'internal-test-secret';
   process.env.API_URL = 'http://api.test/api/v1';
+  process.env.NEXT_PUBLIC_API_URL = 'http://browser.test/api/v1';
   process.env.NEXTAUTH_URL = 'http://app.test';
 });
 
@@ -28,7 +29,7 @@ it('allows same-origin registration through the existing upstream path', async (
   const response = await POST(new Request('http://app.test/api/auth/register', { method: 'POST', headers: { origin: 'http://app.test', 'content-type': 'application/json' }, body: '{"email":"local@example.test"}' }));
 
   expect(response.status).toBe(201);
-  expect(upstream).toHaveBeenCalledTimes(1);
+  expect(upstream).toHaveBeenCalledWith('http://api.test/api/v1/auth/register', expect.any(Object));
 });
 
 it('fails closed when the canonical application origin is not configured', async () => {

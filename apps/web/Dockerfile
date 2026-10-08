@@ -1,14 +1,27 @@
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+RUN corepack enable
 
-FROM node:20-alpine
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json ./apps/web/
+RUN pnpm install --frozen-lockfile --filter @klasr/web
+
+COPY . .
+ARG NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT
+ENV NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT=$NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT
+RUN pnpm --filter @klasr/web build
+
+FROM node:20-alpine AS web
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
+RUN corepack enable
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json ./apps/web/
+RUN pnpm install --frozen-lockfile --prod --filter @klasr/web
+COPY --from=build /app/apps/web/.next ./apps/web/.next
+COPY --from=build /app/apps/web/public ./apps/web/public
+COPY --from=build /app/apps/web/next.config.mjs ./apps/web/next.config.mjs
+
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["pnpm", "--filter", "@klasr/web", "start"]

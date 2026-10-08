@@ -1,33 +1,32 @@
 ---
 name: backend-conventions
-description: NestJS + Prisma + pg-boss + MongoDB conventions and multi-tenant rules for apps/api, including the classification pipeline. Use whenever writing or reviewing backend code.
+description: FastAPI + SQLAlchemy + PostgreSQL jobs + MongoDB conventions for apps/api-py. Use whenever writing or reviewing backend code.
 ---
-# Backend Conventions (apps/api — TypeScript only, ADR-001)
+# Backend Conventions (`apps/api-py`, ADR-007)
 
 ## Layering (jury-legible, REAC C6)
-- Controller (HTTP only, DTO validation via class-validator) → Service (business logic) → Repository (all data access). No Prisma client or Mongo driver outside repositories. No business logic in controllers.
-- One module per bounded context: auth, organizations, drive, documents, rules, classification, analyses, history.
-- Never return Prisma models directly from controllers — map to response DTOs.
+- Router (HTTP and Pydantic validation only) → Service (business logic) → Repository (data access). Keep SQLAlchemy and Mongo drivers out of routers.
+- Keep response shapes explicit; never expose ORM objects directly.
 
 ## Data access (REAC C7 + C8)
-- PostgreSQL via Prisma = single source of truth (12 entities).
-- MongoDB is ONE collection (`analyses`) accessed ONLY through `src/analyses/analyses.repository.ts` — variable-schema OCR/LLM payloads, TTL index (RGPD/eco). Do not add collections without an ADR.
+- PostgreSQL via SQLAlchemy is the source of truth; Alembic owns migrations.
+- MongoDB is ONE metadata-only TTL collection accessed through `src/mongo/analyses.py`. Do not add collections or document content without an ADR.
 - Multi-tenancy (blocking rule): every repository method takes organizationId; Mongo queries and job payloads are organizationId-scoped too.
 
 ## Classification pipeline (REAC C3, business components)
-- Location: `src/classification/pipeline` (rule pre-filter) and `src/classification/llm` (provider abstraction, local heuristic, external providers, cascade).
+- Location: `src/services/analysis.py`, `src/services/classification.py`, and `src/dsa`.
 - Order is fixed: user rules by ascending priority → local heuristic → external LLM (cheapest first). A confident rule match makes ZERO LLM calls; `llmCallsUsed` is instrumentation, keep it accurate.
 - Document text is UNTRUSTED input: prompts delimit it; the model may only pick destinations from the provided folder list — validate that in code, never trust the response.
-- Vendor APIs are called over HTTPS inside `src/classification/llm` only.
+- Vendor APIs stay in services; credentials never enter `src/dsa`.
 
 ## Async jobs (ADR-004)
-- pg-boss on PostgreSQL, worker process from the same codebase. Job payloads carry organizationId and are idempotent. Do not introduce Redis/BullMQ without an ADR.
+- The PostgreSQL `jobs` table is consumed with `FOR UPDATE SKIP LOCKED`; payloads carry organizationId and are idempotent. Do not introduce another broker without an ADR.
 
 ## Errors & logging
-- Domain exceptions mapped to HTTP by a global filter. Never leak internals.
+- Domain exceptions are mapped by FastAPI handlers. Never leak internals.
 - NEVER log document content; filenames at debug level only.
 
 ## Testing (REAC C9)
-- Jest unit tests per service/repository/pipeline stage (mock the data layer).
+- pytest covers services, repositories, routes, and the pipeline.
 - A tenant-isolation test is mandatory for every new repository.
-- E2E happy path per module against dockerized Postgres (supertest).
+- Keep PostgreSQL integration and Playwright E2E paths runnable from root scripts.

@@ -39,7 +39,7 @@ export interface DriveInputItemView {
 }
 
 export interface DashboardView {
-  mode: 'local' | 'production' | 'service-account-staging';
+  mode: 'production' | 'service-account-staging';
   connection: null | {
     provider: 'GOOGLE_DRIVE' | 'ONEDRIVE';
     connectedAt: string;

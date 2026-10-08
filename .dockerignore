@@ -1,0 +1,15 @@
+.git
+.env
+**/.env.*
+!**/.env.example
+package-lock.json
+yarn.lock
+**/node_modules
+**/.next
+**/.tmp
+**/.venv*
+**/__pycache__
+**/*.pyc
+coverage
+test-results
+playwright-report
