@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps/api-py/src"))
 
 from core.settings import Settings  # noqa: E402
+from core.security import password_matches  # noqa: E402
 from db.models import (  # noqa: E402
     ActionHistory,
     ClassificationProposal,
@@ -76,10 +77,84 @@ def clear(session, organization_id):
     session.commit()
 
 
+def user_state(session, email, password=""):
+    users = session.scalars(
+        select(User).where(User.email == email.strip().lower())
+    ).all()
+    memberships = (
+        session.scalars(
+            select(Membership).where(
+                Membership.user_id.in_([user.id for user in users])
+            )
+        ).all()
+        if users
+        else []
+    )
+    organization_ids = {membership.organization_id for membership in memberships}
+    password_hash = users[0].password_hash if users else None
+    return {
+        "users": len(users),
+        "organizations": len(organization_ids),
+        "ownerMemberships": sum(
+            membership.role == "ADMIN" for membership in memberships
+        ),
+        "identityRecords": len(users),
+        "duplicateIdentityRecords": max(0, len(users) - 1),
+        "passwordPresent": bool(password_hash),
+        "bcryptFormat": bool(password_hash and password_hash.startswith("$2b$12$")),
+        "passwordValid": bool(
+            password_hash and password_matches(password, password_hash)
+        ),
+    }
+
+
+def cleanup_user(session, email):
+    users = session.scalars(
+        select(User).where(User.email == email.strip().lower())
+    ).all()
+    memberships = (
+        session.scalars(
+            select(Membership).where(
+                Membership.user_id.in_([user.id for user in users])
+            )
+        ).all()
+        if users
+        else []
+    )
+    organization_ids = {membership.organization_id for membership in memberships}
+    for organization_id in organization_ids:
+        clear(session, organization_id)
+    user_ids = [user.id for user in users]
+    if user_ids:
+        session.execute(
+            delete(DriveConnection).where(DriveConnection.user_id.in_(user_ids))
+        )
+        session.execute(delete(Membership).where(Membership.user_id.in_(user_ids)))
+    if organization_ids:
+        session.execute(
+            delete(Organization).where(Organization.id.in_(organization_ids))
+        )
+    if user_ids:
+        session.execute(delete(User).where(User.id.in_(user_ids)))
+    session.commit()
+    return len(
+        session.scalars(select(User).where(User.email == email.strip().lower())).all()
+    )
+
+
 def main():
     command = sys.argv[1]
     engine = make_engine(Settings().database_url)
     with Session(engine) as session:
+        if command in ("e2e-user", "e2e-cleanup"):
+            payload = json.load(sys.stdin)
+            result = (
+                user_state(session, payload["email"], payload.get("password", ""))
+                if command == "e2e-user"
+                else cleanup_user(session, payload["email"])
+            )
+            print(json.dumps(result, separators=(",", ":")))
+            return
         row = tenant(session)
         if command == "tenant":
             result = (

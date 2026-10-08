@@ -1,14 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveItem1EvidenceProvenance, resolvePlaywrightRuntime } from '../playwright-runtime';
 
 test.skip(process.env.KLASR_ITEM1_LIVE !== 'true', 'protected genuine-provider run only');
 
-const requireFromApi = createRequire(path.resolve(process.cwd(), '../api/package.json'));
-const { PrismaClient } = requireFromApi('@prisma/client');
-const { compare } = requireFromApi('bcrypt');
 const axeSource = readFileSync(path.resolve(process.cwd(), '../../node_modules/.pnpm/axe-core@4.12.1/node_modules/axe-core/axe.min.js'), 'utf8');
 const credentialPath = path.resolve(process.cwd(), '../../.tmp/hermes/ux-clarity/.item1-staging-login.json');
 const evidence = path.resolve(process.cwd(), '../../.tmp/hermes/ux-clarity/evidence/item-1');
@@ -20,15 +17,14 @@ test('genuine Google owner enrolls and uses one local identity', async ({ page }
   const email = secret(credentials, ['email', 'googleEmail', 'username']);
   const password = secret(credentials, ['password', 'googlePassword']);
   const localPassword = secret(credentials, ['localPassword', 'enrollmentPassword']);
-  const prisma = new PrismaClient();
   const browserErrors: string[] = [];
   const report: Record<string, unknown> = { task: provenance.task, attempt: provenance.attempt, run: provenance.run, provider: 'google', genuineOAuth: false };
   page.on('console', message => { if (message.type() === 'error') browserErrors.push('console-error'); });
   page.on('pageerror', () => browserErrors.push('page-error'));
 
   try {
-    await cleanup(prisma, email);
-    expect(await prisma.user.count({ where: { email: normalize(email) } })).toBe(0);
+    cleanup(email);
+    expect(readback(email, localPassword).users).toBe(0);
     report.freshFixtureUserRows = 0;
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto('/login');
@@ -55,7 +51,7 @@ test('genuine Google owner enrolls and uses one local identity', async ({ page }
     await page.getByRole('button', { name: 'Se connecter' }).click();
     await expect(page).toHaveURL(/\/dashboard/, { timeout: 30_000 });
 
-    const state = await readback(prisma, email, localPassword);
+    const state = readback(email, localPassword);
     expect(state).toEqual({ users: 1, organizations: 1, ownerMemberships: 1, identityRecords: 1, duplicateIdentityRecords: 0, passwordPresent: true, bcryptFormat: true, passwordValid: true });
     Object.assign(report, state, { localLoginSameIdentity: true });
     await page.setViewportSize({ width: 375, height: 812 });
@@ -73,11 +69,10 @@ test('genuine Google owner enrolls and uses one local identity', async ({ page }
     throw new Error(gate ? `HUMAN_GATE:${gate}` : 'sanitized-product-or-runner-failure');
   } finally {
     await page.context().clearCookies().catch(() => undefined);
-    await cleanup(prisma, email).catch(() => undefined);
-    const remaining = await prisma.user.count({ where: { email: normalize(email) } }).catch(() => -1);
+    let remaining = -1;
+    try { remaining = cleanup(email); } catch { /* report cleanup failure below */ }
     Object.assign(report, { cleanupUserRows: remaining, cleanupComplete: remaining === 0 });
     writeFileSync(path.join(evidence, provenance.outputFilename), JSON.stringify(report, null, 2));
-    await prisma.$disconnect().catch(() => undefined);
   }
 });
 
@@ -102,32 +97,21 @@ async function googleSignIn(page: import('@playwright/test').Page, email: string
   if (page.url().includes('accounts.google.com')) throw new Error('HUMAN_GATE:google-challenge');
 }
 
-async function readback(prisma: any, email: string, password: string) {
-  const normalized = normalize(email);
-  const users = await prisma.user.findMany({ where: { email: normalized }, include: { memberships: true } });
-  const user = users[0];
-  return {
-    users: users.length,
-    organizations: await prisma.organization.count({ where: { memberships: { some: { user: { email: normalized } } } } }),
-    ownerMemberships: user?.memberships.filter(({ role }: { role: string }) => role === 'ADMIN').length ?? 0,
-    identityRecords: users.length,
-    duplicateIdentityRecords: Math.max(0, users.length - 1),
-    passwordPresent: Boolean(user?.passwordHash),
-    bcryptFormat: /^\$2[aby]\$12\$/.test(user?.passwordHash ?? ''),
-    passwordValid: user?.passwordHash ? await compare(password, user.passwordHash) : false,
-  };
+function readback(email: string, password: string) {
+  return db('e2e-user', { email, password });
 }
 
-async function cleanup(prisma: any, email: string) {
-  const normalized = normalize(email);
-  const users = await prisma.user.findMany({ where: { email: normalized }, include: { memberships: true } });
-  for (const user of users) {
-    const organizations = user.memberships.map(({ organizationId }: { organizationId: string }) => organizationId);
-    await prisma.driveConnection.deleteMany({ where: { userId: user.id } });
-    await prisma.membership.deleteMany({ where: { userId: user.id } });
-    await prisma.organization.deleteMany({ where: { id: { in: organizations } } });
-    await prisma.user.deleteMany({ where: { id: user.id } });
-  }
+function cleanup(email: string) {
+  return db('e2e-cleanup', { email });
+}
+
+function db(command: string, payload: Record<string, string>) {
+  const root = path.resolve(process.cwd(), '../..');
+  const run = spawnSync(path.join(root, 'apps/api-py/.venv/bin/python'), [path.join(root, 'scripts/live-google-db.py'), command], {
+    cwd: root, encoding: 'utf8', input: JSON.stringify(payload), env: { ...process.env, KLASR_DATABASE_URL: process.env.DATABASE_URL! },
+  });
+  if (run.status !== 0) throw new Error(`Database probe failed: ${command}`);
+  return JSON.parse(run.stdout);
 }
 
 async function assertAxeAndFocus(page: import('@playwright/test').Page) {
@@ -144,4 +128,3 @@ function humanGate(error: unknown, url: string): string | null {
   if (message.startsWith('HUMAN_GATE:')) return message.slice('HUMAN_GATE:'.length);
   return url.includes('accounts.google.com') ? 'google-challenge' : null;
 }
-function normalize(value: string) { return value.trim().toLowerCase(); }
