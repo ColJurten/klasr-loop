@@ -372,9 +372,9 @@ try {
     setImmediate(() => void Promise.reject(new Error('fatal-probe-secret')));
     await new Promise(() => undefined);
   }
-  assertPythonRuntime();
   const missing = ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL', 'KLASR_LLM_API_KEY', 'KLASR_GOOGLE_SERVICE_ACCOUNT_FILE', 'KLASR_GOOGLE_DRIVE_ROOT_ID', ...(authenticationMode === 'user' && !manualConsentMode ? ['KLASR_STAGING_ACCOUNT_PASSWORD'] : [])].filter((name) => !process.env[name]);
   if (missing.length) { acceptanceBlocked = true; throw new Error(`Missing ${missing.join(', ')}`); }
+  assertPythonRuntime();
   llmProvider = required('KLASR_LLM_PROVIDER');
   assert(llmProvider === 'anthropic', `Live UI LLM setup supports provider anthropic, received ${llmProvider}`);
   selectedLlmModel = required('KLASR_LLM_MODEL');

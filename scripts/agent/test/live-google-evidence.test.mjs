@@ -254,6 +254,8 @@ test('live runner saves environment LLM settings through the authenticated UI be
 });
 
 test('live BYOK decisions are deterministic and reject missing prerequisites without credentials', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert(source.indexOf("const missing = ['KLASR_LLM_PROVIDER'") < source.indexOf('assertPythonRuntime();'), 'BYOK prerequisites must fail before the optional live Python runtime');
   const decisions = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--byok-acceptance-self-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(decisions.status, 0, decisions.stderr);
   assert.equal(decisions.stdout, 'live BYOK acceptance decisions check PASS\n');
