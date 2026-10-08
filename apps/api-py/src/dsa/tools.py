@@ -1,12 +1,12 @@
 import io
 import json
+import logging
 import re
 from pathlib import Path
 
-from crewai.tools import BaseTool
-from pydantic import BaseModel, Field
-
 from .schemas import ExtractionResult
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".gif", ".bmp"}
 
@@ -106,10 +106,6 @@ def _document_context(document_json: dict) -> str:
     return json.dumps(content, ensure_ascii=False)
 
 
-class DoclingArgs(BaseModel):
-    file_path: str = Field(description="Local temporary document path")
-
-
 def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult:
     memory = isinstance(file_path, io.BytesIO)
     path = file_path if memory else Path(file_path)
@@ -135,7 +131,8 @@ def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult
             failed = False
             if not is_pdf or len(text) >= _MIN_OK_LENGTH:
                 break
-        except Exception:
+        except Exception as exc:
+            logger.warning("%s", type(exc).__name__)
             failed = True
     if failed and not content:
         return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
@@ -149,21 +146,3 @@ def extract_bytes(data: bytes, suffix: str, markdown: bool = False) -> Extractio
     stream = io.BytesIO(data)
     stream.name = "document" + suffix.lower()
     return extract_document(stream, markdown)
-
-
-class DoclingMarkdownTool(BaseTool):
-    name: str = "docling_markdown"
-    description: str = "Extract a supported document as Markdown"
-    args_schema: type[BaseModel] = DoclingArgs
-
-    def _run(self, file_path: str) -> str:
-        return extract_document(file_path, markdown=True).model_dump_json()
-
-
-class DoclingTextTool(BaseTool):
-    name: str = "docling_text"
-    description: str = "Extract plain text from a supported document"
-    args_schema: type[BaseModel] = DoclingArgs
-
-    def _run(self, file_path: str) -> str:
-        return extract_document(file_path).model_dump_json()
