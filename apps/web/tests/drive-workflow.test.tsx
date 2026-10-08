@@ -124,6 +124,23 @@ describe('DriveWorkflow production browser', () => {
     expect(screen.getByRole('button', { name: /lancer l'organisation/i })).not.toHaveProperty('disabled', true);
   });
 
+  it('keeps polling after auto outcomes complete while a manual item remains queued', async () => {
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 1 });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    const view = render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
+    fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
+    await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalled());
+
+    view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, ready: 1 }, metrics: { ...data.metrics, outcomes: 1 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+
+    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, outcomes: 1 } }} />);
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  });
+
   it('restores a nested production browser selection after a completed refresh remount', async () => {
     clientApi.listDriveItems.mockImplementation((parentId: string) => Promise.resolve({
       items: parentId === 'folder_real' ? nestedItems : rootItems,

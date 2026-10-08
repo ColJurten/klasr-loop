@@ -15,6 +15,10 @@ class DashboardService:
 
     async def get(self, organization_id, user_id):
         connection = self.connections.find(organization_id, user_id)
+        # Read queue first: a job landing between the two reads must not be hidden
+        # behind earlier metrics (drive-workflow declares done only when the queue is empty).
+        queue = self.jobs.queue_state(organization_id)
+        metrics = self.metrics.totals(organization_id)
         return serialize(
             dict(
                 mode=(
@@ -35,8 +39,8 @@ class DashboardService:
                     if connection
                     else None
                 ),
-                metrics=self.metrics.totals(organization_id),
-                queue=self.jobs.queue_state(organization_id),
+                metrics=metrics,
+                queue=queue,
                 analysisFailures=self.jobs.failed_analysis_count(organization_id),
                 referenceRoot=self.folders.root(organization_id),
                 folders=self.folders.inherited(organization_id),

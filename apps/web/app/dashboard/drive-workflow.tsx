@@ -39,7 +39,9 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
       setLaunchState('error');
       return;
     }
-    if (launch.state === 'done' && launch.target !== null && (data?.metrics.outcomes ?? 0) >= launch.target) {
+    if (launch.state === 'done' && launch.target !== null && data
+      && data.metrics.outcomes >= launch.target
+      && data.queue.queued + data.queue.ready + data.queue.active === 0) {
       clearProductionLaunch();
       return;
     }
@@ -62,7 +64,9 @@ export function DriveWorkflow({ data, llmConfigured = true }: { data: DashboardV
 
   useEffect(() => {
     if (launchState !== 'done') return;
-    if (launchTarget !== null && (data?.metrics.outcomes ?? 0) >= launchTarget) {
+    if (launchTarget !== null && data
+      && data.metrics.outcomes >= launchTarget
+      && data.queue.queued + data.queue.ready + data.queue.active === 0) {
       clearProductionLaunch();
       setLaunchState('idle');
       setLaunchStartedAt(null);
