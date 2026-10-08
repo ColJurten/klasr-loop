@@ -15,7 +15,7 @@
 ## Vérifications
 
 - API : `96 passed` en 66s (incl. `test_real_scanned_pdf_ocr_pictures_and_proposal` Docling réel) ; black + flake8 PASS (venv py3.14 `.venv`, pas `.venv313` qui est en 3.13 et ne parse pas le PEP 758).
-- Web : `18` fichiers, `133 passed` + `tsc --noEmit` clean.
+- Web : `18` fichiers, `133 passed`. `tsc --noEmit` : clean en cache chaud (« No errors found ») mais ÉCHEC à froid — TS2882 `app/layout.tsx:3` ← `./globals.css`, préexistant (fichiers intouchés par ce batch, tsconfig/lockfile TS 5.9.3) ; le clean initial était un artefact du buildinfo incrémental. Correction constatée à la re-vérification cron 2026-10-08 21:45 ; hors scope R5, à traiter côté toolchain.
 - Agent : `scripts/agent` node --test — `159 pass / 2 fail`. Les 2 échecs (live BYOK preflight determinism + live runner fatal rejection) sont préexistants et env-only : `@prisma/client` introuvable (apps/api legacy sans node_modules) au require du harness ; aucun fichier de ce diff ne touche `scripts/` ni `apps/api/`.
 - Commits (conventionnels, split) : `fix: dashboard payload queue-before-metrics; done-declaration requires empty queue` → M1+M2 ; `chore: drop dead docling tools; log exception type only` → L3/L4 ; `docs: handoff + STATE …` → handoff + STATE.md. Poussés : création de l'upstream `origin/hermes/card-3-scanned-pdf` (le reste de la stack cards 1-4 est antérieur, non concerné par ce batch, déjà présent sur la branche locale). Arbre propre. Reviewer gate et evidence dirs intouchés.
 
