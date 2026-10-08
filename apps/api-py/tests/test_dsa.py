@@ -12,6 +12,9 @@ from dsa.tools import SUPPORTED_SUFFIXES, extract_bytes, extract_document
 
 
 class StubDocument:
+    def export_to_dict(self):
+        return {"texts": [{"text": self.export_to_text()}]}
+
     def export_to_text(self):
         return "Supplier: Acme; invoice: INV-42; date: 2026-09-13"
 
@@ -20,15 +23,16 @@ class StubDocument:
 
 
 class StubConverter:
+    def __init__(self, **kwargs):
+        pass
+
     def convert(self, _path):
         return types.SimpleNamespace(document=StubDocument())
 
 
 @pytest.fixture
 def stub_docling(monkeypatch):
-    module = types.ModuleType("docling.document_converter")
-    module.DocumentConverter = StubConverter
-    monkeypatch.setitem(sys.modules, "docling.document_converter", module)
+    monkeypatch.setattr("docling.document_converter.DocumentConverter", StubConverter)
 
 
 def test_supported_file_types_and_quality(tmp_path, stub_docling):
@@ -472,4 +476,4 @@ def test_pdf_pipeline_options_are_wired_correctly():
     assert isinstance(converter, DocumentConverter)
     option = converter.format_to_options.get(InputFormat.PDF)
     assert option is not None and isinstance(option, PdfFormatOption)
-    assert option.pipeline_options.do_ocr is True
+    assert option.pipeline_options.do_ocr is False

@@ -33,7 +33,7 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
             value=None,
             confidence=0,
             signals=[f"extraction:{analysis.quality}"],
-            warnings=analysis.warnings,
+            warnings=["Aucun contenu lisible détecté dans le document"],
         )
     if local := _local_suggestion(analysis, directories):
         return local.filename if kind == "filename" else local.destination
@@ -41,7 +41,9 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
 
     assistant = DocumentSortingAssistantCrew()
     crew = assistant.naming_crew() if kind == "filename" else assistant.destination_crew()
-    output = crew.kickoff(inputs={"content": analysis.text, "directories": directories})
+    output = crew.kickoff(
+        inputs={"content": analysis.context or analysis.text, "directories": directories}
+    )
     return DecisionResult.model_validate(output.pydantic or output.to_dict())
 
 
@@ -58,7 +60,7 @@ def _both_decisions(
     output = (
         DocumentSortingAssistantCrew()
         .combined_crew()
-        .kickoff(inputs={"content": analysis.text, "directories": directories})
+        .kickoff(inputs={"content": analysis.context or analysis.text, "directories": directories})
     )
     filename, destination = output.tasks_output[-2:]
     return (

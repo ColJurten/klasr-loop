@@ -471,14 +471,34 @@ async def test_failed_extraction_creates_explicit_review_proposal(tenant):
     _, app, engine, identity, _ = tenant
     with Session(engine, expire_on_commit=False) as session:
         doc = pending(session, identity["organizationId"])
+        RulesRepository(session).create(
+            identity["organizationId"],
+            RuleDTO(
+                priority=1,
+                destinationPath="/Invoices",
+                suggestedNameTemplate="metadata_rule.txt",
+                conditions=[dict(field="FILENAME", operator="CONTAINS", value="input")],
+            ),
+        )
+        session.add(
+            Folder(
+                organization_id=identity["organizationId"],
+                external_id="invoices",
+                path="/Invoices",
+                name="Invoices",
+            )
+        )
         drive = types.SimpleNamespace(
             download=AsyncMock(side_effect=RuntimeError("download failed"))
         )
         service = AnalysisService(session, app.state.settings, drive, None, MetadataSink())
         await service.analyze(dict(organizationId=identity["organizationId"], documentId=doc.id))
         proposal = session.scalar(select(ClassificationProposal))
-        assert proposal.review_required and proposal.review_reason == "extraction_failed"
-        assert proposal.proposed_name == "classement_manuel.txt" and proposal.llm_calls_used == 0
+        assert (
+            proposal.review_required
+            and proposal.review_reason == "Aucun contenu lisible détecté dans le document"
+        )
+        assert proposal.proposed_name == "input.txt" and proposal.llm_calls_used == 0
 
 
 @pytest.mark.asyncio
@@ -507,23 +527,26 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
 
 
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
-    import sys
     from dsa.tools import extract_bytes
 
     seen = []
 
     class Converter:
+        def __init__(self, **kwargs):
+            pass
+
         def convert(self, stream):
             assert stream.name == "document.png"
             assert stream.stream.read() == b"private image bytes"
             seen.append(stream)
             return types.SimpleNamespace(
-                document=types.SimpleNamespace(export_to_text=lambda: "synthetic extracted text")
+                document=types.SimpleNamespace(
+                    export_to_text=lambda: "synthetic extracted text",
+                    export_to_dict=lambda: {"texts": [{"text": "synthetic extracted text"}]},
+                )
             )
 
-    module = types.ModuleType("docling.document_converter")
-    module.DocumentConverter = Converter
-    monkeypatch.setitem(sys.modules, "docling.document_converter", module)
+    monkeypatch.setattr("docling.document_converter.DocumentConverter", Converter)
     result = extract_bytes(b"private image bytes", ".png")
     assert result.quality == "sparse" and len(seen) == 1
 

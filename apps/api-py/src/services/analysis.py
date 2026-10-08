@@ -4,7 +4,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from dsa import suggest_text
+from dsa import suggest_text, _validated_destination
 from dsa.schemas import ExtractionResult, DecisionResult, SuggestionResult
 from dsa.tools import extract_bytes
 from repositories.documents import DocumentsRepository
@@ -264,7 +264,11 @@ class AnalysisService:
             del content
         folders = self.folders.inherited(org)
         paths = [folder["path"] for folder in folders]
-        proposal = apply_rules(document, extraction.text, paths, self.rules.list(org))
+        proposal = (
+            apply_rules(document, extraction.text, paths, self.rules.list(org))
+            if extraction.quality not in {"empty", "failed"}
+            else None
+        )
         if not proposal:
             proposal = await self.suggest(org, document, extraction, paths)
         proposal["destination_folder_external_id"] = next(
@@ -304,9 +308,7 @@ class AnalysisService:
                 value=None,
                 confidence=0,
                 signals=[],
-                warnings=[
-                    "extraction_failed" if extraction.quality == "failed" else "empty_content"
-                ],
+                warnings=["Aucun contenu lisible détecté dans le document"],
             )
             destination = filename
         else:
@@ -333,9 +335,10 @@ class AnalysisService:
                     suggest_text, extraction, paths, lambda _: CallableLLM(complete)
                 )
                 model_used = config["provider"] + "/" + config["model"]
-            filename, destination = result.filename, result.destination
-        name = filename.value or "classement_manuel"
-        if filename.value:
+            filename = result.filename
+            destination = _validated_destination(result.destination, paths)
+        name = filename.value or document.name
+        if name:
             stem = str(Path(name).with_suffix("")) if Path(name).suffix else name
             name = (
                 re.sub(
@@ -350,13 +353,16 @@ class AnalysisService:
                         ),
                     ),
                 ).strip(".")[:180]
-                or "classement_manuel"
+                or "document"
             )
         name += extension
         cap = 0.55 if extraction.quality == "sparse" else 1
         filename_confidence = min(filename.confidence, cap)
         destination_confidence = min(destination.confidence, cap)
         warnings = filename.warnings + destination.warnings
+        reason = next(iter(warnings), None)
+        if reason and re.fullmatch(r"[a-z]+(?:_[a-z]+)+", reason):
+            reason = "Vérification manuelle requise pour le nom ou le dossier proposé"
         return dict(
             proposed_name=name,
             destination_path=destination.value or "",
@@ -367,7 +373,7 @@ class AnalysisService:
             or not destination.value
             or filename_confidence < 0.7
             or destination_confidence < 0.7,
-            review_reason=next(iter(warnings), None),
+            review_reason=reason,
             source="LLM",
             model_used=model_used,
             llm_calls_used=calls,

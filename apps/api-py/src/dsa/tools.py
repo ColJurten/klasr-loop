@@ -1,4 +1,5 @@
 import io
+import json
 import re
 from pathlib import Path
 
@@ -59,26 +60,50 @@ def _assess_quality(content: str) -> tuple[str, list[str]]:
     return "ok", warnings
 
 
-def _build_converter():
-    """Create a DocumentConverter with tuned PDF pipeline options."""
-    from docling.document_converter import DocumentConverter
+def _build_converter(enriched: bool = False):
+    """Each pass owns its pipeline and converter."""
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
 
-    try:
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import PdfFormatOption
+    options = PdfPipelineOptions(
+        do_ocr=enriched,
+        document_timeout=_DOCLING_TIMEOUT,
+        generate_picture_images=enriched,
+        do_picture_description=enriched,
+        do_picture_classification=enriched,
+    )
+    options.ocr_options.lang = ["fra", "eng"]
+    options.ocr_options.force_full_page_ocr = enriched
+    return DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
+    )
 
-        pdf_options = PdfPipelineOptions(
-            do_ocr=True,
-            document_timeout=_DOCLING_TIMEOUT,
-            force_backend_text=False,
-        )
-        pdf_options.ocr_options.lang = ["fra", "eng"]
-        return DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)}
-        )
-    except AttributeError, ImportError, TypeError, ValueError:
-        return DocumentConverter()
+
+def _document_context(document_json: dict) -> str:
+    """Keep content and runtime metadata fields, never embedded image payloads."""
+
+    def clean(value):
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items() if key not in {"image", "uri"}}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        if isinstance(value, str) and value.startswith("data:"):
+            return ""
+        return value
+
+    content = {
+        key: clean(document_json.get(key, []))
+        for key in ("texts", "tables", "key_value_items", "pictures")
+    }
+    for picture in content["pictures"]:
+        classification = (picture.get("meta") or {}).get("classification") or {}
+        predictions = classification.get("predictions", [])
+        if predictions:
+            classification["predictions"] = [
+                max(predictions, key=lambda prediction: prediction.get("confidence", 0))
+            ]
+    return json.dumps(content, ensure_ascii=False)
 
 
 class DoclingArgs(BaseModel):
@@ -91,17 +116,31 @@ def extract_document(file_path: str, markdown: bool = False) -> ExtractionResult
     if not memory and path.suffix.lower() not in SUPPORTED_SUFFIXES:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
     try:
-        if memory:
+        data = path.getvalue() if memory else path.read_bytes()
+    except OSError:
+        return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
+    name = getattr(path, "name", "document.pdf")
+    is_pdf = Path(name).suffix.lower() == ".pdf"
+    content, context = "", ""
+    failed = False
+    for enriched in ([False, True] if is_pdf else [False]):
+        try:
             from docling.datamodel.base_models import DocumentStream
 
-            path = DocumentStream(name=getattr(path, "name", "document.pdf"), stream=path)
-        document = _build_converter().convert(path).document
-        content = document.export_to_markdown() if markdown else document.export_to_text()
-    except Exception:
+            source = DocumentStream(name=Path(name).name, stream=io.BytesIO(data))
+            document = _build_converter(enriched).convert(source).document
+            text = document.export_to_text().strip()
+            context = _document_context(document.export_to_dict())
+            content = document.export_to_markdown().strip() if markdown else text
+            failed = False
+            if not is_pdf or len(text) >= _MIN_OK_LENGTH:
+                break
+        except Exception:
+            failed = True
+    if failed and not content:
         return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
-    content = content.strip()
     quality, warnings = _assess_quality(content)
-    return ExtractionResult(text=content, quality=quality, warnings=warnings)
+    return ExtractionResult(text=content, context=context, quality=quality, warnings=warnings)
 
 
 def extract_bytes(data: bytes, suffix: str, markdown: bool = False) -> ExtractionResult:

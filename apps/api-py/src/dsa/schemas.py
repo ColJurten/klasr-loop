@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class ExtractionResult(BaseModel):
     text: str = Field(repr=False)
+    context: str = Field(default="", repr=False)
     quality: Literal["ok", "sparse", "empty", "failed"]
     warnings: list[str] = []
 
