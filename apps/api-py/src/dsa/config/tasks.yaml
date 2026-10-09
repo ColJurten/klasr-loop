@@ -8,6 +8,7 @@ suggest_filename_task:
   description: |-
     Proposer un nom depuis ce contenu et l'analyse, jamais depuis les octets du fichier :
     {content}
+    Répondre avec un DecisionResult structuré, JAMAIS de simples chaînes de caractères.
   expected_output: "Value, confidence, rationale."
   agent: suggest_filename_agent
 suggest_directory_task:
@@ -15,5 +16,6 @@ suggest_directory_task:
     Choisir un chemin exact dans cette liste sans jamais en inventer :
     {directories}
     Ne choisir un chemin que si le contenu l'étaye directement ; sinon value: null, confidence: 0.
+    Répondre avec un DecisionResult structuré, JAMAIS de simples chaînes de caractères.
   expected_output: "Value, confidence, rationale (1-2 phrases neutres). Un chemin exact de la liste, ou un état d'échec explicite."
   agent: suggest_directory_agent
