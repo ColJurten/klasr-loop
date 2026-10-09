@@ -54,14 +54,15 @@ describe('ProposalCard — single-click confirmation flow', () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
     render(
       <ProposalCard
-        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'Texte extrait insuffisant' }}
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true }}
         status="idle"
         onConfirm={onConfirm}
       />,
     );
 
-    expect(screen.getByText('Texte extrait insuffisant')).toBeDefined();
-    expect(screen.getByText(/exclue de Tout valider/)).toBeDefined();
+    expect(screen.queryByText('Texte extrait insuffisant')).toBeNull();
+    expect(screen.queryByText('à vérifier')).toBeNull();
+    expect(screen.queryByText(/exclue de Tout valider/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Valider le classement/ }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('prop_1', undefined));
   });
@@ -70,7 +71,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
     render(
       <ProposalCard
-        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'Destination absente', destinationPath: '', destinationFolderExternalId: null }}
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, destinationPath: '', destinationFolderExternalId: null }}
         status="idle"
         onConfirm={onConfirm}
       />,
@@ -142,7 +143,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
   it('opens Corriger as the reference-sized correction overlay with the required information and action order', () => {
     render(
       <ProposalCard
-        proposal={{ ...proposal, reviewReason: 'Destination non reconnue dans l’arborescence héritée' }}
+        proposal={{ ...proposal, rationale: 'Devis identifié par sa référence et ses parties.' }}
         folders={[
           { externalId: 'folder_elec', path: '/Comptabilité/Électricité' },
           { externalId: 'folder_social', path: '/Social/2026' },
@@ -159,8 +160,12 @@ describe('ProposalCard — single-click confirmation flow', () => {
     expect(dialog.className).toContain('w-[min(1120px,92vw)]');
     expect(within(dialog).getAllByText('scan_001.pdf').length).toBeGreaterThan(0);
     expect(within(dialog).getByDisplayValue('Facture_EDF_2026-03.pdf')).toBeDefined();
-    expect(within(dialog).getAllByText('Destination non reconnue dans l’arborescence héritée').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('Devis identifié par sa référence et ses parties.').length).toBeGreaterThan(0);
     expect(within(dialog).getByLabelText('Confiance 92 %, source IA')).toBeDefined();
+    for (const label of within(dialog).getAllByText('Motif de l’analyse')) {
+      expect(label.parentElement?.className).not.toContain('peach');
+      expect(label.parentElement?.textContent).toContain('Devis identifié par sa référence et ses parties.');
+    }
     expect(Array.from(dialog.querySelectorAll('button')).map((button) => button.textContent?.trim()).filter(Boolean).slice(-3)).toEqual([
       'Restaurer la proposition',
       'Annuler',
@@ -194,7 +199,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
     render(
       <ProposalCard
-        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'no_destination_match', destinationPath: '', destinationFolderExternalId: null }}
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, destinationPath: '', destinationFolderExternalId: null }}
         folders={[{ externalId: 'folder_social', path: '/Social/2026' }]}
         status="idle"
         onConfirm={onConfirm}

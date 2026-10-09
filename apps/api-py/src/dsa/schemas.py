@@ -1,7 +1,7 @@
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 SIGNAL_LABELS = (
     "date",
@@ -33,7 +33,7 @@ class ExtractionResult(BaseModel):
     markdown: str = Field(default="", repr=False)
     context: str = Field(default="", repr=False)
     quality: Literal["ok", "sparse", "empty", "failed"]
-    warnings: list[str] = []
+    warnings: list[str] = Field(default_factory=list, exclude=True)
     first_pass_quality: Literal["ok", "sparse", "empty"] | None = Field(default=None, exclude=True)
     first_pass_text_chars: int = Field(default=0, exclude=True)
     first_pass_md_chars: int = Field(default=0, exclude=True)
@@ -43,8 +43,9 @@ class ExtractionResult(BaseModel):
 class DecisionResult(BaseModel):
     value: str | None
     confidence: float = Field(ge=0, le=1)
-    signals: list[Signal]
-    warnings: list[str] = []
+    rationale: str = ""
+    _signals: list[Signal] = PrivateAttr(default_factory=list)
+    _warnings: list[str] = PrivateAttr(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -75,6 +76,28 @@ class DecisionResult(BaseModel):
             return {**data, "signals": normalized}
         warnings = [*warnings, "unlabelled_signal"]
         return {**data, "signals": normalized, "warnings": warnings}
+
+    def __init__(self, **data):
+        legacy = self.labelled_signals(data)
+        signals = legacy.get("signals", [])
+        warnings = legacy.get("warnings", [])
+        validated = LegacyDecision.model_validate({"signals": signals, "warnings": warnings})
+        super().__init__(**legacy)
+        self._signals = validated.signals
+        self._warnings = validated.warnings
+
+    @property
+    def signals(self):
+        return self._signals
+
+    @property
+    def warnings(self):
+        return self._warnings
+
+
+class LegacyDecision(BaseModel):
+    signals: list[Signal] = []
+    warnings: list[str] = []
 
 
 class SuggestionResult(BaseModel):

@@ -134,7 +134,7 @@ export function ProposalQueue({
         </Button>
       </div>
       {visibleProposals.some((proposal) => !isBulkEligible(proposal)) && (
-        <p role="status" className="rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
+        <p role="status" className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink/70">
           Les propositions à faible confiance sont exclues de Tout valider et restent validables une par une.
         </p>
       )}

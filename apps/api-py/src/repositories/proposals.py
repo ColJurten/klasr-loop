@@ -23,10 +23,12 @@ class ProposalsRepository:
             if history
             else query.where(model.status == "PENDING").order_by(model.created_at.desc())
         )
-        return [
-            {**serialize(row), "document": serialize(document)}
-            for row, document in self.session.execute(query)
-        ]
+        rows = []
+        for row, document in self.session.execute(query):
+            proposal = serialize(row)
+            proposal.pop("reviewReason", None)
+            rows.append({**proposal, "document": serialize(document)})
+        return rows
 
     def claim(self, organization_id, proposal_id, status):
         changed = self.session.execute(

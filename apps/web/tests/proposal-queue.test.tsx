@@ -39,6 +39,26 @@ const proposals: ProposalView[] = [
 afterEach(cleanup);
 
 describe('ProposalQueue', () => {
+  it('includes high-confidence quotes regardless of document arithmetic or leap-day date', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const quotes: ProposalView[] = [
+      { ...proposals[0], id: 'quote_xlsx', proposedName: 'Devis_Peinture_Enduit_20250323.xlsx', confidence: 0.95,
+        destinationPath: '/quotes', destinationFolderExternalId: 'quotes', reviewRequired: false,
+        rationale: 'Devis de peinture et enduit daté du 23 mars 2025.',
+        document: { ...proposals[0].document, name: 'Copie de doc1(1).xlsx' } },
+      { ...proposals[1], id: 'quote_pdf', proposedName: 'ACME_Devis_658437_ClaireSimmns_20240229.pdf', confidence: 0.92,
+        destinationPath: '/quotes', destinationFolderExternalId: 'quotes', reviewRequired: false,
+        rationale: 'Devis ACME daté du 29 février 2024.',
+        document: { ...proposals[1].document, name: 'test1.pdf' } },
+    ];
+    render(<ProposalQueue initialProposals={quotes} onConfirmProposal={onConfirm} />);
+    expect(screen.queryByText('à vérifier')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Tout valider' }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(2));
+    expect(onConfirm).toHaveBeenCalledWith('quote_xlsx', undefined);
+    expect(onConfirm).toHaveBeenCalledWith('quote_pdf', undefined);
+  });
+
   it('handles a partial bulk failure and leaves failed rows retryable', async () => {
     const onConfirm = vi.fn((proposalId: string) =>
       proposalId === 'prop_retry' ? Promise.reject(new Error('drive down')) : Promise.resolve(),
@@ -104,6 +124,11 @@ describe('ProposalQueue', () => {
 
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
     expect(onConfirm).toHaveBeenCalledWith('prop_ok', undefined);
-    expect(screen.getByText(/faible confiance sont exclues/)).toBeDefined();
+    const notice = screen.getByText(/faible confiance sont exclues/);
+    expect(notice).toBeDefined();
+    expect(notice.className).toContain('border-line');
+    expect(notice.className).toContain('bg-white');
+    expect(notice.className).toContain('text-ink/70');
+    expect(notice.className).not.toContain('peach');
   });
 });

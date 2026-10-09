@@ -51,7 +51,6 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
   const percent = Math.round(proposal.confidence * 100);
   const isBusy = status === 'confirming';
   const isDone = status === 'done';
-  const needsReview = proposal.reviewRequired || proposal.confidence < 0.7 || !proposal.destinationFolderExternalId;
   const canValidateAsIs = Boolean(proposal.destinationFolderExternalId || proposal.destinationPath);
 
   const filenameError = validateFilename(finalName);
@@ -173,12 +172,6 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
             <ConfidenceBadge confidence={proposal.confidence} />
             <span className="text-xs text-ink/60">{sourceLabel(proposal.source)}</span>
           </span>
-          {needsReview && (
-            <span className="inline-flex items-center gap-1 rounded-lg bg-peach px-2 py-1 text-xs text-ink">
-              <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.5} />
-              à vérifier
-            </span>
-          )}
           {isDone ? (
             <span className="inline-flex items-center gap-1 rounded-lg bg-sage px-3 py-1.5 text-sm font-medium text-ink">
               <Check className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -235,14 +228,6 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
           </p>
         </div>
       )}
-      {needsReview && (
-        <div className="mt-3 rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm text-ink">
-          <p>{proposal.reviewReason ?? 'Vérifiez le nom et choisissez une destination avant validation.'}</p>
-          <p className="mt-1 text-xs text-ink/60">
-            Cette proposition est exclue de Tout valider, mais peut être validée seule après vérification.
-          </p>
-        </div>
-      )}
 
       {dialogOpen && createPortal(
         <div className="fixed inset-0 z-40" data-testid="correction-overlay">
@@ -267,9 +252,9 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
               </header>
               <div className="flex flex-1 flex-col justify-center p-7">
                 <DocumentPreview document={proposal.document} mode={mode} />
-                <div className="mt-6 rounded-lg border border-peach-deep/30 bg-peach/35 p-4">
+                <div className="mt-6 rounded-lg border border-line bg-white p-4">
                   <p className="font-mono text-[11px] uppercase tracking-wider text-ink/60">Motif de l’analyse</p>
-                  <p className="mt-2 text-sm">{proposal.reviewReason ?? 'La proposition peut être ajustée avant sa validation explicite.'}</p>
+                  <p className="mt-2 text-sm">{proposal.rationale ?? 'Aucun motif de classement supplémentaire.'}</p>
                 </div>
               </div>
             </section>
@@ -325,9 +310,9 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
                   <p className="mt-2 text-xs text-ink/70">Seuls les dossiers de l’arborescence héritée sont acceptés.</p>
                 </div>
 
-                <div className="rounded-lg border border-peach-deep/30 bg-peach/35 p-4 lg:hidden">
+                <div className="rounded-lg border border-line bg-white p-4 lg:hidden">
                   <p className="font-mono text-[11px] uppercase tracking-wider text-ink/60">Motif de l’analyse</p>
-                  <p className="mt-2 text-sm">{proposal.reviewReason ?? 'La proposition peut être ajustée avant sa validation explicite.'}</p>
+                  <p className="mt-2 text-sm">{proposal.rationale ?? 'Aucun motif de classement supplémentaire.'}</p>
                 </div>
               </div>
 

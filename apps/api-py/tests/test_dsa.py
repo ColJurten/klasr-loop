@@ -206,19 +206,16 @@ def test_offline_cli_filename_and_directory(monkeypatch, tmp_path, stub_docling,
     directory_main()
     destination = DecisionResult.model_validate_json(capsys.readouterr().out)
 
-    assert filename.value and filename.signals == [Signal(label="provider", value="local")]
+    assert filename.value and filename.rationale
     assert destination.value == "/Clients/Acme"
 
 
 def test_corrupted_empty_sparse_and_schema(monkeypatch, tmp_path):
     assert ExtractionResult(text="", quality="empty").quality == "empty"
     with pytest.raises(ValidationError):
-        DecisionResult(value="x", confidence=2, signals=["kind:value"])
-    normalized = DecisionResult(value="x", confidence=1, signals=["unlabelled"])
-    assert normalized.signals == [Signal(label="unlabelled", value="unlabelled")]
-    assert "unlabelled_signal" in normalized.warnings
-    with pytest.raises(ValidationError):
-        DecisionResult(value="x", confidence=1, signals=[42])
+        DecisionResult(value="x", confidence=2)
+    assert set(DecisionResult.model_fields) == {"value", "confidence", "rationale"}
+    assert DecisionResult(value="x", confidence=1).rationale == ""
     path = tmp_path / "broken.pdf"
     path.write_bytes(b"not a pdf")
     assert extract_document(str(path)).quality == "failed"
@@ -236,12 +233,10 @@ def test_filename_destination_and_single_analysis(monkeypatch):
             DecisionResult(
                 value="2026-09-13_Acme_INV-42.pdf",
                 confidence=0.9,
-                signals=["supplier:Acme", "invoice:INV-42"],
             ),
             DecisionResult(
                 value="/Clients/Acme/Factures",
                 confidence=0.8,
-                signals=["parent:Acme", "type:invoice"],
             ),
         )
 
@@ -263,10 +258,12 @@ def test_destination_outside_tree_fails_closed(monkeypatch, value):
     monkeypatch.setattr(
         dsa,
         "_decision",
-        lambda *_: DecisionResult(value=value, confidence=0.99, signals=["match:claimed"]),
+        lambda *_: DecisionResult(value=value, confidence=0.99, rationale=f"Vers {value}."),
     )
     result = dsa.suggest_directory(b"x", ["/Clients/Acme/Factures"])
-    assert result.value is None and "destination_outside_tree" in result.warnings
+    assert result.value is None and result.confidence == 0
+    assert result.rationale == "Destination hors arborescence ; choix manuel requis."
+    assert value not in result.rationale
 
 
 def test_no_credible_match_and_low_confidence(monkeypatch):
@@ -276,23 +273,21 @@ def test_no_credible_match_and_low_confidence(monkeypatch):
     monkeypatch.setattr(
         dsa,
         "_decision",
-        lambda *_: DecisionResult(
-            value="original-name.pdf", confidence=0.49, signals=["basis:none"]
-        ),
+        lambda *_: DecisionResult(value="original-name.pdf", confidence=0.49),
     )
     result = dsa.suggest_filename(b"misleading-name.pdf")
-    assert result.value is None and "low_confidence" in result.warnings
+    assert result.value is None and result.confidence == 0.49
 
 
 @pytest.mark.parametrize(
-    ("value", "signals"),
+    "value",
     [
-        ("2026-09-13_Acme_INV-42.pdf", ["supplier:Acme", "invoice:INV-42"]),
-        ("2026-09-13_Alix-Bob_Contrat.pdf", ["parties:Alix/Bob", "date:2026-09-13"]),
-        ("2026-09-13_Acme_INV-42.pdf", ["original:vacances.jpg", "content:invoice"]),
+        "2026-09-13_Acme_INV-42.pdf",
+        "2026-09-13_Alix-Bob_Contrat.pdf",
+        "2026-09-13_Acme_INV-42.pdf",
     ],
 )
-def test_filename_business_cases(monkeypatch, value, signals):
+def test_filename_business_cases(monkeypatch, value):
     monkeypatch.setattr(
         dsa,
         "_extract",
@@ -301,7 +296,7 @@ def test_filename_business_cases(monkeypatch, value, signals):
     monkeypatch.setattr(
         dsa,
         "_decision",
-        lambda *_: DecisionResult(value=value, confidence=0.9, signals=signals),
+        lambda *_: DecisionResult(value=value, confidence=0.9),
     )
     assert dsa.suggest_filename(b"synthetic").value == value
 
@@ -315,9 +310,12 @@ def test_destination_no_credible_match(monkeypatch):
     monkeypatch.setattr(
         dsa,
         "_decision",
-        lambda *_: DecisionResult(value="/Clients/Acme", confidence=0.2, signals=["match:weak"]),
+        lambda *_: DecisionResult(value="/Clients/Acme", confidence=0.2),
     )
-    assert dsa.suggest_directory(b"x", ["/Clients/Acme"]).value is None
+    result = dsa.suggest_directory(b"x", ["/Clients/Acme"])
+    assert result.value is None
+    assert result.rationale == "Destination incertaine ; choix manuel requis."
+    assert "/Clients/Acme" not in result.rationale
 
 
 def test_temp_file_deleted(monkeypatch):
@@ -347,13 +345,10 @@ def test_bytes_suffix_is_forwarded(monkeypatch):
     assert dsa._extract(b"image", ".png").text == ".png"
 
 
-def test_empty_destination_keeps_extraction_warning():
-    result = DecisionResult(
-        value=None, confidence=0, signals=["extraction:empty"], warnings=["no_text"]
-    )
+def test_empty_destination_keeps_rationale():
+    result = DecisionResult(value=None, confidence=0, rationale="Aucun contexte lisible.")
     validated = dsa._validated_destination(result, ["/allowed"])
-    assert validated.value is None and validated.confidence == 0
-    assert validated.warnings[:2] == ["no_destination_match", "no_text"]
+    assert validated == result and validated.rationale == "Aucun contexte lisible."
 
 
 class FakeLLM(BaseLLM):
@@ -437,17 +432,10 @@ def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
     fake = FakeLLM(
         model="fake",
         responses=[
-            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
-            json.dumps(
-                {
-                    "value": "invoice.pdf",
-                    "confidence": 0.9,
-                    "signals": ["Invoice number 12345"],
-                    "warnings": [],
-                }
-            ),
-            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
-            '{"value":"/Clients/Acme","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"analysis","confidence":1,"rationale":"Classement proposé."}',
+            '{"value":"invoice.pdf","confidence":0.9,"rationale":"Classement proposé."}',
+            '{"value":"analysis","confidence":1,"rationale":"Classement proposé."}',
+            '{"value":"/Clients/Acme","confidence":0.9,"rationale":"Classement proposé."}',
         ],
     )
     monkeypatch.setattr(crews, "llm_for", lambda _name: fake)
@@ -475,9 +463,9 @@ def test_combined_crew_task_order_and_prompts(monkeypatch):
     fake = FakeLLM(
         model="fake",
         responses=[
-            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
-            '{"value":"invoice.pdf","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
-            '{"value":"/Clients/Acme","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"analysis","confidence":1,"rationale":"Classement proposé."}',
+            '{"value":"invoice.pdf","confidence":0.9,"rationale":"Classement proposé."}',
+            '{"value":"/Clients/Acme","confidence":0.9,"rationale":"Classement proposé."}',
         ],
     )
     monkeypatch.setattr(crews, "llm_for", lambda _name: fake)
@@ -494,6 +482,7 @@ def test_combined_crew_task_order_and_prompts(monkeypatch):
     assert len(fake.prompts) == 3
     # At least the first prompt (analysis task) contains the content.
     assert "ACME INVOICE 42" in fake.prompts[0]
+    assert "Value, confidence, rationale (1-2 phrases neutres)" in fake.prompts[-1]
 
 
 @pytest.mark.parametrize(
@@ -663,7 +652,6 @@ def test_filename_grounded_on_content_not_filename(monkeypatch):
         lambda *_: DecisionResult(
             value="2026-09-13_facture_Acme_INV-42.pdf",
             confidence=0.9,
-            signals=["supplier:Acme", "invoice:INV-42"],
         ),
     )
     # Original filename is misleading ("vacances.jpg") but content is an invoice
@@ -682,9 +670,7 @@ def test_nested_tree_destination_parent_context_disambiguates(monkeypatch):
     monkeypatch.setattr(
         dsa,
         "_decision",
-        lambda *_: DecisionResult(
-            value="/Clients/Acme/Factures", confidence=0.9, signals=["parent:Acme"]
-        ),
+        lambda *_: DecisionResult(value="/Clients/Acme/Factures", confidence=0.9),
     )
     # Two folders with same leaf name "Factures" but different parents
     result = dsa.suggest_directory(
@@ -704,13 +690,11 @@ def test_destination_outside_tree_rejects_substring(monkeypatch):
     monkeypatch.setattr(
         dsa,
         "_decision",
-        lambda *_: DecisionResult(
-            value="/Clients/Acme/Factures/Child", confidence=0.99, signals=["match:claimed"]
-        ),
+        lambda *_: DecisionResult(value="/Clients/Acme/Factures/Child", confidence=0.99),
     )
     result = dsa.suggest_directory(b"x", ["/Clients/Acme/Factures"])
     assert result.value is None
-    assert "destination_outside_tree" in result.warnings
+    assert result.confidence == 0
 
 
 def test_independent_confidence_sparse_caps_both(monkeypatch):
@@ -728,8 +712,8 @@ def test_independent_confidence_sparse_caps_both(monkeypatch):
 
     def llm(_analysis, _directories):
         return (
-            DecisionResult(value="name.pdf", confidence=0.95, signals=["kind:invoice"]),
-            DecisionResult(value="/Invoices", confidence=0.9, signals=["kind:invoice"]),
+            DecisionResult(value="name.pdf", confidence=0.95),
+            DecisionResult(value="/Invoices", confidence=0.9),
         )
 
     monkeypatch.setattr(dsa, "_both_decisions", llm)
@@ -745,13 +729,13 @@ def test_mechanical_low_confidence_on_failed_extraction(monkeypatch):
     monkeypatch.setattr(
         dsa,
         "_extract",
-        lambda *_: ExtractionResult(text="", quality="failed", warnings=["extraction_failed"]),
+        lambda *_: ExtractionResult(text="", quality="failed"),
     )
 
     def llm(_analysis, _directories):
         return (
-            DecisionResult(value=None, confidence=0, signals=[], warnings=["extraction_failed"]),
-            DecisionResult(value=None, confidence=0, signals=[], warnings=["extraction_failed"]),
+            DecisionResult(value=None, confidence=0),
+            DecisionResult(value=None, confidence=0),
         )
 
     monkeypatch.setattr(dsa, "_both_decisions", llm)

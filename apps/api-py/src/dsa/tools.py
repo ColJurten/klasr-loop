@@ -159,7 +159,11 @@ def extract_document(file_path: str) -> ExtractionResult:
     first_pass = ExtractionResult(
         text=text,
         markdown=markdown_content,
-        context=_document_context(document.export_to_dict()) if hasattr(document, "export_to_dict") else markdown_content,
+        context=(
+            _document_context(document.export_to_dict())
+            if hasattr(document, "export_to_dict")
+            else markdown_content
+        ),
         quality=quality,
         warnings=warnings,
         first_pass_quality=quality,
@@ -183,7 +187,11 @@ def extract_document(file_path: str) -> ExtractionResult:
     second_pass = ExtractionResult(
         text=text,
         markdown=markdown_content,
-        context=_document_context(document.export_to_dict()) if hasattr(document, "export_to_dict") else markdown_content,
+        context=(
+            _document_context(document.export_to_dict())
+            if hasattr(document, "export_to_dict")
+            else markdown_content
+        ),
         quality=quality,
         warnings=warnings,
         first_pass_quality=first_pass.quality,
@@ -198,7 +206,7 @@ def extract_document(file_path: str) -> ExtractionResult:
 
 def extract_bytes(data: bytes, suffix: str) -> ExtractionResult:
     if suffix.lower() not in SUPPORTED_SUFFIXES:
-        return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
+        return ExtractionResult(text="", quality="failed")
     stream = io.BytesIO(data)
     stream.name = "document" + suffix.lower()
     return extract_document(stream)

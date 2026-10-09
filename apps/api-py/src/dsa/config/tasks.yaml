@@ -1,30 +1,19 @@
 analyse_file_task:
   description: |-
-    Analyser ce texte extrait et produire des signaux factuels étiquetés :
+    Extraire le contexte de classement (type de document, parties, date, identifiants) sans juger le contenu :
     {content}
-    Les signals DOIVENT être une liste d'objets avec chacun un label et une value
-    prouvée par l'extraction (exemple : {"label": "date", "value": "<valeur exacte extraite>"}),
-    JAMAIS de simples chaînes de caractères.
-  expected_output: "Une analyse structurée sans reproduire le texte documentaire brut, avec des signals au format [{\"label\": \"date\", \"value\": \"<valeur exacte extraite>\"}]."
+  expected_output: "Une analyse structurée sans reproduire le texte documentaire brut."
   agent: analyse_file_agent
 suggest_filename_task:
   description: |-
     Proposer un nom depuis ce contenu et l'analyse, jamais depuis les octets du fichier :
     {content}
-    Les signals DOIVENT être une liste d'objets avec chacun un label et une value
-    prouvée par l'extraction (exemple : {"label": "date", "value": "<valeur exacte extraite>"}),
-    JAMAIS de simples chaînes de caractères.
-  expected_output: "Value, confidence, warnings et signals validés au format [{\"label\": \"date\", \"value\": \"<valeur exacte extraite>\"}]."
+  expected_output: "Value, confidence, rationale."
   agent: suggest_filename_agent
 suggest_directory_task:
   description: |-
     Choisir un chemin exact dans cette liste sans jamais en inventer :
     {directories}
-    Ne choisir un chemin que si le contenu l'étaye directement ; à défaut, ne jamais
-    se rabattre sur le plus proche, le moins mauvais ou un chemin par défaut. Retourner
-    alors value: null, confidence: 0 et le warning no_destination_match.
-    Les signals DOIVENT être une liste d'objets avec chacun un label et une value
-    prouvée par l'extraction (exemple : {"label": "date", "value": "<valeur exacte extraite>"}),
-    JAMAIS de simples chaînes de caractères.
-  expected_output: "Un chemin exact de la liste, ou l'échec explicite value: null, confidence: 0 et warning no_destination_match, avec des signals au format [{\"label\": \"date\", \"value\": \"<valeur exacte extraite>\"}]."
+    Ne choisir un chemin que si le contenu l’étaye directement ; sinon value: null, confidence: 0.
+  expected_output: "Value, confidence, rationale (1-2 phrases neutres). Un chemin exact de la liste, ou un état d'échec explicite."
   agent: suggest_directory_agent

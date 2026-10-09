@@ -92,7 +92,7 @@ def test_context_content_and_no_embedded_images():
 
 @pytest.mark.parametrize("combined", [False, True])
 def test_classifier_receives_json_context(monkeypatch, combined):
-    result = DecisionResult(value="invoice", confidence=0.9, signals=["kind:invoice"])
+    result = DecisionResult(value="invoice", confidence=0.9, rationale="Invoice classification.")
     kickoff = Mock(
         return_value=SimpleNamespace(
             pydantic=result,
@@ -133,7 +133,7 @@ async def test_total_failure_normal_original_filename_proposal(monkeypatch, rais
     )
     assert proposal["proposed_name"] == "Mon_scan_2026_.pdf"
     assert proposal["confidence"] == 0 and proposal["review_required"]
-    assert proposal["review_reason"] == REASON
+    assert proposal["rationale"] == REASON
     assert proposal["llm_calls_used"] == 0
     assert "classement_manuel" not in json.dumps(proposal)
     assert "empty_content" not in json.dumps(proposal)
@@ -179,7 +179,7 @@ async def test_real_scanned_pdf_ocr_pictures_and_proposal(monkeypatch):
 
     monkeypatch.setattr(tools, "_document_context", capture)
     extraction = extract_bytes(stream.getvalue(), ".pdf")
-    assert extraction.text.strip(), extraction.warnings
+    assert extraction.text.strip(), extraction.quality
     assert len(serialized[-1]["pictures"]) >= 1
     assert serialized[-1]["texts"]
     assert "data:image" not in extraction.context
@@ -194,3 +194,23 @@ async def test_real_scanned_pdf_ocr_pictures_and_proposal(monkeypatch):
     assert proposal["proposed_name"].endswith(".pdf")
     assert "classement_manuel" not in proposal["proposed_name"]
     assert proposal["destination_path"] in paths
+
+
+@pytest.mark.parametrize("second", ["", "tin", "tiny", TEXT])
+def test_second_pass_never_discards_better_first_pass(monkeypatch, second):
+    monkeypatch.setattr(
+        "dsa.tools._build_converter",
+        lambda enriched=False: SimpleNamespace(
+            convert=lambda _: SimpleNamespace(document=document(second if enriched else "tiny"))
+        ),
+    )
+    result = extract_bytes(b"scan", ".pdf")
+    expected = second if len(second) >= len("tiny") else "tiny"
+    assert result.text == expected
+    assert json.loads(result.context)["texts"] == [{"text": expected}]
+    assert set(result.model_dump()) == {"text", "context", "quality"}
+    assert set(DecisionResult(value=None, confidence=0).model_dump()) == {
+        "value",
+        "confidence",
+        "rationale",
+    }

@@ -244,6 +244,7 @@ class ClassificationProposal(Base):
     review_required: Mapped[bool] = mapped_column(
         "reviewRequired", Boolean, server_default=text("false")
     )
+    rationale: Mapped[str | None] = mapped_column("rationale", Text)
     review_reason: Mapped[str | None] = mapped_column("reviewReason", Text)
     source: Mapped[ProposalSource] = mapped_column(Enum(ProposalSource, name="ProposalSource"))
     model_used: Mapped[str | None] = mapped_column("modelUsed", Text)

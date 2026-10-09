@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -313,7 +314,7 @@ async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant, caplog, 
                     "proposed_name": "invoice.txt",
                     "destination": "/Invoices",
                     "confidence": 0.95,
-                    "rationale": row.review_reason,
+                    "rationale": row.rationale,
                     "model_info": {
                         "model_used": "rule",
                         "quality": "ok",
@@ -360,9 +361,9 @@ async def test_configured_provider_bypasses_offline_shortcut(tenant, monkeypatch
     monkeypatch.delenv("KLASR_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("KLASR_LLM_MODEL", raising=False)
     responses = [
-        dict(value="analysis", confidence=1, signals=["kind:invoice"]),
-        dict(value="invoice.txt", confidence=0.9, signals=["kind:invoice"]),
-        dict(value=None, confidence=0, signals=[]),
+        dict(value="analysis", confidence=1, rationale="Document classé comme facture."),
+        dict(value="invoice.txt", confidence=0.9, rationale="Nom fondé sur le type facture."),
+        dict(value=None, confidence=0),
     ]
     providers = types.SimpleNamespace(
         completion=AsyncMock(side_effect=lambda *_: json.dumps(responses.pop(0)))
@@ -455,9 +456,9 @@ async def test_dsa_real_crew_callable_pipeline_no_replay_content(tenant, monkeyp
     )
     org = identity["organizationId"]
     responses = [
-        dict(value="analysis", confidence=1, signals=["kind:invoice"]),
-        dict(value="invoice.txt", confidence=0.9, signals=["kind:invoice"]),
-        dict(value="/Invoices", confidence=0.9, signals=["kind:invoice"]),
+        dict(value="analysis", confidence=1, rationale="Document classé comme facture."),
+        dict(value="invoice.txt", confidence=0.9, rationale="Nom fondé sur le type facture."),
+        dict(value="/Invoices", confidence=0.9, rationale="Dossier des factures."),
     ]
     calls = []
 
@@ -571,10 +572,8 @@ async def test_failed_extraction_creates_explicit_review_proposal(tenant):
         service = AnalysisService(session, app.state.settings, drive, None, MetadataSink())
         await service.analyze(dict(organizationId=identity["organizationId"], documentId=doc.id))
         proposal = session.scalar(select(ClassificationProposal))
-        assert (
-            proposal.review_required
-            and proposal.review_reason == "Aucun contenu lisible détecté dans le document"
-        )
+        assert proposal.review_required and proposal.review_reason is None
+        assert proposal.rationale == "Aucun contenu lisible détecté dans le document"
         assert proposal.proposed_name == "input.txt" and proposal.llm_calls_used == 0
 
 
@@ -1016,7 +1015,10 @@ def test_local_suggestion_no_zero_evidence_fallback():
     )
     result = local_suggestion(extraction, ["/Clients/Acme", "/Archive/2026"])
     assert result.destination.value is None
-    assert "no_destination_match" in result.destination.warnings
+    assert (
+        result.destination.rationale
+        == "Aucune destination de l'arborescence ne correspond au type de document."
+    )
 
 
 def test_local_suggestion_sibling_ambiguity_detected():
@@ -1062,7 +1064,11 @@ def test_local_suggestion_insufficient_evidence_filename():
     extraction = ExtractionResult(text="some text without strong signals", quality="ok")
     result = local_suggestion(extraction, ["/Archive"])
     if result.filename.value is None or len(result.filename.value.split("_")) < 2:
-        assert "insufficient_evidence" in result.filename.warnings
+        assert result.filename.confidence < 0.7
+        assert (
+            result.filename.rationale
+            == "Signal de classement insuffisant pour proposer un nom fiable."
+        )
 
 
 def test_local_suggestion_empty_content():
@@ -1089,7 +1095,7 @@ def test_extract_memory_signal_aware_quality():
     # Text without signals
     result = extract_memory(b"x" * 100, "text/plain", "test.txt")
     assert result.quality == "sparse"
-    assert "no_recognizable_signals" in result.warnings
+    assert set(result.model_fields) == {"text", "context", "quality"}
 
     # Empty text
     result = extract_memory(b"   ", "text/plain", "test.txt")
@@ -1098,4 +1104,187 @@ def test_extract_memory_signal_aware_quality():
     # Very short text
     result = extract_memory(b"hi", "text/plain", "test.txt")
     assert result.quality == "sparse"
-    assert "very_short_content" in result.warnings
+    assert not hasattr(result, "warnings")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "original, content, proposed, confidence",
+    [
+        (
+            "Copie de doc1(1).xlsx",
+            "Devis Peinture Enduit 2025-03-23 Total HT 700$ TVA 840$",
+            "Devis_Peinture_Enduit_20250323.xlsx",
+            0.95,
+        ),
+        (
+            "test1.pdf",
+            "ACME Devis 658437 ClaireSimmns 2024-02-29",
+            "ACME_Devis_658437_ClaireSimmns_20240229.pdf",
+            0.92,
+        ),
+    ],
+)
+async def test_classification_ignores_document_correctness(
+    tenant, monkeypatch, original, content, proposed, confidence
+):
+    from dsa.schemas import DecisionResult
+
+    _, app, engine, identity, _ = tenant
+    rationale = "Devis identifié par ses parties, sa date et sa référence."
+    mocked = SuggestionResult(
+        filename=DecisionResult(value=proposed, confidence=confidence, rationale=rationale),
+        destination=DecisionResult(
+            value="/quotes", confidence=confidence, rationale="Devis rangé dans /quotes."
+        ),
+        extraction_quality="ok",
+    )
+    seen = []
+
+    def classify(extraction, paths):
+        seen.append(extraction.text)
+        assert paths == ["/quotes"]
+        return mocked
+
+    monkeypatch.setattr("services.analysis.local_suggestion", classify)
+    with Session(engine, expire_on_commit=False) as session:
+        document = types.SimpleNamespace(name=original)
+        service = AnalysisService(session, app.state.settings, None, None, MetadataSink())
+        result = await service.suggest(
+            identity["organizationId"],
+            document,
+            ExtractionResult(text=content, quality="ok"),
+            ["/quotes"],
+        )
+    assert seen == [content]
+    assert result["proposed_name"] == proposed
+    assert result["destination_path"] == "/quotes"
+    assert result["confidence"] >= 0.7 and not result["review_required"]
+    assert "warnings" not in result and "review_reason" not in result
+    assert result["rationale"] == rationale + " Devis rangé dans /quotes."
+
+
+def test_local_classification_preserves_leap_day():
+    result = local_suggestion(
+        ExtractionResult(
+            text="Facture fournisseur: ACME date: 2024-02-29 référence: INV-42", quality="ok"
+        ),
+        ["/facture"],
+    )
+    assert "2024-02-29" in result.filename.value
+    assert result.filename.confidence >= 0.7
+    assert result.destination.confidence >= 0.7
+    assert set(result.filename.model_dump()) == {"value", "confidence", "rationale"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filename_confidence, destination_confidence, destination, quality, needs_review",
+    [
+        (0.95, 0.95, "/quotes", "ok", False),
+        (0.69, 0.95, "/quotes", "ok", True),
+        (0.95, 0.69, "/quotes", "ok", True),
+        (0.95, 0.95, None, "ok", True),
+        (0.95, 0.95, "/quotes", "sparse", True),
+    ],
+)
+async def test_review_depends_only_on_classification(
+    tenant,
+    monkeypatch,
+    filename_confidence,
+    destination_confidence,
+    destination,
+    quality,
+    needs_review,
+):
+    from dsa.schemas import DecisionResult
+
+    _, app, engine, identity, _ = tenant
+    monkeypatch.setattr(
+        "services.analysis.local_suggestion",
+        lambda *_: SuggestionResult(
+            filename=DecisionResult(value="devis.pdf", confidence=filename_confidence),
+            destination=DecisionResult(value=destination, confidence=destination_confidence),
+            extraction_quality=quality,
+        ),
+    )
+    with Session(engine) as session:
+        service = AnalysisService(session, app.state.settings, None, None, MetadataSink())
+        result = await service.suggest(
+            identity["organizationId"],
+            types.SimpleNamespace(name="doc.pdf"),
+            ExtractionResult(text="Devis 2024-02-29", quality=quality),
+            ["/quotes"],
+        )
+    assert result["review_required"] is needs_review
+    if quality == "sparse":
+        assert result["confidence"] == 0.55
+
+
+def test_bounded_rationale_limits_and_deduplicates():
+    from services.analysis import _bounded_rationale, apply_rules
+
+    text = " Première phrase.  Première phrase. " + "Deuxième " * 50 + ". Troisième phrase."
+    bounded = _bounded_rationale(text)
+    assert len(bounded) <= 300
+    assert bounded.count("Première phrase.") == 1
+    assert "Troisième" not in bounded
+    assert len(re.split(r"(?<=[.!?])\s+", bounded)) <= 2
+    assert _bounded_rationale("  \n ") is None
+    path = "/" + "folder" * 100
+    proposal = apply_rules(
+        types.SimpleNamespace(name="doc.pdf", mime_type="application/pdf"),
+        "invoice",
+        [path],
+        [
+            dict(
+                priority=1,
+                destinationPath=path,
+                suggestedNameTemplate="invoice.pdf",
+                conditions=[dict(field="CONTENT", operator="CONTAINS", value="invoice")],
+            )
+        ],
+    )
+    assert len(proposal["rationale"]) <= 300
+
+
+@pytest.mark.parametrize(
+    ("rationale", "expected"),
+    [
+        ("  ", None),
+        (
+            "First sentence. Second sentence. Third sentence. " + "long " * 100,
+            "First sentence. Second sentence.",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_bounded_rationale_is_stored(tenant, monkeypatch, rationale, expected):
+    from dsa.schemas import DecisionResult
+
+    _, app, engine, identity, _ = tenant
+    monkeypatch.setattr(
+        "services.analysis.local_suggestion",
+        lambda *_: SuggestionResult(
+            filename=DecisionResult(value="invoice.txt", confidence=0.9, rationale=rationale),
+            destination=DecisionResult(value="/Invoices", confidence=0.9),
+            extraction_quality="ok",
+        ),
+    )
+    with Session(engine, expire_on_commit=False) as session:
+        doc = pending(session, identity["organizationId"])
+        service = AnalysisService(session, app.state.settings, None, None, MetadataSink())
+        values = await service.suggest(
+            identity["organizationId"],
+            doc,
+            ExtractionResult(text="Invoice 2024-02-29", quality="ok"),
+            ["/Invoices"],
+        )
+        assert values["rationale"] == expected
+        proposal = ClassificationProposal(
+            organization_id=identity["organizationId"], document_id=doc.id, **values
+        )
+        session.add(proposal)
+        session.commit()
+        session.refresh(proposal)
+        assert proposal.rationale == expected

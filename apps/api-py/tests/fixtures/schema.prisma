@@ -158,6 +158,7 @@ model ClassificationProposal {
   filenameConfidence Float?
   destinationConfidence Float?
   reviewRequired Boolean @default(false)
+  rationale String?
   reviewReason   String?
   source          ProposalSource
   modelUsed       String?
