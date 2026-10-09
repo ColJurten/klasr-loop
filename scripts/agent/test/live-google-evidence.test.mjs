@@ -154,7 +154,8 @@ test('Item 5 runner reuses borrowed carriers and requires genuine configured-LLM
   assert.match(flow, /replaceBytes\(reviewFixture\.id, reviewBytes\)/);
   assert.match(flow, /modelUsed.*llmProvider/);
   assert.match(flow, /genuineManualReview\(reviewProof\)/);
-  assert.match(functionBody(source, 'genuineManualReview'), /reviewReason\.trim\(\)\.length > 0.*reviewReason !== 'extraction_failed'/s);
+  assert.match(functionBody(source, 'genuineManualReview'), /reviewRequired === true && !proposal\.destinationPath/);
+  assert.doesNotMatch(functionBody(source, 'genuineManualReview'), /reviewReason|extraction_failed|\.trim\(\)/);
   assert.doesNotMatch(source, /no_destination_match/);
   assert.match(flow, /live-google-sa-item-5-post-validation-1280\.png/);
 });

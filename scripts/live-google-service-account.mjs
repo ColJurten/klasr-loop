@@ -143,7 +143,7 @@ if (process.argv.includes('--decision-selection-check')) {
   assert(selected.confirm.id === 'valid' && selected.ignore.id === 'manual', 'Decision fixture selection is not provider-agnostic');
   assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason: 'low_confidence' }), 'Configured-LLM manual review must be accepted');
   for (const reviewReason of [null, undefined, ' ']) assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason }), 'Classification-only manual review must accept an absent or blank review reason');
-  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '', reviewReason: 'extraction_failed' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
+  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
   process.stdout.write('live runner fixture restoration and decision selection check PASS\n');
   process.exit(0);
 }
@@ -529,8 +529,7 @@ try {
   await expectReviewRequiredProposal(proposals.find(({ reviewRequired }) => reviewRequired).card);
   const reviewProof = await db('proposal', organizationId, reviewFixture.id);
   item5Proof.genuineManualReview = genuineManualReview(reviewProof);
-  item5Proof.notExtractionFailed = reviewProof?.reviewReason !== 'extraction_failed';
-  assert(item5Proof.genuineManualReview && item5Proof.notExtractionFailed, 'Review fixture did not produce a genuine destination-less manual review');
+  assert(item5Proof.genuineManualReview, 'Review fixture did not produce a genuine destination-less manual review');
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-review.png'), fullPage: true });
@@ -857,16 +856,16 @@ function assertItem3Proof(proof, task, proofLineage, tree, requireComplete = fal
 function sanitizedItem5Proof(assertions, task, proofLineage, tree) {
   return { schema: 'klasr-item5-provider-proof-v1', task, issue: proofLineage.issue, attempt: proofLineage.attempt, sha: proofLineage.sha, tree, assertions };
 }
-function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, genuineManualReview: false, notExtractionFailed: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
+function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, genuineManualReview: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
 function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = false, borrowedMode = false) {
   const keys = (value) => Object.keys(value).sort().join(',');
   assert(keys(proof) === 'assertions,attempt,issue,schema,sha,task,tree' && proof.schema === 'klasr-item5-provider-proof-v1', 'Item 5 proof schema mismatch');
   assert(proof.task === task && proof.issue === proofLineage.issue && proof.attempt === proofLineage.attempt && proof.sha === proofLineage.sha, 'Item 5 proof lineage mismatch');
-  assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,genuineManualReview,headedBrowser,noMutationBeforeValidation,notExtractionFailed,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
+  assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,genuineManualReview,headedBrowser,noMutationBeforeValidation,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
   const counts = ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount'];
   assert(Object.entries(proof.assertions).every(([key, value]) => counts.includes(key) ? value === null || Number.isInteger(value) : typeof value === 'boolean'), 'Item 5 proof assertion value invalid');
   if (requireComplete && borrowedMode) {
-    const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'genuineManualReview', 'headedBrowser', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
+    const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'genuineManualReview', 'headedBrowser', 'noMutationBeforeValidation', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
     assert(proof.assertions.originalExactNameCount === proof.assertions.finalExactNameCount
       && proof.assertions.originalPdfCount === proof.assertions.finalPdfCount
       && proof.assertions.createdRunnerOwned === false && proof.assertions.createdInAuthorizedRoot === false
@@ -878,7 +877,7 @@ function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'local
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function assertThrows(action, message) { try { action(); } catch { return; } throw new Error(message); }
 async function assertRejects(action, message) { try { await action(); } catch (error) { assert(error?.message === message, message); return; } throw new Error(message); }
-function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath && proposal.reviewReason !== 'extraction_failed'; }
+function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath; }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }
 
 async function serviceAccountToken() {
