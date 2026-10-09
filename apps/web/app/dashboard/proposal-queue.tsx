@@ -17,11 +17,13 @@ type IgnoreProposalHandler = (proposalId: string) => Promise<unknown>;
 
 export function ProposalQueue({
   initialProposals,
+  mode = 'local',
   folders = [],
   onConfirmProposal = confirmProposal,
   onIgnoreProposal = ignoreProposal,
 }: {
   initialProposals: ProposalView[];
+  mode?: 'local' | 'production' | 'service-account-staging';
   folders: FolderChoiceView[];
   onConfirmProposal?: ConfirmProposalHandler;
   onIgnoreProposal?: IgnoreProposalHandler;
@@ -132,7 +134,7 @@ export function ProposalQueue({
         </Button>
       </div>
       {visibleProposals.some((proposal) => !isBulkEligible(proposal)) && (
-        <p role="status" className="rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm">
+        <p role="status" className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink/70">
           Les propositions à faible confiance sont exclues de Tout valider et restent validables une par une.
         </p>
       )}
@@ -145,6 +147,7 @@ export function ProposalQueue({
       <div className="flex flex-col gap-2">
         {visibleProposals.map((proposal) => (
           <ProposalCard
+            mode={mode}
             key={proposal.id}
             proposal={proposal}
             folders={folders}

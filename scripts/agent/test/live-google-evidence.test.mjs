@@ -8,8 +8,9 @@ import { closingIssueReference, pullRequestMatchesIssue, resolveCiPullRequest, r
 import { assertTreeBinding, computeTreeBinding, parseObservedRecord, resolveEvidenceRunDir } from '../../live-google-evidence.mjs';
 
 const root = new URL('../../../', import.meta.url);
-const head = readFileSync(new URL('.git/HEAD', root), 'utf8').trim();
-const sha = head.startsWith('ref: ') ? readFileSync(new URL(`.git/${head.slice(5)}`, root), 'utf8').trim() : head;
+const headResult = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+assert.equal(headResult.status, 0, headResult.stderr);
+const sha = headResult.stdout.trim();
 const treeBinding = { schema: 'klasr-tree-v1', mode: 'sha', head: sha, digest: sha };
 const observedRecord = { schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: 'claude-safe', modelUsed: 'anthropic/claude-safe', tree: treeBinding };
 const liveResultKeys = ['llm_classification', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
@@ -153,7 +154,8 @@ test('Item 5 runner reuses borrowed carriers and requires genuine configured-LLM
   assert.match(flow, /replaceBytes\(reviewFixture\.id, reviewBytes\)/);
   assert.match(flow, /modelUsed.*llmProvider/);
   assert.match(flow, /genuineManualReview\(reviewProof\)/);
-  assert.match(functionBody(source, 'genuineManualReview'), /reviewReason\.trim\(\)\.length > 0.*reviewReason !== 'extraction_failed'/s);
+  assert.match(functionBody(source, 'genuineManualReview'), /reviewRequired === true && !proposal\.destinationPath/);
+  assert.doesNotMatch(functionBody(source, 'genuineManualReview'), /reviewReason|extraction_failed|\.trim\(\)/);
   assert.doesNotMatch(source, /no_destination_match/);
   assert.match(flow, /live-google-sa-item-5-post-validation-1280\.png/);
 });

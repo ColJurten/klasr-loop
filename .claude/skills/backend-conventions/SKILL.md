@@ -1,17 +1,17 @@
 ---
 name: backend-conventions
-description: FastAPI + SQLAlchemy + PostgreSQL jobs + MongoDB conventions for apps/api-py. Use whenever writing or reviewing backend code.
+description: FastAPI + SQLAlchemy + PostgreSQL jobs + analyses conventions for apps/api-py. Use whenever writing or reviewing backend code.
 ---
 # Backend Conventions (`apps/api-py`, ADR-007)
 
 ## Layering (jury-legible, REAC C6)
-- Router (HTTP and Pydantic validation only) → Service (business logic) → Repository (data access). Keep SQLAlchemy and Mongo drivers out of routers.
+- Router (HTTP and Pydantic validation only) → Service (business logic) → Repository (data access). Keep SQLAlchemy out of routers.
 - Keep response shapes explicit; never expose ORM objects directly.
 
 ## Data access (REAC C7 + C8)
 - PostgreSQL via SQLAlchemy is the source of truth; Alembic owns migrations.
-- MongoDB is ONE metadata-only TTL collection accessed through `src/mongo/analyses.py`. Do not add collections or document content without an ADR.
-- Multi-tenancy (blocking rule): every repository method takes organizationId; Mongo queries and job payloads are organizationId-scoped too.
+- The PostgreSQL `analyses` table stores result-only JSONB payloads through `src/repositories/analyses.py`, expiry-purged by the worker. Never persist document content.
+- Multi-tenancy (blocking rule): every repository method takes organizationId; Analysis reads and job payloads are organizationId-scoped too.
 
 ## Classification pipeline (REAC C3, business components)
 - Location: `src/services/analysis.py`, `src/services/classification.py`, and `src/dsa`.

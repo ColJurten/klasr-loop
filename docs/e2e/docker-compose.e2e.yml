@@ -28,5 +28,3 @@ services:
         NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: "${NEXT_PUBLIC_KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT}"
   postgres:
     ports: !override ["127.0.0.1:55432:5432"]
-  mongo:
-    ports: !override ["127.0.0.1:27018:27017"]

@@ -410,3 +410,19 @@ def test_production_mode_forbids_development_switches(flag):
 
     with pytest.raises(ValueError, match="cannot run in production"):
         create_app(Settings(NODE_ENV="production", **{flag: True}))
+
+
+def test_proposal_payloads_never_expose_review_reason(tenant):
+    client, _, engine, identity, base = tenant
+    proposal_id, _, _ = add_proposal(engine, identity["organizationId"])
+    with Session(engine) as session:
+        session.get(ClassificationProposal, proposal_id).review_reason = "Legacy audit text"
+        session.commit()
+    for payload in (
+        client.get(base + "/proposals").json(),
+        client.get(base + "/dashboard").json()["proposals"],
+    ):
+        assert payload
+        assert all("reviewReason" not in row and "review_reason" not in row for row in payload)
+    with Session(engine) as session:
+        assert session.get(ClassificationProposal, proposal_id).review_reason == "Legacy audit text"

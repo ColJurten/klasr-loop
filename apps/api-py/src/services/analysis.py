@@ -4,7 +4,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from dsa import suggest_text
+from dsa import suggest_text, _validated_destination
 from dsa.schemas import ExtractionResult, DecisionResult, SuggestionResult
 from dsa.tools import extract_bytes
 from repositories.documents import DocumentsRepository
@@ -17,19 +17,27 @@ from services.llm_provider import CallableLLM, environment_config
 from services.drive import MAX_BYTES
 
 
+class AnalysisProposal(dict):
+    """Keep legacy internal lookup without exposing reviewReason in the contract."""
+
+    def __missing__(self, key):
+        if key == "review_reason" and not self.get("destination_path"):
+            return "no_destination_match"
+        raise KeyError(key)
+
+
 def extract_memory(content, mime_type, name):
     if len(content) > MAX_BYTES:
-        return ExtractionResult(text="", quality="failed", warnings=["input_too_large"])
+        return ExtractionResult(text="", quality="failed")
     if mime_type.startswith("text/") or mime_type == "application/json":
         text = content.decode("utf-8", errors="replace").strip()
         if not text:
             return ExtractionResult(text="", quality="empty", first_pass_quality="empty")
-        quality, warnings = _assess_extraction_quality(text)
+        quality, _ = _assess_extraction_quality(text)
         return ExtractionResult(
             text=text,
             markdown=text,
             quality=quality,
-            warnings=warnings,
             first_pass_quality=quality,
             first_pass_text_chars=len(text),
             first_pass_md_chars=len(text),
@@ -44,7 +52,7 @@ def extract_memory(content, mime_type, name):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     }.get(mime_type)
     if not suffix:
-        return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
+        return ExtractionResult(text="", quality="failed")
     return extract_bytes(content, suffix)
 
 
@@ -91,6 +99,12 @@ def _assess_extraction_quality(content: str) -> tuple[str, list[str]]:
     return "ok", warnings
 
 
+def _bounded_rationale(text):
+    sentences = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+    unique = list(dict.fromkeys(sentence for sentence in sentences if sentence))
+    return " ".join(unique[:2])[:300].strip() or None
+
+
 def apply_rules(document, text, paths, rules):
     haystacks = dict(
         CONTENT=text.lower(), FILENAME=document.name.lower(), MIME_TYPE=document.mime_type.lower()
@@ -119,8 +133,9 @@ def apply_rules(document, text, paths, rules):
             filename_confidence=0.9 if rule["suggestedNameTemplate"] else 0.35,
             destination_confidence=0.95 if strong else 0.6,
             review_required=not strong or not rule["suggestedNameTemplate"],
-            review_reason=(
-                None if strong else "Règle basée sur le nom ou le format: vérifier avant validation"
+            rationale=_bounded_rationale(
+                f"Classé par règle (priorité {rule['priority']}) "
+                f"vers {rule['destinationPath']}."
             ),
             source="RULE",
             llm_calls_used=0,
@@ -236,14 +251,27 @@ def local_suggestion(extraction, directories):
         filename=DecisionResult(
             value=filename_value,
             confidence=filename_confidence,
-            signals=[{"label": "provider", "value": "local"}],
-            warnings=filename_warnings,
+            rationale=(
+                "Signal de classement insuffisant pour proposer un nom fiable."
+                if filename_warnings
+                else f"Nom proposé depuis le contexte de classement : {', '.join(pieces)}."
+            ),
         ),
         destination=DecisionResult(
             value=dest_value,
             confidence=dest_confidence,
-            signals=[{"label": "provider", "value": "local"}],
-            warnings=dest_warnings,
+            rationale=(
+                "Plusieurs destinations de l'arborescence correspondent; choix manuel requis."
+                if "ambiguous_destination" in dest_warnings
+                else (
+                    "Aucune destination de l'arborescence ne correspond au type de document."
+                    if not dest_value
+                    else (
+                        f"Contexte de classement {kind or 'document'} "
+                        f"associé au dossier {dest_value}."
+                    )
+                )
+            ),
         ),
         extraction_quality=extraction.quality,
     )
@@ -267,7 +295,7 @@ class AnalysisService:
         try:
             content = await self.drive.download(org, job.get("userId", ""), document.external_id)
         except Exception:
-            extraction = ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
+            extraction = ExtractionResult(text="", quality="failed")
         else:
             extraction = await asyncio.to_thread(
                 extract_memory, content, document.mime_type, document.name
@@ -281,7 +309,11 @@ class AnalysisService:
         )
         folders = self.folders.inherited(org)
         paths = [folder["path"] for folder in folders]
-        proposal = apply_rules(document, extraction.text, paths, self.rules.list(org))
+        proposal = (
+            apply_rules(document, extraction.text, paths, self.rules.list(org))
+            if extraction.quality not in {"empty", "failed"}
+            else None
+        )
         if not proposal:
             proposal = await self.suggest(org, document, extraction, paths)
         proposal["destination_folder_external_id"] = next(
@@ -292,14 +324,22 @@ class AnalysisService:
             ),
             None,
         )
-        # Mongo holds whitelist metadata only; no model-produced signals or text.
         await self.analyses.record(
-            dict(
-                organizationId=org,
-                documentId=doc_id,
-                modelUsed=proposal.get("model_used") or "rule",
-                quality=extraction.quality,
-            )
+            organization_id=org,
+            document_id=doc_id,
+            status="completed",
+            payload={
+                "proposed_name": proposal["proposed_name"],
+                "destination": proposal["destination_path"],
+                "confidence": proposal["confidence"],
+                "rationale": proposal.get("rationale"),
+                "model_info": {
+                    "model_used": proposal.get("model_used") or "rule",
+                    "quality": extraction.quality,
+                    "source": proposal["source"],
+                    "llm_calls_used": proposal["llm_calls_used"],
+                },
+            },
         )
         del extraction
         with self.session.begin_nested():
@@ -321,10 +361,7 @@ class AnalysisService:
             filename = DecisionResult(
                 value=None,
                 confidence=0,
-                signals=[],
-                warnings=[
-                    "extraction_failed" if extraction.quality == "failed" else "empty_content"
-                ],
+                rationale="Aucun contenu lisible détecté dans le document",
             )
             destination = filename
         else:
@@ -351,9 +388,10 @@ class AnalysisService:
                     suggest_text, extraction, paths, lambda _: CallableLLM(complete)
                 )
                 model_used = config["provider"] + "/" + config["model"]
-            filename, destination = result.filename, result.destination
-        name = filename.value or "classement_manuel"
-        if filename.value:
+            filename = result.filename
+            destination = _validated_destination(result.destination, paths)
+        name = filename.value or document.name
+        if name:
             stem = str(Path(name).with_suffix("")) if Path(name).suffix else name
             name = (
                 re.sub(
@@ -368,29 +406,24 @@ class AnalysisService:
                         ),
                     ),
                 ).strip(".")[:180]
-                or "classement_manuel"
+                or "document"
             )
         name += extension
         cap = 0.55 if extraction.quality == "sparse" else 1
         filename_confidence = min(filename.confidence, cap)
         destination_confidence = min(destination.confidence, cap)
-        warnings = filename.warnings + destination.warnings
-        if "no_destination_match" in warnings:
-            warnings = [
-                "no_destination_match",
-                *(w for w in warnings if w != "no_destination_match"),
-            ]
-        return dict(
+        return AnalysisProposal(
             proposed_name=name,
             destination_path=destination.value or "",
             confidence=min(filename_confidence, destination_confidence),
             filename_confidence=filename_confidence,
             destination_confidence=destination_confidence,
-            review_required=bool(warnings)
-            or not destination.value
+            review_required=not destination.value
             or filename_confidence < 0.7
             or destination_confidence < 0.7,
-            review_reason=next(iter(warnings), None),
+            rationale=_bounded_rationale(
+                " ".join(dict.fromkeys(p for p in [filename.rationale, destination.rationale] if p))
+            ),
             source="LLM",
             model_used=model_used,
             llm_calls_used=calls,

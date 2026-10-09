@@ -154,7 +154,7 @@ class ProviderClientService:
             raise ValueError("provider_network") from None
         try:
             return json.loads(data)
-        except ValueError, UnicodeDecodeError:
+        except (ValueError, UnicodeDecodeError):
             raise ValueError("provider_malformed_response") from None
 
     async def discover(self, config):
@@ -208,7 +208,7 @@ class ProviderClientService:
             if not isinstance(result, str) or not result:
                 raise ValueError
             return result
-        except KeyError, IndexError, TypeError, ValueError:
+        except (KeyError, IndexError, TypeError, ValueError):
             raise ValueError("provider_malformed_response") from None
 
 

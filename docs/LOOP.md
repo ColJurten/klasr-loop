@@ -28,7 +28,7 @@ Located in `.claude/skills/`, auto-invoked by description match or explicitly wi
 | Skill | Purpose |
 |---|---|
 | `klasr-product` | Domain model, personas, REAC/jury constraints, eco-design rules |
-| `backend-conventions` | NestJS layered architecture, Prisma, pg-boss, MongoDB analyses, multi-tenant rules |
+| `backend-conventions` | NestJS layered architecture, Prisma, pg-boss, PostgreSQL analyses JSONB, multi-tenant rules |
 | `frontend-conventions` | Next.js 14 App Router, shadcn/ui, single-click confirmation UX |
 | `git-workflow` | Branching model, Conventional Commits, PR checklist |
 | `issue-spec` / `supervisor-feedback` / `self-review` / `health-scan` | Agent-loop procedures (spec format, feedback handling, verification, weekly digest) |

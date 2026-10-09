@@ -73,14 +73,15 @@ Valeurs a remplacer pour un developpement local complet :
 - `TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
 - `NEXTAUTH_SECRET` : valeur locale jetable.
 - `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : client OAuth Google Cloud requis.
-- `DATABASE_URL` et `MONGO_URL` : PostgreSQL et MongoDB locaux.
+- `DATABASE_URL` : PostgreSQL local.
 - Variables LLM : choisir le fournisseur, le modèle et la clé dans les réglages,
   ou définir les variables `KLASR_LLM_*` décrites dans `.env.example`.
 
 ## Services locaux
 
 PostgreSQL porte les donnees metier et la file de jobs (SKIP LOCKED, ADR-007).
-MongoDB contient uniquement la collection TTL `analyses`. Le backend FastAPI
+La table PostgreSQL `analyses` contient les résultats dans un payload JSONB,
+purgés à expiration par le worker. Le backend FastAPI
 est `apps/api-py` (port 3001).
 
 ```bash
@@ -88,7 +89,7 @@ docker compose up -d --force-recreate --wait
 docker compose ps
 ```
 
-Cette commande démarre seulement PostgreSQL et MongoDB. Pour démarrer aussi l'API
+Cette commande démarre seulement PostgreSQL. Pour démarrer aussi l'API
 (migrations Alembic et worker inline inclus), utiliser :
 
 ```bash
@@ -203,6 +204,28 @@ leurs métadonnées de staging selon la procédure d'exploitation. Aucun compte,
 cookie, jeton, texte OCR ou contenu ne doit figurer dans une capture, un log ou
 un rapport.
 
+## Script manuel de validation locale (ne prouve pas Google)
+
+1. Demarrer PostgreSQL :
+   `docker compose up -d --force-recreate --wait`.
+2. Installer et migrer :
+   `pnpm api:install && pnpm api:migrate`.
+3. Demarrer API et web : `pnpm api:start` et `pnpm --filter @klasr/web dev`.
+4. Ouvrir `http://localhost:3000/login`.
+5. Cliquer `Mode local`.
+6. Sur le dashboard, choisir `Cabinet de demonstration`.
+7. Verifier l'affichage de branches imbriquees :
+   `/Comptabilite/Banque`, `/Comptabilite/Electricite`, `/Social/Paie`.
+8. Dans `Fichiers a organiser`, choisir `Dossier - A classer`.
+9. Cliquer `Lancer l'organisation`.
+10. Verifier plusieurs propositions, les badges de confiance, les cartes "a
+    verifier" et `Tout valider` qui ignore ces cartes faibles.
+11. Valider une proposition telle quelle.
+12. Corriger un nom de fichier.
+13. Corriger une destination avec le select de dossiers herites.
+14. Ignorer une proposition.
+15. Recharger : l'historique doit conserver les decisions ; les fichiers
+    ignores restent à leur place et ne sont pas reenfiles.
 
 ## Checks automatises
 
@@ -226,12 +249,12 @@ Si un workflow GitHub est modifie, executer aussi `actionlint`.
 - Les fichiers restent dans le Drive connecte.
 - Les octets sont telecharges en streaming vers l'OCR, puis jetes.
 - Le contenu documentaire et le texte OCR ne sont pas stockes dans PostgreSQL,
-  MongoDB, les logs, les fixtures ou les preuves.
+  les logs, les fixtures ou les preuves.
 - PostgreSQL conserve les metadonnees : organisation, racine de reference,
   dossiers herites, documents, propositions, decisions, historique, confiances
   et raisons non sensibles de revue.
-- MongoDB conserve uniquement la collection TTL `analyses`, avec metadonnees
-  d'analyse redactees.
+- La table PostgreSQL `analyses` conserve les résultats sans contenu documentaire ;
+  le worker supprime les lignes dont `expires_at` est dépassé (30 jours par défaut).
 - Aucun renommage ou deplacement n'est execute sans decision explicite.
 - `Ignorer` écarte terminalement la proposition sans appel au fournisseur ni
   modification du fichier original.
@@ -244,7 +267,7 @@ Arreter les services :
 docker compose down
 ```
 
-Supprimer les volumes locaux detruit toutes les donnees PostgreSQL et MongoDB :
+Supprimer les volumes locaux detruit toutes les donnees PostgreSQL :
 
 ```bash
 docker compose down -v

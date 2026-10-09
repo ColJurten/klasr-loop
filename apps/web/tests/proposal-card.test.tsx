@@ -12,6 +12,7 @@ const proposal: ProposalView = {
   source: 'LLM',
   document: {
     id: 'doc_1',
+    externalId: 'drive_file_1',
     name: 'scan_001.pdf',
     mimeType: 'application/pdf',
     sizeBytes: 1200,
@@ -53,14 +54,15 @@ describe('ProposalCard — single-click confirmation flow', () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
     render(
       <ProposalCard
-        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'Texte extrait insuffisant' }}
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true }}
         status="idle"
         onConfirm={onConfirm}
       />,
     );
 
-    expect(screen.getByText('Texte extrait insuffisant')).toBeDefined();
-    expect(screen.getByText(/exclue de Tout valider/)).toBeDefined();
+    expect(screen.queryByText('Texte extrait insuffisant')).toBeNull();
+    expect(screen.queryByText('à vérifier')).toBeNull();
+    expect(screen.queryByText(/exclue de Tout valider/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Valider le classement/ }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('prop_1', undefined));
   });
@@ -69,7 +71,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
     render(
       <ProposalCard
-        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'Destination absente', destinationPath: '', destinationFolderExternalId: null }}
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, destinationPath: '', destinationFolderExternalId: null }}
         status="idle"
         onConfirm={onConfirm}
       />,
@@ -77,6 +79,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
 
     expect(screen.getByRole('button', { name: /Corriger avant validation/ })).toHaveProperty('disabled', true);
     expect(onConfirm).not.toHaveBeenCalled();
+    expect(screen.getByText('à vérifier')).toBeDefined();
   });
 
   it('ignores double clicks (no double execution)', async () => {
@@ -141,7 +144,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
   it('opens Corriger as the reference-sized correction overlay with the required information and action order', () => {
     render(
       <ProposalCard
-        proposal={{ ...proposal, reviewReason: 'Destination non reconnue dans l’arborescence héritée' }}
+        proposal={{ ...proposal, rationale: 'Devis identifié par sa référence et ses parties.' }}
         folders={[
           { externalId: 'folder_elec', path: '/Comptabilité/Électricité' },
           { externalId: 'folder_social', path: '/Social/2026' },
@@ -158,8 +161,12 @@ describe('ProposalCard — single-click confirmation flow', () => {
     expect(dialog.className).toContain('w-[min(1120px,92vw)]');
     expect(within(dialog).getAllByText('scan_001.pdf').length).toBeGreaterThan(0);
     expect(within(dialog).getByDisplayValue('Facture_EDF_2026-03.pdf')).toBeDefined();
-    expect(within(dialog).getAllByText('Destination non reconnue dans l’arborescence héritée').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('Devis identifié par sa référence et ses parties.').length).toBeGreaterThan(0);
     expect(within(dialog).getByLabelText('Confiance 92 %, source IA')).toBeDefined();
+    for (const label of within(dialog).getAllByText('Motif de l’analyse')) {
+      expect(label.parentElement?.className).not.toContain('peach');
+      expect(label.parentElement?.textContent).toContain('Devis identifié par sa référence et ses parties.');
+    }
     expect(Array.from(dialog.querySelectorAll('button')).map((button) => button.textContent?.trim()).filter(Boolean).slice(-3)).toEqual([
       'Restaurer la proposition',
       'Annuler',
@@ -193,7 +200,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined);
     render(
       <ProposalCard
-        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, reviewReason: 'no_destination_match', destinationPath: '', destinationFolderExternalId: null }}
+        proposal={{ ...proposal, confidence: 0.2, reviewRequired: true, destinationPath: '', destinationFolderExternalId: null }}
         folders={[{ externalId: 'folder_social', path: '/Social/2026' }]}
         status="idle"
         onConfirm={onConfirm}
@@ -240,5 +247,51 @@ describe('ProposalCard — single-click confirmation flow', () => {
 
     const overlay = screen.getByTestId('correction-overlay');
     expect(overlay.innerHTML).not.toContain('motion-reduce:transition-none');
+  });
+});
+
+describe('Document preview through Corriger', () => {
+  it.each([
+    ['production', 'application/pdf', 'iframe', 'https://drive.google.com/file/d/drive_file_1/preview'],
+    ['service-account-staging', 'application/pdf', 'object', '/api/drive/preview/doc_1'],
+    ['service-account-staging', 'image/png', 'img', '/api/drive/preview/doc_1'],
+    ['service-account-staging', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'img', '/api/drive/preview/doc_1?variant=thumbnail'],
+  ] as const)('previews %s %s with loading and error fallback', (mode, mimeType, tag, src) => {
+    render(<ProposalCard proposal={{ ...proposal, document: { ...proposal.document, mimeType } }} mode={mode} status="idle" onConfirm={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Corriger' }));
+    const dialog = screen.getByRole('dialog');
+    const preview = dialog.querySelector(tag)!;
+    expect(preview?.getAttribute(tag === 'object' ? 'data' : 'src')).toBe(src);
+    if (tag === 'object') {
+      expect(preview.getAttribute('type')).toBe('application/pdf');
+      expect(preview.getAttribute('aria-label')).toBe('Aperçu du document');
+      const fallback = within(preview as HTMLElement).getByRole('alert');
+      expect(fallback.textContent).toBe('Aperçu indisponible.');
+      expect(fallback.querySelector('svg')?.classList.contains('text-peach-deep')).toBe(true);
+    }
+    expect(within(dialog).queryByText(/Aucun contenu du document/)).toBeNull();
+    expect(within(dialog).getByText('Aperçu en lecture seule — Klasr ne conserve aucun contenu.')).toBeDefined();
+    expect(within(dialog).getByRole('link', { name: /Ouvrir dans Google Drive/ }).getAttribute('href')).toBe('https://drive.google.com/file/d/drive_file_1/view');
+    expect(within(dialog).getByText("Chargement de l'aperçu…")).toBeDefined();
+    fireEvent.load(preview);
+    expect(within(dialog).queryByText("Chargement de l'aperçu…")).toBeNull();
+    if (tag === 'img') {
+      fireEvent.error(preview);
+      expect(within(dialog).getByText('Aperçu indisponible.')).toBeDefined();
+      expect(within(dialog).getByRole('alert').querySelector('svg')?.classList.contains('text-peach-deep')).toBe(true);
+    } else if (tag === 'object') {
+      expect(within(preview as HTMLElement).getByRole('alert').textContent).toBe('Aperçu indisponible.');
+    } else {
+      expect(dialog.querySelector('iframe')).toBe(preview);
+    }
+  });
+
+  it('keeps local documents as an icon without network preview', () => {
+    render(<ProposalCard proposal={proposal} status="idle" onConfirm={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Corriger' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.querySelector('iframe, img')).toBeNull();
+    expect(within(dialog).getAllByText('scan_001.pdf').length).toBeGreaterThan(0);
+    expect(within(dialog).queryByRole('link', { name: /Ouvrir dans Google Drive/ })).toBeNull();
   });
 });

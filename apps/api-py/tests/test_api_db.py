@@ -31,7 +31,7 @@ def test_models_match_migration_on_fresh_sqlite(tmp_path, monkeypatch):
     command.upgrade(config, "head")
     tables = set(inspect(create_engine(f"sqlite:///{database}")).get_table_names())
     assert tables == set(Base.metadata.tables) | {"alembic_version"}
-    assert len(tables - {"jobs", "alembic_version"}) == 14
+    assert len(tables - {"jobs", "analyses", "alembic_version"}) == 14
 
 
 def test_initial_revision_adopts_existing_tables(tmp_path, monkeypatch):
@@ -173,7 +173,7 @@ def test_prisma_schema_contract():
         column.type.name: column.type.enums
         for table in Base.metadata.tables.values()
         for column in table.columns
-        if isinstance(column.type, Enum) and table.name != "jobs"
+        if isinstance(column.type, Enum) and table.name not in {"jobs", "analyses"}
     }
     assert actual_enums == expected_enums
     model_blocks = re.findall(r"model (\w+) \{(.*?)\n\}", prisma, re.DOTALL)
@@ -189,7 +189,7 @@ def test_prisma_schema_contract():
     assert {
         name: set(table.columns.keys())
         for name, table in Base.metadata.tables.items()
-        if name != "jobs"
+        if name not in {"jobs", "analyses"}
     } == expected_columns
     expected_indexes = {
         f"{name}_{'_'.join(field.strip() for field in fields.split(','))}_idx"
@@ -200,7 +200,7 @@ def test_prisma_schema_contract():
         index.name
         for table in Base.metadata.tables.values()
         for index in table.indexes
-        if not index.unique and table.name != "jobs"
+        if not index.unique and table.name not in {"jobs", "analyses"}
     } == expected_indexes
     expected_foreign_keys = set()
     for model, body in model_blocks:
@@ -221,10 +221,76 @@ def test_prisma_schema_contract():
     actual_foreign_keys = {
         (table.name, column.name, key.column.table.name, key.column.name, key.ondelete)
         for table in Base.metadata.tables.values()
-        if table.name != "jobs"
+        if table.name not in {"jobs", "analyses"}
         for column in table.columns
         for key in column.foreign_keys
     }
     assert actual_foreign_keys == expected_foreign_keys
     updated_at = LlmSetting.__table__.c.updatedAt
     assert updated_at.server_default is not None and updated_at.onupdate is not None
+
+
+def test_rationale_migration_upgrades_existing_proposals(tmp_path, monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import text
+
+    database = tmp_path / "before-rationale.db"
+    monkeypatch.setenv("KLASR_DATABASE_URL", f"sqlite:///{database}")
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).parents[1] / "alembic"))
+    command.upgrade(config, "20260913_0002")
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.begin() as connection:
+        connection.execute(text('ALTER TABLE "ClassificationProposal" DROP COLUMN rationale'))
+        connection.execute(text("INSERT INTO Organization (id, name) VALUES ('org', 'Org')"))
+        connection.execute(text("""
+            INSERT INTO Document (id, "organizationId", "externalId", name, "mimeType", "sizeBytes")
+            VALUES ('doc', 'org', 'file', 'scan.pdf', 'application/pdf', 5)
+        """))
+        for row_id, filename, destination, path, status in (
+            ("strong", 0.9, 0.9, "/Invoices", "PENDING"),
+            ("weak_filename", 0.69, 0.9, "/Invoices", "PENDING"),
+            ("weak_destination", 0.9, 0.69, "/Invoices", "PENDING"),
+            ("missing", 0.9, 0.9, "", "PENDING"),
+            ("decided", 0.9, 0.9, "/Invoices", "CONFIRMED"),
+        ):
+            connection.execute(
+                text("""
+                INSERT INTO "ClassificationProposal"
+                (id, "organizationId", "documentId", "proposedName", "destinationPath",
+                 confidence, "filenameConfidence", "destinationConfidence",
+                 "reviewRequired", "reviewReason", source, status)
+                VALUES (:id, 'org', 'doc', 'invoice.pdf', :path, 0.9, :filename,
+                        :destination, true, 'Legacy audit', 'LLM', :status)
+            """),
+                dict(
+                    id=row_id, path=path, filename=filename, destination=destination, status=status
+                ),
+            )
+        connection.execute(text("""
+            INSERT INTO "ClassificationProposal"
+            (id, "organizationId", "documentId", "proposedName", "destinationPath",
+             confidence, "reviewRequired", "reviewReason", source, status)
+            VALUES ('legacy_null', 'org', 'doc', 'invoice.pdf', '/Invoices',
+                    0.9, false, 'Legacy audit', 'LLM', 'PENDING')
+        """))
+    command.upgrade(config, "20261008_0004")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text('SELECT id, "reviewRequired", "reviewReason" FROM "ClassificationProposal"')
+        ).all()
+    assert {row[0]: bool(row[1]) for row in rows} == {
+        "strong": False,
+        "weak_filename": True,
+        "weak_destination": True,
+        "missing": True,
+        "decided": True,
+        "legacy_null": True,
+    }
+    assert all(row[2] is None for row in rows)
+    columns = {
+        column["name"]: column for column in inspect(engine).get_columns("ClassificationProposal")
+    }
+    assert columns["rationale"]["nullable"]
+    assert "reviewReason" in columns

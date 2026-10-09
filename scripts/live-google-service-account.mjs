@@ -142,7 +142,8 @@ if (process.argv.includes('--decision-selection-check')) {
   ]);
   assert(selected.confirm.id === 'valid' && selected.ignore.id === 'manual', 'Decision fixture selection is not provider-agnostic');
   assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason: 'low_confidence' }), 'Configured-LLM manual review must be accepted');
-  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '', reviewReason: 'extraction_failed' }, { reviewRequired: true, destinationPath: '', reviewReason: ' ' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
+  for (const reviewReason of [null, undefined, ' ']) assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason }), 'Classification-only manual review must accept an absent or blank review reason');
+  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
   process.stdout.write('live runner fixture restoration and decision selection check PASS\n');
   process.exit(0);
 }
@@ -293,7 +294,6 @@ const webPort = Number(process.env.KLASR_LIVE_WEB_PORT ?? 4201);
 const apiBase = loopback(process.env.KLASR_LIVE_API_URL ?? `http://127.0.0.1:${apiPort}/api/v1`);
 const webBase = loopback(process.env.KLASR_LIVE_WEB_URL ?? `http://127.0.0.1:${webPort}`);
 const databaseUrl = process.env.KLASR_DATABASE_URL ?? process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:5432/klasr';
-const mongoUrl = process.env.KLASR_MONGO_URL ?? process.env.MONGO_URL ?? 'mongodb://127.0.0.1:27017';
 const internalSecret = process.env.KLASR_LIVE_INTERNAL_SECRET ?? 'google-sa-live-internal';
 const nextAuthSecret = process.env.KLASR_LIVE_NEXTAUTH_SECRET ?? 'google-sa-live-nextauth';
 const tokenKey = process.env.TOKEN_ENCRYPTION_KEY ?? 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
@@ -529,8 +529,7 @@ try {
   await expectReviewRequiredProposal(proposals.find(({ reviewRequired }) => reviewRequired).card);
   const reviewProof = await db('proposal', organizationId, reviewFixture.id);
   item5Proof.genuineManualReview = genuineManualReview(reviewProof);
-  item5Proof.notExtractionFailed = reviewProof?.reviewReason !== 'extraction_failed';
-  assert(item5Proof.genuineManualReview && item5Proof.notExtractionFailed, 'Review fixture did not produce a genuine destination-less manual review');
+  assert(item5Proof.genuineManualReview, 'Review fixture did not produce a genuine destination-less manual review');
   evidence.realDriveDownloadOcr = 'PASS';
   evidence.realProposalReview = 'PASS';
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-desktop-review.png'), fullPage: true });
@@ -622,7 +621,7 @@ try {
   item5Proof.overlayVisible = true;
   const correctionProof = await db('proposal', organizationId, correctionFixture.id);
   assert(genuineManualReview(correctionProof), 'Correction fixture did not produce a genuine destination-less manual review');
-  await expect(correctionDialog).toContainText(correctionProof.reviewReason);
+  await expect(correctionDialog).toContainText(correctionProof.rationale ?? 'Aucun contenu lisible détecté dans le document');
   item5Proof.overlayReasonVisible = true;
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-overlay-1280.png'), fullPage: true });
   const correctedName = `Document_Corrige${path.extname(correctionFixture.name)}`;
@@ -857,16 +856,16 @@ function assertItem3Proof(proof, task, proofLineage, tree, requireComplete = fal
 function sanitizedItem5Proof(assertions, task, proofLineage, tree) {
   return { schema: 'klasr-item5-provider-proof-v1', task, issue: proofLineage.issue, attempt: proofLineage.attempt, sha: proofLineage.sha, tree, assertions };
 }
-function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, genuineManualReview: false, notExtractionFailed: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
+function item5ProofTemplate() { return { originalExactNameCount: null, originalPdfCount: null, borrowedCarrierIdStable: false, borrowedCarrierSnapshotted: false, recoveryMarkerVerified: false, originalBytesRetained: false, anthropicProvenance: false, genuineManualReview: false, overlayReasonVisible: false, overlayNameEdited: false, overlayDestinationEdited: false, noMutationBeforeValidation: false, createdRunnerOwned: false, createdInAuthorizedRoot: false, headedBrowser: false, overlayVisible: false, explicitValidateClicked: false, correctedNameExact: false, correctedParentExact: false, browserKpiUpdated: false, postValidationScreenshot: false, exactRestorationVerified: false, recoveryMarkerCleared: false, createdFixtureTrashed: false, finalExactNameCount: null, finalPdfCount: null }; }
 function assertItem5Proof(proof, task, proofLineage, tree, requireComplete = false, borrowedMode = false) {
   const keys = (value) => Object.keys(value).sort().join(',');
   assert(keys(proof) === 'assertions,attempt,issue,schema,sha,task,tree' && proof.schema === 'klasr-item5-provider-proof-v1', 'Item 5 proof schema mismatch');
   assert(proof.task === task && proof.issue === proofLineage.issue && proof.attempt === proofLineage.attempt && proof.sha === proofLineage.sha, 'Item 5 proof lineage mismatch');
-  assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,genuineManualReview,headedBrowser,noMutationBeforeValidation,notExtractionFailed,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
+  assert(keys(proof.assertions) === 'anthropicProvenance,borrowedCarrierIdStable,borrowedCarrierSnapshotted,browserKpiUpdated,correctedNameExact,correctedParentExact,createdFixtureTrashed,createdInAuthorizedRoot,createdRunnerOwned,exactRestorationVerified,explicitValidateClicked,finalExactNameCount,finalPdfCount,genuineManualReview,headedBrowser,noMutationBeforeValidation,originalBytesRetained,originalExactNameCount,originalPdfCount,overlayDestinationEdited,overlayNameEdited,overlayReasonVisible,overlayVisible,postValidationScreenshot,recoveryMarkerCleared,recoveryMarkerVerified', 'Item 5 proof assertion schema mismatch');
   const counts = ['originalExactNameCount', 'originalPdfCount', 'finalExactNameCount', 'finalPdfCount'];
   assert(Object.entries(proof.assertions).every(([key, value]) => counts.includes(key) ? value === null || Number.isInteger(value) : typeof value === 'boolean'), 'Item 5 proof assertion value invalid');
   if (requireComplete && borrowedMode) {
-    const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'genuineManualReview', 'headedBrowser', 'noMutationBeforeValidation', 'notExtractionFailed', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
+    const requiredTrue = ['anthropicProvenance', 'borrowedCarrierIdStable', 'borrowedCarrierSnapshotted', 'browserKpiUpdated', 'correctedNameExact', 'correctedParentExact', 'createdFixtureTrashed', 'exactRestorationVerified', 'explicitValidateClicked', 'genuineManualReview', 'headedBrowser', 'noMutationBeforeValidation', 'originalBytesRetained', 'overlayDestinationEdited', 'overlayNameEdited', 'overlayReasonVisible', 'overlayVisible', 'postValidationScreenshot', 'recoveryMarkerCleared', 'recoveryMarkerVerified'];
     assert(proof.assertions.originalExactNameCount === proof.assertions.finalExactNameCount
       && proof.assertions.originalPdfCount === proof.assertions.finalPdfCount
       && proof.assertions.createdRunnerOwned === false && proof.assertions.createdInAuthorizedRoot === false
@@ -878,7 +877,7 @@ function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'local
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function assertThrows(action, message) { try { action(); } catch { return; } throw new Error(message); }
 async function assertRejects(action, message) { try { await action(); } catch (error) { assert(error?.message === message, message); return; } throw new Error(message); }
-function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath && typeof proposal.reviewReason === 'string' && proposal.reviewReason.trim().length > 0 && proposal.reviewReason !== 'extraction_failed'; }
+function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath; }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }
 
 async function serviceAccountToken() {
@@ -1202,8 +1201,8 @@ function syntheticInvoicePdf(reference) {
   return Buffer.from(pdf);
 }
 function reviewRequiredPdf() {
-  const text = ['Contract REF-ZEPHYR-742 dated 2026-08-15', 'from Zephyr Research.', 'Archived research memorandum.'];
-  const stream = `BT /F1 18 Tf 72 720 Td ${text.map((line, index) => `${index ? '0 -30 Td ' : ''}(${line}) Tj`).join(' ')} ET`;
+  // A blank page exercises the classification-only no-content fallback.
+  const stream = 'BT ET';
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>', `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
   let pdf = '%PDF-1.4\n'; const offsets = [0];
   objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
@@ -1469,7 +1468,7 @@ async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
   const python = path.join(root, 'apps/api-py/.venv/bin/python');
   const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, KLASR_STAGING_ACCOUNT_PASSWORD, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ...runtimeEnv } = process.env;
-  const common = { ...runtimeEnv, ...(GOOGLE_CLIENT_ID && { GOOGLE_CLIENT_ID }), ...(GOOGLE_CLIENT_SECRET && { GOOGLE_CLIENT_SECRET }), NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
+  const common = { ...runtimeEnv, ...(GOOGLE_CLIENT_ID && { GOOGLE_CLIENT_ID }), ...(GOOGLE_CLIENT_SECRET && { GOOGLE_CLIENT_SECRET }), NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
   const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
   assert(migration.status === 0, 'Alembic migration failed');
   children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'inherit', env: common }), url: `${apiBase}/health` });

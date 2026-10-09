@@ -1,12 +1,12 @@
 analyse_file_agent:
-  role: "Analyste documentaire"
-  goal: "Extraire des signaux factuels du document sans persister son contenu"
-  backstory: "Spécialiste de l'analyse structurée de documents professionnels."
+  role: "Extracteur de contexte de classement"
+  goal: "Extraire le contexte utile au classement (type de document, parties, date, identifiants) sans juger le contenu du document et sans le persister"
+  backstory: "Spécialiste du contexte de classement documentaire."
 suggest_filename_agent:
   role: "Nommeur de documents"
-  goal: "Proposer un nom fidèle aux seuls signaux fournis"
+  goal: "Proposer un nom depuis le contexte fourni uniquement, sans jugement sur le contenu; expliquer le classement en une ou deux phrases neutres"
   backstory: "Spécialiste des noms de fichiers courts, explicites et traçables."
 suggest_directory_agent:
   role: "Classement documentaire"
-  goal: "Choisir exclusivement un chemin présent dans l'arborescence fournie"
+  goal: "Choisir exclusivement un chemin présent dans l'arborescence fournie depuis le contexte fourni uniquement, sans jugement sur le contenu; expliquer le classement en une ou deux phrases neutres"
   backstory: "Archiviste prudent, explicitement interdit d'inventer un dossier."

@@ -26,14 +26,19 @@ def _extract(file: str | Path | bytes | BinaryIO, suffix: str = ".pdf") -> Extra
     return extract_bytes(file.read(), Path(name).suffix)
 
 
+def _classification_content(analysis: ExtractionResult) -> str:
+    if analysis.markdown and analysis.context and analysis.context != analysis.markdown:
+        return analysis.markdown + "\n\n" + analysis.context
+    return analysis.markdown or analysis.context or analysis.text
+
+
 def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> DecisionResult:
     """Production CrewAI seam; tests replace this with a deterministic stub LLM."""
     if analysis.quality in {"empty", "failed"}:
         return DecisionResult(
             value=None,
             confidence=0,
-            signals=[{"label": "extraction", "value": analysis.quality}],
-            warnings=analysis.warnings,
+            rationale=f"Extraction {analysis.quality} — aucun contexte lisible pour le classement.",
         )
     if local := _local_suggestion(analysis, directories):
         return local.filename if kind == "filename" else local.destination
@@ -42,7 +47,10 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
     assistant = DocumentSortingAssistantCrew()
     crew = assistant.naming_crew() if kind == "filename" else assistant.destination_crew()
     output = crew.kickoff(
-        inputs={"content": analysis.markdown or analysis.text, "directories": directories}
+        inputs={
+            "content": _classification_content(analysis),
+            "directories": directories,
+        }
     )
     return DecisionResult.model_validate(output.pydantic or output.to_dict())
 
@@ -60,7 +68,12 @@ def _both_decisions(
     output = (
         DocumentSortingAssistantCrew()
         .combined_crew()
-        .kickoff(inputs={"content": analysis.markdown or analysis.text, "directories": directories})
+        .kickoff(
+            inputs={
+                "content": _classification_content(analysis),
+                "directories": directories,
+            }
+        )
     )
     filename, destination = output.tasks_output[-2:]
     return (
@@ -70,6 +83,8 @@ def _both_decisions(
 
 
 def _validated_destination(result: DecisionResult, directories: list[str]) -> DecisionResult:
+    if result.value is None and result.confidence == 0:
+        return result
     if result.value is None or "no_destination_match" in result.warnings:
         return result.model_copy(
             update={
@@ -87,12 +102,11 @@ def _validated_destination(result: DecisionResult, directories: list[str]) -> De
         return DecisionResult(
             value=None,
             confidence=0,
-            signals=result.signals,
-            warnings=[*result.warnings, "destination_outside_tree"],
+            rationale="Destination hors arborescence ; choix manuel requis.",
         )
     if result.confidence < CONFIDENCE_THRESHOLD:
         return result.model_copy(
-            update={"value": None, "warnings": [*result.warnings, "low_confidence"]}
+            update={"value": None, "rationale": "Destination incertaine ; choix manuel requis."}
         )
     return result.model_copy(update={"value": value})
 
@@ -101,9 +115,7 @@ def suggest_filename(file: str | Path | bytes | BinaryIO, suffix: str = ".pdf") 
     extraction = _extract(file, suffix)
     result = _decision("filename", extraction, [])
     if result.confidence < CONFIDENCE_THRESHOLD:
-        return result.model_copy(
-            update={"value": None, "warnings": [*result.warnings, "low_confidence"]}
-        )
+        return result.model_copy(update={"value": None})
     return result
 
 
@@ -121,9 +133,7 @@ def suggest(
     extraction = _extract(file, suffix)
     filename, destination = _both_decisions(extraction, directories)
     if filename.confidence < CONFIDENCE_THRESHOLD:
-        filename = filename.model_copy(
-            update={"value": None, "warnings": [*filename.warnings, "low_confidence"]}
-        )
+        filename = filename.model_copy(update={"value": None})
     destination = _validated_destination(destination, directories)
     return SuggestionResult(
         filename=filename, destination=destination, extraction_quality=extraction.quality
@@ -140,9 +150,7 @@ def suggest_text(
     try:
         filename, destination = _both_decisions(extraction, directories, allow_local=False)
         if filename.confidence < CONFIDENCE_THRESHOLD:
-            filename = filename.model_copy(
-                update={"value": None, "warnings": [*filename.warnings, "low_confidence"]}
-            )
+            filename = filename.model_copy(update={"value": None})
         return SuggestionResult(
             filename=filename,
             destination=_validated_destination(destination, directories),

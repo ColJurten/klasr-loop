@@ -8,12 +8,13 @@ export interface ProposalView {
   filenameConfidence?: number | null;
   destinationConfidence?: number | null;
   reviewRequired?: boolean;
-  reviewReason?: string | null;
+  rationale?: string | null;
   source: 'RULE' | 'LLM';
   /** L'IA suggère de créer un dossier absent de l'arborescence (état pêche). */
   isNewFolder?: boolean;
   document: {
     id: string;
+    externalId: string;
     name: string;
     mimeType: string;
     sizeBytes: number;

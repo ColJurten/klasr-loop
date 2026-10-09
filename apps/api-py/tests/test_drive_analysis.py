@@ -1,15 +1,16 @@
 import asyncio
 import json
 import logging
+import re
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import create_engine, select, func
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -229,9 +230,25 @@ class MetadataSink:
     async def initialize(self):
         self.initialized = True
 
-    async def record(self, value):
-        assert set(value) <= {"organizationId", "documentId", "modelUsed", "quality", "createdAt"}
-        self.records.append(value)
+    async def record(self, *, organization_id, document_id, status, payload):
+        assert set(payload) <= {
+            "proposed_name",
+            "destination",
+            "confidence",
+            "rationale",
+            "model_info",
+        }
+        self.records.append(
+            dict(
+                organization_id=organization_id,
+                document_id=document_id,
+                status=status,
+                payload=payload,
+            )
+        )
+
+    async def purge_expired(self):
+        return 0
 
 
 def pending(session, org, name="input.txt", external="synthetic-input", mime="text/plain"):
@@ -289,7 +306,23 @@ async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant, caplog, 
         metric = session.scalar(select(UsageMetric))
         assert metric.rule_matches == 1 and metric.ocr_runs == 1 and metric.llm_calls == 0
         assert sink.records == [
-            dict(organizationId=org, documentId=doc.id, modelUsed="rule", quality="ok")
+            dict(
+                organization_id=org,
+                document_id=doc.id,
+                status="completed",
+                payload={
+                    "proposed_name": "invoice.txt",
+                    "destination": "/Invoices",
+                    "confidence": 0.95,
+                    "rationale": row.rationale,
+                    "model_info": {
+                        "model_used": "rule",
+                        "quality": "ok",
+                        "source": "RULE",
+                        "llm_calls_used": 0,
+                    },
+                },
+            )
         ]
         await service.analyze(payload)
         assert session.scalar(select(func.count()).select_from(ClassificationProposal)) == 1
@@ -328,9 +361,9 @@ async def test_configured_provider_bypasses_offline_shortcut(tenant, monkeypatch
     monkeypatch.delenv("KLASR_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("KLASR_LLM_MODEL", raising=False)
     responses = [
-        dict(value="analysis", confidence=1, signals=["kind:invoice"]),
-        dict(value="invoice.txt", confidence=0.9, signals=["kind:invoice"]),
-        dict(value=None, confidence=0, signals=[]),
+        dict(value="analysis", confidence=1, rationale="Document classé comme facture."),
+        dict(value="invoice.txt", confidence=0.9, rationale="Nom fondé sur le type facture."),
+        dict(value=None, confidence=0),
     ]
     providers = types.SimpleNamespace(
         completion=AsyncMock(side_effect=lambda *_: json.dumps(responses.pop(0)))
@@ -423,9 +456,9 @@ async def test_dsa_real_crew_callable_pipeline_no_replay_content(tenant, monkeyp
     )
     org = identity["organizationId"]
     responses = [
-        dict(value="analysis", confidence=1, signals=["kind:invoice"]),
-        dict(value="invoice.txt", confidence=0.9, signals=["kind:invoice"]),
-        dict(value="/Invoices", confidence=0.9, signals=["kind:invoice"]),
+        dict(value="analysis", confidence=1, rationale="Document classé comme facture."),
+        dict(value="invoice.txt", confidence=0.9, rationale="Nom fondé sur le type facture."),
+        dict(value="/Invoices", confidence=0.9, rationale="Dossier des factures."),
     ]
     calls = []
 
@@ -516,14 +549,32 @@ async def test_failed_extraction_creates_explicit_review_proposal(tenant):
     _, app, engine, identity, _ = tenant
     with Session(engine, expire_on_commit=False) as session:
         doc = pending(session, identity["organizationId"])
+        RulesRepository(session).create(
+            identity["organizationId"],
+            RuleDTO(
+                priority=1,
+                destinationPath="/Invoices",
+                suggestedNameTemplate="metadata_rule.txt",
+                conditions=[dict(field="FILENAME", operator="CONTAINS", value="input")],
+            ),
+        )
+        session.add(
+            Folder(
+                organization_id=identity["organizationId"],
+                external_id="invoices",
+                path="/Invoices",
+                name="Invoices",
+            )
+        )
         drive = types.SimpleNamespace(
             download=AsyncMock(side_effect=RuntimeError("download failed"))
         )
         service = AnalysisService(session, app.state.settings, drive, None, MetadataSink())
         await service.analyze(dict(organizationId=identity["organizationId"], documentId=doc.id))
         proposal = session.scalar(select(ClassificationProposal))
-        assert proposal.review_required and proposal.review_reason == "extraction_failed"
-        assert proposal.proposed_name == "classement_manuel.txt" and proposal.llm_calls_used == 0
+        assert proposal.review_required and proposal.review_reason is None
+        assert proposal.rationale == "Aucun contenu lisible détecté dans le document"
+        assert proposal.proposed_name == "input.txt" and proposal.llm_calls_used == 0
 
 
 @pytest.mark.asyncio
@@ -533,6 +584,16 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
     stop.set()
     await run_worker(app.state.settings, engine, stop, analyses=sink)
     assert sink.initialized
+    stop.clear()
+    sink.purge_expired = AsyncMock(return_value=0)
+
+    async def stop_tick(session, handler):
+        stop.set()
+        return True
+
+    monkeypatch.setattr("worker.work_once", stop_tick)
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+    sink.purge_expired.assert_awaited_once()
     from main import create_app
     from fastapi.testclient import TestClient
 
@@ -578,6 +639,50 @@ async def test_worker_retries_transient_job_store_error(tenant, monkeypatch):
     assert delays == [1]
 
 
+@pytest.mark.asyncio
+async def test_worker_purge_is_gated_between_ticks(tenant, monkeypatch):
+    _, app, engine, _, _ = tenant
+    app.state.settings.analyses_purge_interval_seconds = 3600
+    sink, stop = MetadataSink(), asyncio.Event()
+    sink.purge_expired = AsyncMock(return_value=0)
+    ticks = 0
+
+    async def stop_second_tick(session, handler):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 2:
+            stop.set()
+        return True
+
+    monkeypatch.setattr("worker.work_once", stop_second_tick)
+    monkeypatch.setattr("worker.monotonic", lambda: 100.0)
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+    assert ticks == 2
+    sink.purge_expired.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_continues_after_purge_failure(tenant, monkeypatch):
+    _, app, engine, _, _ = tenant
+    sink, stop = MetadataSink(), asyncio.Event()
+    sink.purge_expired = AsyncMock(side_effect=RuntimeError("private purge details"))
+    log_error = Mock()
+    monkeypatch.setattr("worker.logger.error", log_error)
+    ticks = 0
+
+    async def stop_first_tick(session, handler):
+        nonlocal ticks
+        ticks += 1
+        stop.set()
+        return True
+
+    monkeypatch.setattr("worker.work_once", stop_first_tick)
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+    assert ticks == 1
+    sink.purge_expired.assert_awaited_once()
+    log_error.assert_called_once_with("analysis purge failed: %s", "RuntimeError")
+
+
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     import sys
     from dsa.tools import _build_converter, extract_bytes
@@ -613,29 +718,248 @@ def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mongo_whitelist_ttl_and_tenant_queries():
-    from mongo.analyses import AnalysesRepository
+async def test_postgres_analysis_repository_whitelist_ttl_and_tenant_queries():
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
 
-    repository = AnalysesRepository("mongodb://localhost", ttl_days=7)
-    collection = types.SimpleNamespace(
-        create_index=AsyncMock(),
-        insert_one=AsyncMock(),
-        delete_many=AsyncMock(return_value=types.SimpleNamespace(deleted_count=2)),
-    )
-    repository.collection = collection
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine, ttl_days=7)
     await repository.initialize()
-    assert collection.create_index.call_args_list[0].kwargs == {"expireAfterSeconds": 7 * 86400}
-    await repository.record(
-        dict(organizationId="org", documentId="doc", modelUsed="rule", quality="ok")
-    )
-    record = collection.insert_one.call_args.args[0]
-    assert isinstance(record["createdAt"], datetime)
-    for forbidden in ("text", "content", "bytes", "signals", "apiKey", "llmRaw"):
-        with pytest.raises(ValueError, match="non-metadata"):
-            await repository.record({"organizationId": "org", forbidden: "private"})
-    assert await repository.purge_organization("org") == 2
-    assert collection.delete_many.call_args.args[0] == {"organizationId": "org"}
-    repository.close()
+    payload = {"proposed_name": "invoice.txt", "model_info": {"quality": "ok"}}
+    try:
+        for forbidden in ("text", "content", "bytes", "signals", "ocrText", "apiKey", "llmRaw"):
+            with pytest.raises(ValueError, match="non-result"):
+                await repository.record(
+                    organization_id="org",
+                    document_id="doc",
+                    status="completed",
+                    payload={forbidden: "private"},
+                )
+        await repository.record(
+            organization_id="org", document_id="doc", status="completed", payload=payload
+        )
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(engine) as session:
+            row = session.scalar(select(Analysis))
+            row.created_at = now - timedelta(days=1)
+            analysis_id = row.id
+            assert now + timedelta(days=6) < row.expires_at < now + timedelta(days=8)
+            session.commit()
+        await repository.record(
+            organization_id="org", document_id="doc", status="newer", payload=payload
+        )
+        await repository.record(
+            organization_id="other", document_id="doc", status="foreign", payload=payload
+        )
+        rows = await repository.find_by_document("org", "doc")
+        assert [row["status"] for row in rows] == ["newer", "completed"]
+        assert rows[0]["payload"] == payload
+        assert set(rows[0]) == {"status", "payload", "created_at", "expires_at"}
+        assert await repository.find_by_document("foreign", "doc") == []
+        assert await repository.find_by_document("org", "other-doc") == []
+        assert await repository.update_status("org", analysis_id, "updated")
+        assert not await repository.update_status("org", "missing", "updated")
+        assert (await repository.find_by_document("org", "doc"))[1]["status"] == "updated"
+        assert await repository.purge_organization("org") == 2
+        assert await repository.find_by_document("org", "doc") == []
+        assert len(await repository.find_by_document("other", "doc")) == 1
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"model_info": {"ocr_text": "x"}},
+        {"model_info": {"llm_calls_used": "3"}},
+        {"model_info": {"llm_calls_used": True}},
+        {"model_info": "not-a-dict"},
+        {"rationale": {"ocr_text": "DOC CONTENT"}},
+        {"destination": {"bytes": "QUJD"}},
+        {"proposed_name": ["ocr", "text"]},
+        {"confidence": "LONG OCR TEXT"},
+        {"confidence": True},
+        *[{key: None} for key in ("proposed_name", "destination", "confidence", "model_info")],
+    ],
+)
+async def test_analysis_repository_rejects_non_result_values(payload):
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    try:
+        with pytest.raises(ValueError, match="non-result"):
+            await repository.record(
+                organization_id="org", document_id="doc", status="completed", payload=payload
+            )
+        with Session(engine) as session:
+            assert session.scalar(select(func.count()).select_from(Analysis)) == 0
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confidence,rationale", [(0.92, "Matched rule"), (1, None)])
+async def test_analysis_repository_accepts_result_types(confidence, rationale):
+    from db.models import Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    payload = {
+        "proposed_name": "invoice.txt",
+        "destination": "/Invoices",
+        "confidence": confidence,
+        "rationale": rationale,
+        "model_info": {
+            "model_used": "rule",
+            "quality": "ok",
+            "source": "RULE",
+            "llm_calls_used": 0,
+        },
+    }
+    try:
+        await repository.record(
+            organization_id="org", document_id="doc", status="completed", payload=payload
+        )
+        rows = await repository.find_by_document("org", "doc")
+        assert len(rows) == 1
+        assert rows[0]["payload"] == payload
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_analysis_repository_update_status_rejects_cross_tenant():
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    try:
+        await repository.record(
+            organization_id="alice", document_id="doc", status="completed", payload={}
+        )
+        with Session(engine) as session:
+            analysis_id = session.scalar(select(Analysis)).id
+        assert await repository.update_status("alice", analysis_id, "x") is True
+        assert await repository.update_status("bob", analysis_id, "x") is False
+        with Session(engine) as session:
+            row = session.get(Analysis, analysis_id)
+            assert row.organization_id == "alice"
+            assert row.status == "x"
+        assert await repository.find_by_document("bob", "doc") == []
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_analysis_purge_expired_deletes_expired_keeps_fresh():
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    now = datetime.now(timezone.utc)
+    try:
+        with Session(engine) as session:
+            for status, days in (("expired", -1), ("fresh", 1)):
+                session.add(
+                    Analysis(
+                        organization_id="org",
+                        document_id="doc",
+                        status=status,
+                        payload={},
+                        expires_at=now + timedelta(days=days),
+                    )
+                )
+            session.commit()
+        assert await repository.purge_expired() == 1
+        rows = await repository.find_by_document("org", "doc")
+        assert len(rows) == 1 and rows[0]["status"] == "fresh"
+        assert await repository.purge_expired() == 0
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_analyses_crud_via_repository_jsonb_payload_and_purge_chain():
+    """End-to-end AnalysesRepository CRUD with a JSONB payload: record -> list/read
+    (find_by_document, newest first, payload round-trips) -> update_status -> purge_expired
+    keeps fresh / deletes expired. Closes the card-1 acceptance (a) full chain: the
+    existing whitelist test exercises create/read/update but purges by organization
+    (purge_organization), and the existing purge test creates rows via the ORM Session
+    rather than via record() and skips update_status."""
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine, ttl_days=7)
+    payload = {
+        "proposed_name": "2026-10-08-facture.txt",
+        "destination": "/Comptabilite/Factures",
+        "confidence": 0.92,
+        "rationale": None,
+        "model_info": {
+            "model_used": "rule",
+            "quality": "ok",
+            "source": "RULE",
+            "llm_calls_used": 0,
+        },
+    }
+    try:
+        # (create) record with a nested JSONB payload
+        await repository.record(
+            organization_id="org-acc",
+            document_id="doc-1",
+            status="completed",
+            payload=payload,
+        )
+        # (list/read) find_by_document returns the row, JSONB survives the round trip
+        rows = await repository.find_by_document("org-acc", "doc-1")
+        assert len(rows) == 1, rows
+        assert rows[0]["status"] == "completed", rows[0]
+        assert rows[0]["payload"] == payload, rows[0]["payload"]
+        assert set(rows[0]) == {"status", "payload", "created_at", "expires_at"}
+        # tenant isolation: a foreign org or a different document see nothing
+        assert await repository.find_by_document("org-acc", "other-doc") == []
+        assert await repository.find_by_document("foreign", "doc-1") == []
+        # (update) update_status round-trips and reports a missing row as False
+        with Session(engine) as session:
+            analysis_id = session.scalar(select(Analysis)).id
+        assert await repository.update_status("org-acc", analysis_id, "updated")
+        assert not await repository.update_status("org-acc", "missing-id", "x")
+        rows = await repository.find_by_document("org-acc", "doc-1")
+        assert rows[0]["status"] == "updated", rows[0]
+        # (purge_expired) an expired row is deleted while the fresh updated row is kept
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            session.add(
+                Analysis(
+                    organization_id="org-acc",
+                    document_id="doc-1",
+                    status="expired",
+                    payload={},
+                    expires_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+        assert await repository.purge_expired() == 1
+        statuses = sorted(
+            r["status"] for r in await repository.find_by_document("org-acc", "doc-1")
+        )
+        assert statuses == ["updated"], statuses  # expired deleted, fresh kept
+        assert await repository.purge_expired() == 0  # idempotent second sweep
+    finally:
+        engine.dispose()
 
 
 # --- Phase 4: local_suggestion nested-tree and sibling ambiguity tests ---
@@ -691,7 +1015,10 @@ def test_local_suggestion_no_zero_evidence_fallback():
     )
     result = local_suggestion(extraction, ["/Clients/Acme", "/Archive/2026"])
     assert result.destination.value is None
-    assert "no_destination_match" in result.destination.warnings
+    assert (
+        result.destination.rationale
+        == "Aucune destination de l'arborescence ne correspond au type de document."
+    )
 
 
 def test_local_suggestion_sibling_ambiguity_detected():
@@ -737,7 +1064,11 @@ def test_local_suggestion_insufficient_evidence_filename():
     extraction = ExtractionResult(text="some text without strong signals", quality="ok")
     result = local_suggestion(extraction, ["/Archive"])
     if result.filename.value is None or len(result.filename.value.split("_")) < 2:
-        assert "insufficient_evidence" in result.filename.warnings
+        assert result.filename.confidence < 0.7
+        assert (
+            result.filename.rationale
+            == "Signal de classement insuffisant pour proposer un nom fiable."
+        )
 
 
 def test_local_suggestion_empty_content():
@@ -764,7 +1095,7 @@ def test_extract_memory_signal_aware_quality():
     # Text without signals
     result = extract_memory(b"x" * 100, "text/plain", "test.txt")
     assert result.quality == "sparse"
-    assert "no_recognizable_signals" in result.warnings
+    assert set(result.model_fields) == {"text", "context", "quality"}
 
     # Empty text
     result = extract_memory(b"   ", "text/plain", "test.txt")
@@ -773,4 +1104,187 @@ def test_extract_memory_signal_aware_quality():
     # Very short text
     result = extract_memory(b"hi", "text/plain", "test.txt")
     assert result.quality == "sparse"
-    assert "very_short_content" in result.warnings
+    assert not hasattr(result, "warnings")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "original, content, proposed, confidence",
+    [
+        (
+            "Copie de doc1(1).xlsx",
+            "Devis Peinture Enduit 2025-03-23 Total HT 700$ TVA 840$",
+            "Devis_Peinture_Enduit_20250323.xlsx",
+            0.95,
+        ),
+        (
+            "test1.pdf",
+            "ACME Devis 658437 ClaireSimmns 2024-02-29",
+            "ACME_Devis_658437_ClaireSimmns_20240229.pdf",
+            0.92,
+        ),
+    ],
+)
+async def test_classification_ignores_document_correctness(
+    tenant, monkeypatch, original, content, proposed, confidence
+):
+    from dsa.schemas import DecisionResult
+
+    _, app, engine, identity, _ = tenant
+    rationale = "Devis identifié par ses parties, sa date et sa référence."
+    mocked = SuggestionResult(
+        filename=DecisionResult(value=proposed, confidence=confidence, rationale=rationale),
+        destination=DecisionResult(
+            value="/quotes", confidence=confidence, rationale="Devis rangé dans /quotes."
+        ),
+        extraction_quality="ok",
+    )
+    seen = []
+
+    def classify(extraction, paths):
+        seen.append(extraction.text)
+        assert paths == ["/quotes"]
+        return mocked
+
+    monkeypatch.setattr("services.analysis.local_suggestion", classify)
+    with Session(engine, expire_on_commit=False) as session:
+        document = types.SimpleNamespace(name=original)
+        service = AnalysisService(session, app.state.settings, None, None, MetadataSink())
+        result = await service.suggest(
+            identity["organizationId"],
+            document,
+            ExtractionResult(text=content, quality="ok"),
+            ["/quotes"],
+        )
+    assert seen == [content]
+    assert result["proposed_name"] == proposed
+    assert result["destination_path"] == "/quotes"
+    assert result["confidence"] >= 0.7 and not result["review_required"]
+    assert "warnings" not in result and "review_reason" not in result
+    assert result["rationale"] == rationale + " Devis rangé dans /quotes."
+
+
+def test_local_classification_preserves_leap_day():
+    result = local_suggestion(
+        ExtractionResult(
+            text="Facture fournisseur: ACME date: 2024-02-29 référence: INV-42", quality="ok"
+        ),
+        ["/facture"],
+    )
+    assert "2024-02-29" in result.filename.value
+    assert result.filename.confidence >= 0.7
+    assert result.destination.confidence >= 0.7
+    assert set(result.filename.model_dump()) == {"value", "confidence", "rationale"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filename_confidence, destination_confidence, destination, quality, needs_review",
+    [
+        (0.95, 0.95, "/quotes", "ok", False),
+        (0.69, 0.95, "/quotes", "ok", True),
+        (0.95, 0.69, "/quotes", "ok", True),
+        (0.95, 0.95, None, "ok", True),
+        (0.95, 0.95, "/quotes", "sparse", True),
+    ],
+)
+async def test_review_depends_only_on_classification(
+    tenant,
+    monkeypatch,
+    filename_confidence,
+    destination_confidence,
+    destination,
+    quality,
+    needs_review,
+):
+    from dsa.schemas import DecisionResult
+
+    _, app, engine, identity, _ = tenant
+    monkeypatch.setattr(
+        "services.analysis.local_suggestion",
+        lambda *_: SuggestionResult(
+            filename=DecisionResult(value="devis.pdf", confidence=filename_confidence),
+            destination=DecisionResult(value=destination, confidence=destination_confidence),
+            extraction_quality=quality,
+        ),
+    )
+    with Session(engine) as session:
+        service = AnalysisService(session, app.state.settings, None, None, MetadataSink())
+        result = await service.suggest(
+            identity["organizationId"],
+            types.SimpleNamespace(name="doc.pdf"),
+            ExtractionResult(text="Devis 2024-02-29", quality=quality),
+            ["/quotes"],
+        )
+    assert result["review_required"] is needs_review
+    if quality == "sparse":
+        assert result["confidence"] == 0.55
+
+
+def test_bounded_rationale_limits_and_deduplicates():
+    from services.analysis import _bounded_rationale, apply_rules
+
+    text = " Première phrase.  Première phrase. " + "Deuxième " * 50 + ". Troisième phrase."
+    bounded = _bounded_rationale(text)
+    assert len(bounded) <= 300
+    assert bounded.count("Première phrase.") == 1
+    assert "Troisième" not in bounded
+    assert len(re.split(r"(?<=[.!?])\s+", bounded)) <= 2
+    assert _bounded_rationale("  \n ") is None
+    path = "/" + "folder" * 100
+    proposal = apply_rules(
+        types.SimpleNamespace(name="doc.pdf", mime_type="application/pdf"),
+        "invoice",
+        [path],
+        [
+            dict(
+                priority=1,
+                destinationPath=path,
+                suggestedNameTemplate="invoice.pdf",
+                conditions=[dict(field="CONTENT", operator="CONTAINS", value="invoice")],
+            )
+        ],
+    )
+    assert len(proposal["rationale"]) <= 300
+
+
+@pytest.mark.parametrize(
+    ("rationale", "expected"),
+    [
+        ("  ", None),
+        (
+            "First sentence. Second sentence. Third sentence. " + "long " * 100,
+            "First sentence. Second sentence.",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_bounded_rationale_is_stored(tenant, monkeypatch, rationale, expected):
+    from dsa.schemas import DecisionResult
+
+    _, app, engine, identity, _ = tenant
+    monkeypatch.setattr(
+        "services.analysis.local_suggestion",
+        lambda *_: SuggestionResult(
+            filename=DecisionResult(value="invoice.txt", confidence=0.9, rationale=rationale),
+            destination=DecisionResult(value="/Invoices", confidence=0.9),
+            extraction_quality="ok",
+        ),
+    )
+    with Session(engine, expire_on_commit=False) as session:
+        doc = pending(session, identity["organizationId"])
+        service = AnalysisService(session, app.state.settings, None, None, MetadataSink())
+        values = await service.suggest(
+            identity["organizationId"],
+            doc,
+            ExtractionResult(text="Invoice 2024-02-29", quality="ok"),
+            ["/Invoices"],
+        )
+        assert values["rationale"] == expected
+        proposal = ClassificationProposal(
+            organization_id=identity["organizationId"], document_id=doc.id, **values
+        )
+        session.add(proposal)
+        session.commit()
+        session.refresh(proposal)
+        assert proposal.rationale == expected

@@ -12,7 +12,7 @@ architecture and documented trade-offs over clever shortcuts.
 
 ## Repository layout (monorepo)
 
-- `apps/api/` — NestJS (TypeScript) modular monolith. Layered: controller → service → repository (Prisma/PostgreSQL, 12 entities). The classification pipeline (rule pre-filter → OCR → LLM cascade behind an abstraction) lives in `src/classification`; async jobs run on pg-boss (PostgreSQL) in a worker process. `src/analyses` is the ONLY MongoDB access (one `analyses` collection, TTL-purged) — it exists to demonstrate REAC C8 (SQL **and NoSQL** data access).
+- `apps/api/` — NestJS (TypeScript) modular monolith. Layered: controller → service → repository (Prisma/PostgreSQL, 12 entities). The classification pipeline (rule pre-filter → OCR → LLM cascade behind an abstraction) lives in `src/classification`; async jobs run on pg-boss (PostgreSQL) in a worker process. The PostgreSQL `analyses` table stores results in a JSONB payload, expiry-purged by the worker, demonstrating document-style access for REAC C8.
 - `apps/web/` — Next.js 14 (App Router), TypeScript, Tailwind with the Klasr charte tokens, NextAuth.
 - ONE language (TypeScript) everywhere, NO Redis, NO MinIO, NO Python — see docs/ARCHITECTURE.md (ADR-001…006) before proposing to add any technology.
 - `docs/` — living documentation. `docs/STATE.md` is the loop's memory (see below).
@@ -20,18 +20,18 @@ architecture and documented trade-offs over clever shortcuts.
 
 ## Non-negotiable invariants
 
-1. Files NEVER leave the user's Drive. Bytes are streamed from the Drive API into the OCR step and discarded — no object storage, no content at rest. Never persist document content or OCR text in PostgreSQL or MongoDB; MongoDB `analyses` holds metadata only, TTL-purged.
+1. Files NEVER leave the user's Drive. Bytes are streamed from the Drive API into the OCR step and discarded — no object storage, no content at rest. Never persist document content or OCR text in PostgreSQL; its `analyses` table holds results only, expiry-purged.
 2. Every classification action requires explicit user confirmation before execution (single-click flow).
 3. LLM calls go through the provider abstraction in `apps/api/src/classification/llm` — never call a vendor API outside that folder.
 4. Pre-filter before LLM: skip the LLM when rules/metadata suffice (eco-design + cost).
 5. Multi-tenant isolation: every query is scoped by `organizationId`. No cross-tenant reads, ever.
-6. RGPD: no document content in logs; OCR metadata in MongoDB is purgeable per tenant.
+6. RGPD: no document content in logs; Analysis results in the PostgreSQL `analyses` table is purgeable per tenant.
 
 ## Commands
 
 - Workspace: `pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build`
 - Tests ciblés: `pnpm --filter @klasr/api test`, `pnpm --filter @klasr/web test`, `pnpm --filter @klasr/agent-orchestration test`
-- Local datastores: `docker compose up -d` (postgres, mongo)
+- Local datastores: `docker compose up -d` (postgres only)
 
 ## Git workflow (summary — full rules in docs/BRANCHING.md and the git-workflow skill)
 
