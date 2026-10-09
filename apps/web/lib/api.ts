@@ -80,16 +80,6 @@ export async function getDashboardData(): Promise<DashboardView> {
   return response.json();
 }
 
-export async function startSync(): Promise<{ enqueued: number; manual: number }> {
-  const { organizationId, userId } = await sessionTenant();
-  const response = await fetch(`${apiUrl()}/organizations/${organizationId}/sync`, {
-    method: 'POST',
-    headers: internalHeaders(userId),
-  });
-  await assertOk(response);
-  return response.json();
-}
-
 export async function listReferenceFolders(): Promise<Array<{ externalId: string; name: string; parentExternalId: string | null }>> {
   const { organizationId, userId } = await sessionTenant();
   const response = await fetch(`${apiUrl()}/organizations/${organizationId}/drive/reference-folders`, {

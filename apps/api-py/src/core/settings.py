@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     analyses_ttl_days: int = 30
     inline_worker: bool = False
     worker: bool = False
-    local_mvp: bool = False
     acceptance_google_service_account: bool = False
     google_service_account_file: str = ""
     google_drive_root_id: str = "root"
@@ -42,7 +41,7 @@ class Settings(BaseSettings):
 
     def validate_runtime(self):
         if self.node_env == "production":
-            for name in ("local_mvp", "inline_worker", "acceptance_google_service_account"):
+            for name in ("inline_worker", "acceptance_google_service_account"):
                 if getattr(self, name):
                     raise ValueError(f"KLASR_{name.upper()} cannot run in production")
 

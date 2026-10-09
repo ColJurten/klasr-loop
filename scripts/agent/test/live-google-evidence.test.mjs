@@ -11,8 +11,8 @@ const root = new URL('../../../', import.meta.url);
 const head = readFileSync(new URL('.git/HEAD', root), 'utf8').trim();
 const sha = head.startsWith('ref: ') ? readFileSync(new URL(`.git/${head.slice(5)}`, root), 'utf8').trim() : head;
 const treeBinding = { schema: 'klasr-tree-v1', mode: 'sha', head: sha, digest: sha };
-const observedRecord = { schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: 'claude-safe', modelCount: 2, modelUsed: 'anthropic/claude-safe', tree: treeBinding };
-const liveResultKeys = ['anthropic_discovery', 'anthropic_setting_saved', 'anthropic_classification', 'anthropic_setting_removed', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
+const observedRecord = { schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: 'claude-safe', modelUsed: 'anthropic/claude-safe', tree: treeBinding };
+const liveResultKeys = ['llm_classification', 'service_account_auth', 'drive_listing', 'drive_download_ocr', 'proposal_review', 'confirm_mutation', 'correction_mutation', 'reject_mutation', 'terminal_no_reenqueue', 'desktop_browser', 'mobile_390_browser', 'launch_completion', 'fresh_provider_metadata'];
 
 function functionBody(source, name) {
   const start = source.search(new RegExp(`(?:async )?function ${name}\\([^)]*\\) \\{`));
@@ -109,6 +109,11 @@ test('live runner evidence self-check enforces the sanitized manifest allowlist'
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const results = functionBody(source, 'sanitizedManifest');
   const schema = functionBody(source, 'assertManifest');
+  const publisher = readFileSync(new URL('../../publish-live-google-status.mjs', import.meta.url), 'utf8');
+  const publisherKeys = publisher.match(/const RESULT_KEYS = \[(.*?)\];/)?.[1].match(/'([^']+)'/g)?.map((key) => key.slice(1, -1));
+  const runnerKeys = schema.match(/keys\(manifest\.results\) === '([^']+)'/)?.[1].split(',');
+  assert.deepEqual(publisherKeys?.toSorted(), runnerKeys);
+  assert.deepEqual(liveResultKeys.toSorted(), runnerKeys);
   const markdown = functionBody(source, 'realAcceptanceMarkdown');
   const item4Schema = functionBody(source, 'assertItem4Proof');
   const item3Schema = functionBody(source, 'assertItem3Proof');
@@ -122,7 +127,7 @@ test('live runner evidence self-check enforces the sanitized manifest allowlist'
   assert.match(item3Schema, /proof\.task.*task/s);
   assert.match(item3Schema, /proof\.attempt.*proofLineage\.attempt/s);
   assert.match(item3Schema, /assertTreeBinding\(tree, proof\.tree\)/);
-  for (const key of ['anthropic_discovery', 'anthropic_setting_saved', 'anthropic_classification', 'anthropic_setting_removed']) {
+  for (const key of liveResultKeys) {
     assert.match(results, new RegExp(`${key}:`), `${key} must bind manifest PASS`);
     assert.match(schema, new RegExp(`results\\) === '[^']*${key}`), `${key} must be allowlisted in the exact result schema`);
   }
@@ -140,15 +145,17 @@ test('Item 5 evidence paths are issue-attempt-task-run scoped and distinct', () 
   }
 });
 
-test('Item 5 runner retains borrowed bytes and gates Anthropic no_destination_match', () => {
+test('Item 5 runner reuses borrowed carriers and requires genuine configured-LLM manual review', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const branch = source.slice(source.indexOf('if (quotaSafeMode) {'), source.indexOf('} else {', source.indexOf('if (quotaSafeMode) {')));
-  assert.doesNotMatch(branch, /replaceBytes\(/);
-  assert.match(branch, /originalBytesRetained/);
-  assert.match(branch, /modelUsed.*anthropic/);
-  assert.match(branch, /reviewReason === 'no_destination_match'/);
-  assert.match(branch, /reviewReason !== 'extraction_failed'/);
-  assert.match(branch, /live-google-sa-item-5-post-validation-1280\.png/);
+  const flow = source.slice(source.indexOf("failureStage = 'drive-fixture-prepare'"), source.indexOf('writeFileSync(observedPath'));
+  assert.match(flow, /fixtureSnapshots/);
+  assert.match(flow, /replaceBytes\(invoiceFixture\.id, replacementBytes\)/);
+  assert.match(flow, /replaceBytes\(reviewFixture\.id, reviewBytes\)/);
+  assert.match(flow, /modelUsed.*llmProvider/);
+  assert.match(flow, /genuineManualReview\(reviewProof\)/);
+  assert.match(functionBody(source, 'genuineManualReview'), /reviewReason\.trim\(\)\.length > 0.*reviewReason !== 'extraction_failed'/s);
+  assert.doesNotMatch(source, /no_destination_match/);
+  assert.match(flow, /live-google-sa-item-5-post-validation-1280\.png/);
 });
 
 test('live runner selects borrowed carriers only through the explicit quota-safe contract', () => {
@@ -158,7 +165,7 @@ test('live runner selects borrowed carriers only through the explicit quota-safe
     });
     assert.equal(run.status, 0, run.stderr);
   }
-  for (const mode of ['', 'borrowed', 'runner-owned', ' BORROWED-CARRIER ']) {
+  for (const mode of ['', 'borrowed', ' BORROWED-CARRIER ']) {
     const run = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
       cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '21', KLASR_LIVE_FIXTURE_MODE: mode },
     });
@@ -168,12 +175,12 @@ test('live runner selects borrowed carriers only through the explicit quota-safe
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '21' },
   });
   assert.equal(ordinary.status, 0, ordinary.stderr);
-  assert.equal(ordinary.stdout, 'runner-owned\n');
-  const legacy = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
+  assert.equal(ordinary.stdout, 'borrowed-carrier\n');
+  const defaultMode = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--quota-safe-mode-check'], {
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_EVIDENCE_ISSUE: '5' },
   });
-  assert.equal(legacy.status, 0, legacy.stderr);
-  assert.equal(legacy.stdout, 'borrowed-carrier\n');
+  assert.equal(defaultMode.status, 0, defaultMode.stderr);
+  assert.equal(defaultMode.stdout, 'borrowed-carrier\n');
 
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   assert.match(source, /async function drive\(url, init = \{\}\) \{ assertProviderMutationAllowed\(quotaSafeMode \? 'borrowed-carrier' : 'runner-owned', url, init\)/);
@@ -191,25 +198,19 @@ test('service-account proof gets scope from tokeninfo and identity from Drive ab
   assert.match(functionBody(source, 'providerDriveIdentity'), /\/drive\/v3\/about\?fields=user%28emailAddress%29/);
 });
 
-test('live runner contracts real tenant Anthropic BYOK before Google mutation', () => {
+test('live runner contracts environment LLM configuration before Google mutation', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const preflight = source.indexOf('await assertNoPriorTenantSetting(organizationId)');
-  const driveMutation = source.indexOf('await createFolder(runName, sharedRootId)');
+  const preflight = source.indexOf("assert(await db('count', organizationId, 'settings') === 0");
+  const driveMutation = source.indexOf('await markRecovery(invoiceFixture.id');
   assert(preflight !== -1 && driveMutation !== -1 && preflight < driveMutation, 'Tenant preflight must precede Drive mutation');
-  assert.match(source, /required\('KLASR_LIVE_ANTHROPIC_API_KEY'\)/);
-  assert.match(source, /await configureAnthropicServerSide\(/);
-  assert.doesNotMatch(source, /configureAnthropicInBrowser/);
+  for (const name of ['KLASR_LLM_PROVIDER', 'KLASR_LLM_MODEL']) assert.match(source, new RegExp(`required\\('${name}'\\)`));
+  assert.match(source, /missing = \[[^\]]*'KLASR_LLM_API_KEY'/);
+  assert.doesNotMatch(source, /configureAnthropic(?:ServerSide|InBrowser)/);
   for (const sink of ['fill', 'type', 'evaluate', 'screenshot', 'tracing']) assert.doesNotMatch(source, new RegExp(`\\.${sink}\\([^)]*(?:anthropicKey|secret|apiKey)`, 'i'));
   assert.doesNotMatch(source, /process\.argv[\s\S]{0,200}(?:anthropicKey|secret|apiKey)|console\.[^(]+\([^)]*(?:anthropicKey|secret|apiKey)|writeFileSync\([^)]*(?:anthropicKey|secret|apiKey)/i);
-  const setup = functionBody(source, 'configureAnthropicServerSide');
-  assert.match(setup, /context\.cookies\(webBase\)/);
-  assert.match(setup, /fetch\(`\$\{webBase\}\/api\/llm-settings`/);
-  assert.doesNotMatch(setup, /prisma\.llmSetting\.(?:create|update|upsert)/);
-  assert.match(functionBody(source, 'selectEligibleAnthropicModel'), /filter[\s\S]*sort[\s\S]*at\(-1\)/);
-  assert.match(source, /modelUsed: \{ contains: `anthropic\/\$\{selectedAnthropicModel\}` \}/);
-  assert.match(source, /await page\.getByRole\('button', \{ name: 'Supprimer la configuration' \}\)\.click\(\)/);
-  assert.match(source, /evidence\.anthropicSettingRemoved = 'PASS'/);
-  assert.match(source, /tenant_setting_absent/);
+  assert.match(source, /modelUsed === `\$\{llmProvider\}\/\$\{selectedLlmModel\}`/);
+  assert.match(source, /assert\(await db\('count', organizationId, 'settings'\) === 0/);
+  assert.doesNotMatch(source, /tenant_setting_absent|science-server-setup|anthropic-server-setup|settings-delete/);
 });
 
 test('exact tree binding is stable, sensitive, excludes evidence and rejects mismatch', () => {
@@ -229,25 +230,32 @@ test('exact tree binding is stable, sensitive, excludes evidence and rejects mis
 
 test('observed live record has an exact metadata-only schema and binds model plus tree', () => {
   const tree = { schema: 'klasr-tree-v1', mode: 'worktree', head: 'a'.repeat(40), digest: 'b'.repeat(64) };
-  const valid = { schema: 'klasr-live-observed-v1', stage: 'settings-deleted', selectedModelId: 'claude-safe', modelCount: 3, modelUsed: 'anthropic/claude-safe', tree };
+  const valid = { schema: 'klasr-live-observed-v1', stage: 'env-llm-verified', selectedModelId: 'claude-safe', modelUsed: 'anthropic/claude-safe', tree };
   assert.deepEqual(parseObservedRecord(JSON.stringify(valid), tree), valid);
-  for (const bad of [{}, { ...valid, modelCount: 0 }, { ...valid, modelUsed: 'anthropic/other' }, { ...valid, apiKey: 'secret' }, { ...valid, organizationId: 'org' }, { ...valid, tree: { ...tree, digest: 'c'.repeat(64) } }]) assert.throws(() => parseObservedRecord(JSON.stringify(bad), tree));
+  for (const bad of [{}, { ...valid, stage: 'settings-deleted' }, { ...valid, modelUsed: 'anthropic/other' }, { ...valid, apiKey: 'secret' }, { ...valid, organizationId: 'org' }, { ...valid, tree: { ...tree, digest: 'c'.repeat(64) } }]) assert.throws(() => parseObservedRecord(JSON.stringify(bad), tree));
   assert.throws(() => parseObservedRecord('{', tree));
 });
 
-test('live runner visibly returns from BYOK settings before Drive browser selection', () => {
+test('live runner saves environment LLM settings through the authenticated UI before Drive browser selection', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const afterByok = source.slice(source.indexOf('await configureAnthropicServerSide(context, anthropicKey)'), source.indexOf("await chooseBrowserItem(page, 'stg_tree'"));
-  assert.match(afterByok, /getByText\(`Anthropic · \$\{selectedAnthropicModel\}`\)/);
-  assert.match(afterByok, /getByLabel\('Clé API'\)\)\.toHaveValue\(''\)/);
-  assert.match(afterByok, /getByRole\('link', \{ name: 'Tableau de bord' \}\)\.click\(\)/);
-  assert.match(afterByok, /waitForURL\(\/\\\/dashboard\$\//);
-  assert.match(afterByok, /getByText\('Validation staging · identité de service Google'\)\.waitFor\(\)/);
-  assert.match(afterByok, /getByRole\('button', \{ name: 'Choisir ce dossier' \}\)\.waitFor\(\)/);
-  assert.doesNotMatch(afterByok, /page\.(?:goto|reload)\(/);
+  const contract = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--llm-setup-contract-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(contract.status, 0, contract.stderr);
+  assert.equal(contract.stdout, 'live runner LLM setup sequence check PASS\n');
+  const resets = [...source.matchAll(/await resetTenantData\([^)]*\);/g)];
+  assert.equal(resets.length, 2);
+  for (const [index, reset] of resets.entries()) {
+    const nextReset = resets[index + 1]?.index ?? source.length;
+    const block = source.slice(reset.index + reset[0].length, nextReset);
+    const setup = block.indexOf('await configureLlmThroughUi(page);');
+    assert(setup !== -1 && setup < block.indexOf('"Lancer l\'organisation"'), 'Every reset must contain LLM setup before launch');
+  }
+  assert.match(functionBody(source, 'configureLlmThroughUi'), /Promise\.all/);
+  assert.match(source, /locator\('#llm-launch-help'\)\)\.toHaveCount\(0\)/);
 });
 
 test('live BYOK decisions are deterministic and reject missing prerequisites without credentials', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  assert(source.indexOf("const missing = ['KLASR_LLM_PROVIDER'") < source.indexOf('assertPythonRuntime();'), 'BYOK prerequisites must fail before the optional live Python runtime');
   const decisions = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--byok-acceptance-self-check'], { cwd: root, encoding: 'utf8' });
   assert.equal(decisions.status, 0, decisions.stderr);
   assert.equal(decisions.stdout, 'live BYOK acceptance decisions check PASS\n');
@@ -256,8 +264,10 @@ test('live BYOK decisions are deterministic and reject missing prerequisites wit
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, KLASR_FATAL_CHECK_DIR: directory, KLASR_EVIDENCE_TASK: 't_selfcheck', KLASR_EVIDENCE_SHA: sha, KLASR_EVIDENCE_ISSUE: '1', KLASR_EVIDENCE_ATTEMPT: '93' },
   });
   assert.notEqual(missing.status, 0);
-  assert.equal(missing.stderr, 'root failure: stage=preflight\n');
-  assert.equal(JSON.parse(readFileSync(path.join(directory, 'manifest.sanitized.json'), 'utf8')).status, 'FAIL');
+  assert.match(missing.stderr, /^root failure: stage=preflight detail=Missing KLASR_LLM_PROVIDER/);
+  const manifest = JSON.parse(readFileSync(path.join(directory, 'manifest.sanitized.json'), 'utf8'));
+  assert.equal(manifest.status, 'FAIL');
+  assert.match(manifest.failureDetail, /^Missing KLASR_LLM_PROVIDER/);
   assert.doesNotMatch(missing.stdout, /PASS/);
 });
 
@@ -271,10 +281,11 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /files\.create|uploadType=multipart|multipart\/related|function uploadFile/);
   assert.doesNotMatch(source, /\/upload\/drive\/v3\/files\?/);
-  assert.match(source, /function createFolder/);
-  assert.match(source, /parents: \[inputFolder\.id\]/);
-  assert.match(source, /chooseBrowserItem\(page, runName, "Lancer l'organisation"/);
-  assert.match(source, /itemExternalId: inputFolder\.id/);
+  assert.match(source, /const supplied = selectFixtures\(rootItems\)/);
+  assert.match(source, /parents: \[sharedRootId\]/);
+  assert.match(source, /chooseBrowserItem\(page, invoiceFixture\.name, "Lancer l'organisation"/);
+  assert.match(source, /chooseBrowserItem\(page, reviewFixture\.name, "Lancer l'organisation"/);
+  assert.match(source, /itemExternalId: invoiceFixture\.id/);
   assert.match(source, /uploadType=media/);
   assert.match(source, /fixtureSnapshots\.length === 2/);
   assert.match(source, /downloadBytes\(snapshot\.id\)/);
@@ -287,7 +298,7 @@ test('live runner proves quota-safe fixture restoration and chooses decisions fr
 test('live runner keeps crash recovery inside Drive revisions without local byte backups', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const startupRecovery = source.indexOf('await recoverMarkedFixtures();');
-  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixturePlan(rootItems)', startupRecovery));
+  assert(startupRecovery !== -1 && startupRecovery < source.indexOf('await listChildren(sharedRootId)', startupRecovery) && startupRecovery < source.indexOf('selectFixtures(rootItems)', startupRecovery));
   const discovery = functionBody(source, 'recoveryCandidates');
   assert.match(discovery, /appProperties has \{ key='klasrRecoveryScope' and value='/);
   assert.doesNotMatch(source, /function markedCandidates|markedCandidates\(/);
@@ -378,10 +389,7 @@ test('live runner binds a sanitized FAIL manifest to exit code 1 before finaliza
 test('live runner preserves a sanitized async analysis failure before tenant cleanup', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const diagnostic = functionBody(source, 'failedAnalysisDiagnostic');
-  assert.match(diagnostic, /SELECT 1 FROM pgboss\.job/);
-  assert.match(diagnostic, /name = 'analysis' AND state = 'failed'/);
-  assert.match(diagnostic, /data->>'organizationId' = \$\{organizationId\}/);
-  assert.match(diagnostic, /created_on >= \$\{runStartedAt\}/);
+  assert.match(diagnostic, /db\('failed', organizationId, runStartedAt\.toISOString\(\)\)/);
   assert.match(diagnostic, /'stage=analysis reason=job_failed'/);
   assert.doesNotMatch(diagnostic, /output|response|content|text|prompt|bytes|externalId|documentId/);
   const finalize = functionBody(source, 'finalize');
@@ -402,36 +410,75 @@ test('live runner reports only allowlisted Item 4 provider assertion reasons', (
 
 test('live runner exposes only exact allowlisted failure stages', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
-  const stages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'anthropic-server-setup', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'settings-delete', 'cleanup-finalization'];
+  const stages = ['preflight', 'auth', 'recovery', 'listing', 'app-start', 'browser-launch', 'login-navigation', 'acceptance-login-session', 'google-consent', 'dashboard-identity', 'tenant-lookup', 'drive-connection-readback', 'tenant-reset', 'settings-verification', 'dashboard-resume', 'drive-fixture-prepare', 'browser-source-selection', 'browser-input-enqueue', 'proposal-card-wait', 'launch-completion-ui', 'anthropic-provenance-db', 'ui-decisions-provider-metadata', 'correction-relaunch', 'cleanup-finalization'];
   assert.match(source, new RegExp(`const failureStages = \\[${stages.map((stage) => `'${stage}'`).join(', ')}\\]`));
   for (const stage of stages.slice(5)) assert.match(source, new RegExp(`failureStage = '${stage}'`));
   const browserBoundaries = [
     ['browser-launch', 'browser = await chromium.launch'],
     ['login-navigation', 'await page.goto'],
-    ['acceptance-login-session', "await page.getByRole('button', { name: 'Validation Google staging' }).click()"],
-    ['dashboard-identity', "await page.getByText('Validation staging · identité de service Google').waitFor()"],
-    ['tenant-lookup', 'organizationId = await tenantId()'],
-    ['drive-connection-readback', 'const connectionBeforeSync = await prisma.driveConnection.findFirst'],
-    ['tenant-reset', 'await assertNoPriorTenantSetting(organizationId)'],
-    ['anthropic-server-setup', '({ model: selectedAnthropicModel'],
-    ['settings-verification', "await page.getByRole('link', { name: 'Paramètres IA' }).click()"],
-    ['dashboard-resume', "await page.getByRole('link', { name: 'Tableau de bord' }).click()"],
+    ['acceptance-login-session', "if (authenticationMode === 'user') await loginWithGoogleUser"],
+    ['dashboard-identity', "await page.getByText(authenticationMode === 'user' ? stagingAccountEmail : 'Validation staging · identité de service Google', { exact: true }).waitFor()"],
+    ['tenant-lookup', 'const tenant = await tenantRecord()'],
+    ['drive-connection-readback', "const connectionBeforeSync = await db('connection', organizationId)"],
+    ['tenant-reset', "assert(await db('count', organizationId, 'settings') === 0"],
+    ['settings-verification', 'await configureLlmThroughUi(page)'],
+    ['dashboard-resume', 'await page.goto'],
   ];
   for (const [stage, operation] of browserBoundaries) assert(source.includes(`failureStage = '${stage}';\n  ${operation}`), `Missing immediate boundary: ${stage}`);
   assert.doesNotMatch(source, /drive-classification/);
+  assert.doesNotMatch(source, /anthropic-server-setup|science-server-setup|settings-delete/);
   const fatal = functionBody(source, 'fatalExit');
   assert.match(fatal, /failureStages\.includes\(failureStage\)/);
   assert.match(fatal, /failureDiagnostic \?\? `stage=\$\{failureStageAtFailure \?\? failureStage\}`/);
   assert.doesNotMatch(fatal, /error|message|stack|JSON\.stringify/i);
+  const login = functionBody(source, 'loginWithGoogleUserFlow');
+  assert.match(login, /challengeSelectionUrl\(page\.url\(\)\)[\s\S]*chooseChallenge\(\)/);
+  assert.match(login, /passw\|mot de passe/i);
+  assert.match(login, /let passwordReentered = false[\s\S]*if \(passwordReentered\)[\s\S]*passwordReentered = true/);
+  assert.match(login, /timeout: 3_000/);
+  assert.match(functionBody(source, 'googleConsentError'), /PAGE_TEXT=\$\{pageText\}/);
+  assert.match(functionBody(source, 'googleConsentError'), /slice\(0, 300\) \|\| '<no body text>'/);
+  assert.match(login, /const chooseChallenge[\s\S]*verification code\|code de vérification\|envoyer un code/i);
+  assert.match(login, /handleGoogleIppCollect\(page, visible, email, password\)[\s\S]*relayOauthCode\(\)/);
+  assert.match(login, /visible\(inputs\.first\(\), 3_000\)[\s\S]*googleCodePrimaryAction\(page\)[\s\S]*visible\(inputs\.first\(\), 8_000\)/);
+  const codeSelector = functionBody(source, 'googleCodeInputSelector');
+  assert.match(codeSelector, /:not\(#phoneNumberId\)/);
+  assert.doesNotMatch(codeSelector, /input\[type="tel"\]:visible/);
+  const ipp = functionBody(source, 'handleGoogleIppCollect');
+  assert.match(ipp, /\/challenge\\\/ipp\\\//);
+  assert.match(ipp, /boundingBox\(\)[\s\S]*box\.width < 1 \|\| box\.height < 1[\s\S]*for \(let elapsed = 0; elapsed < 20_000; elapsed \+= 500\)[\s\S]*button, \[role="button"\], input\[type="button"\], input\[type="submit"\][\s\S]*\^send\$\/i[\s\S]*\^\(\?:send\|envoyer\)[\s\S]*waitForTimeout\(500\)[\s\S]*emitOauthDebugDump[\s\S]*\.click\(\)[\s\S]*10_000/);
+  assert.doesNotMatch(ipp, /button:visible|\[role="button"\]:visible|input\[type="(?:button|submit)"\]:visible/);
+  const relay = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--oauth-code-relay-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(relay.status, 0, relay.stderr);
+  assert.equal(relay.stdout, 'OAuth code relay check PASS\n');
+});
+
+test('live runner settles Google IPP navigation and delayed phone input', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const login = functionBody(source, 'loginWithGoogleUserFlow');
+  assert.match(login, /waitForURL\(\(url\) => !challengeSelectionUrl\(url\.pathname\), \{ timeout: 8_000 \}\)\.catch\(\(\) => undefined\)[\s\S]*handleGoogleIppCollect/);
+  const ipp = functionBody(source, 'handleGoogleIppCollect');
+  assert.match(ipp, /Promise\.race\([\s\S]*phone\.waitFor\([\s\S]*tel\.first\(\)\.waitFor\([\s\S]*timeout: 2_000/);
+  assert.match(source, /ippPage\.clicked\(\) === 'Send code'[\s\S]*sendDelay: 2_000[\s\S]*handleGoogleIppCollect\(delayedIppPage, stubVisible\)[\s\S]*delayedIppPage\.clicked\(\) === 'Send'[\s\S]*boundingBoxNulls: 3[\s\S]*handleGoogleIppCollect\(lateBoxIppPage, stubVisible\)[\s\S]*lateBoxIppPage\.clicked\(\) === 'Send'[\s\S]*Missing IPP Send action must emit an OAuth debug dump/);
+});
+
+test('live runner dispatches challenge selection before the initial password submit', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const login = functionBody(source, 'loginWithGoogleUserFlow');
+  assert.match(login, /for \(let elapsed = 0; elapsed < 10_000; elapsed \+= 500\)[\s\S]*\/\\\/challenge\\\/\(\?:selection\|ipp\|pwd\)\/[\s\S]*challengePageStrategy\(\)[\s\S]*challengeBeforePassword = true/);
+  assert.match(login, /tolerantPasswordSubmit\(page, email, password, debugDump, challengePageStrategy\)/);
+  const authMode = spawnSync(process.execPath, ['scripts/live-google-service-account.mjs', '--auth-mode-check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(authMode.status, 0, authMode.stderr);
+  assert.equal(authMode.stdout, 'live runner auth mode check PASS\n');
 });
 
 test('live runner reports ordered proposal launch boundaries immediately before each operation block', () => {
   const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
   const transitions = [
-    ["failureStage = 'browser-input-enqueue';", 'await chooseBrowserItem(page, runName, "Lancer l\'organisation", true);'],
+    ["failureStage = 'browser-input-enqueue';", 'await chooseBrowserItem(page, invoiceFixture.name, "Lancer l\'organisation", true);'],
     ["failureStage = 'proposal-card-wait';", 'await waitForProposalCards(page, 2);'],
     ["failureStage = 'launch-completion-ui';", "await expect(page.getByText('Analyse en cours', { exact: true })).toHaveCount(0);"],
-    ["failureStage = 'anthropic-provenance-db';", 'const anthropicProof = await prisma.classificationProposal.findFirst('],
+    ["failureStage = 'anthropic-provenance-db';", "const anthropicProof = await db('proposal', organizationId, invoiceFixture.id);"],
   ];
   let previous = -1;
   for (const [stage, operation] of transitions) {
@@ -440,6 +487,17 @@ test('live runner reports ordered proposal launch boundaries immediately before 
     assert(index > previous, `Missing or unordered immediate boundary: ${stage}`);
     previous = index;
   }
+});
+
+test('live runner captures redacted launch-status failure context', () => {
+  const source = readFileSync(new URL('../../live-google-service-account.mjs', import.meta.url), 'utf8');
+  const chooser = functionBody(source, 'chooseBrowserItem');
+  assert.match(chooser, /page\.on\('request'/);
+  assert.match(chooser, /page\.on\('response'/);
+  assert.match(chooser, /getByRole\('alert'\)\.allTextContents/);
+  assert.match(chooser, /getByRole\('status'\)\.allTextContents/);
+  assert.match(chooser, /response\.text\(\).*redact/s);
+  assert.match(chooser, /alerts\.map\(\(text\) => redact\(text\)\).*statuses\.map\(\(text\) => redact\(text\)\)/s);
 });
 
 test('live runner routes signals and fatal errors through bounded single-flight recovery with fresh tokens', () => {
@@ -505,7 +563,7 @@ test('publisher dry-run emits only a sanitized success status and performs no ne
     version: 1, identity: 'Google service account non-production acceptance', sha, issue: 21, attempt: 2, tree: treeBinding, observed: observedRecord,
     status: 'PASS',
     results: {
-      anthropic_discovery: true, anthropic_setting_saved: true, anthropic_classification: true, anthropic_setting_removed: true,
+      llm_classification: true,
       service_account_auth: true, drive_listing: true, drive_download_ocr: true,
       proposal_review: true, confirm_mutation: true, correction_mutation: true,
       reject_mutation: true, terminal_no_reenqueue: true, desktop_browser: true,
@@ -564,7 +622,7 @@ test('publisher derives FAIL from every false required truth and rejects missing
     assert.notEqual(run.status, 0, `${section}.${key}`);
     assert.match(JSON.parse(run.stdout).failure_dispatch.client_payload.event_key, /:FAIL$/, `${section}.${key}`);
   }
-  for (const observed of [null, { ...observedRecord, modelCount: 0 }]) {
+  for (const observed of [null, { ...observedRecord, stage: 'settings-deleted' }]) {
     const run = spawnSync(process.execPath, ['scripts/publish-live-google-status.mjs', '--dry-run', '-'], { cwd: root, input: JSON.stringify({ ...manifest, observed }), encoding: 'utf8', env });
     assert.notEqual(run.status, 0);
     assert.equal(run.stdout, '');

@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import json
+import logging
 import socket
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
@@ -26,6 +27,11 @@ ERRORS = [
         " Klasr. Choisissez un autre modèle.",
     ),
     (
+        "provider_bad_request",
+        "bad_request",
+        "Le fournisseur a refusé la requête.",
+    ),
+    (
         "provider_rate_limited",
         "rate_limited",
         "Limite du fournisseur atteinte. Réessayez plus tard.",
@@ -35,14 +41,16 @@ ERRORS = [
     ("provider_unsafe", "unsafe_endpoint", "Cette adresse de fournisseur est interdite."),
     ("provider_response_too_large", "malformed_response", "Réponse du fournisseur invalide."),
     ("provider_malformed_response", "malformed_response", "Réponse du fournisseur invalide."),
+    ("provider_unavailable", "endpoint_unavailable", "Point d’accès fournisseur indisponible."),
 ]
+logger = logging.getLogger(__name__)
 
 
 def mapped(error):
-    _, code, message = next(
-        (item for item in ERRORS if str(error).startswith(item[0])),
-        ("provider_unavailable", "endpoint_unavailable", "Point d’accès fournisseur indisponible."),
-    )
+    match = next((item for item in ERRORS if str(error).startswith(item[0])), None)
+    if not isinstance(error, ValueError) or not match:
+        raise error
+    _, code, message = match
     return HTTPException(400, dict(code=code, message=message))
 
 
@@ -55,6 +63,8 @@ def status_error(status, phase):
         return ValueError("provider_rate_limited")
     if phase == "validation" and status in (400, 422):
         return ValueError("provider_model_incompatible")
+    if phase == "completion" and status in (400, 422):
+        return ValueError("provider_bad_request")
     return ValueError("provider_unavailable")
 
 
@@ -87,7 +97,7 @@ class ProviderClientService:
                 local = ip.is_loopback
             except ValueError:
                 local = host == "localhost"
-            if not (local and (self.settings.node_env == "test" or self.settings.local_mvp)):
+            if not (local and self.settings.node_env == "test"):
                 origin = f"{url.scheme}://{url.netloc}"
                 if (
                     url.scheme != "https"
@@ -176,6 +186,7 @@ class ProviderClientService:
     async def completion(self, config, messages):
         if isinstance(messages, str):
             messages = [dict(role="user", content=messages)]
+        messages = [{"role": m["role"], "content": m["content"]} for m in messages]
         body = dict(model=config["model"], max_tokens=2048, messages=messages)
         if config["provider"] == "anthropic":
             system = "\n".join(str(m["content"]) for m in messages if m["role"] == "system")
@@ -186,7 +197,7 @@ class ProviderClientService:
             config,
             "messages" if config["provider"] == "anthropic" else "chat/completions",
             body,
-            "validation",
+            "completion",
         )
         try:
             result = (
@@ -253,6 +264,9 @@ class LlmSettingsService:
                 raise ValueError("provider_model_not_found")
             base = await self.providers.endpoint(config)
             await self.providers.validate(config)
+        except ValueError as error:
+            raise mapped(error) from None
+        try:
             row = self.repository.upsert(
                 organization_id,
                 provider=config["provider"],
@@ -265,8 +279,9 @@ class LlmSettingsService:
                 validated_at=datetime.now(timezone.utc),
             )
             return self.safe(row)
-        except Exception as error:
-            raise mapped(error) from None
+        except Exception:
+            logger.exception("Failed to persist LLM settings")
+            raise
 
     def remove(self, organization_id):
         self.repository.delete(organization_id)

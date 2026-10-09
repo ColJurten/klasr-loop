@@ -12,11 +12,14 @@ __pycache__/
 .env
 .env.local
 !.env.example
+.hosttest*
+.hosttest/
 .tmp/
 .claude/settings.local.json
 *.log
 .DS_Store
--e 
 # Agent loop transient verdicts
 .agent/
 apps/api/*.traineddata
+.python-version
+docker-compose-test.yaml

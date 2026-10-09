@@ -26,7 +26,6 @@ ROUTES = [
     ("GET", "/organizations/org/proposals"),
     ("POST", "/organizations/org/proposals/proposal/confirm"),
     ("POST", "/organizations/org/proposals/proposal/ignore"),
-    ("POST", "/organizations/org/sync"),
     ("GET", "/organizations/org/rules"),
     ("POST", "/organizations/org/rules"),
     ("GET", "/organizations/org/llm-settings"),
@@ -160,6 +159,37 @@ def test_llm_crud_discovery_safe_output_and_tenant(tenant):
     )
 
 
+def test_llm_persistence_failure_is_internal_error(tenant, monkeypatch):
+    client, app, _, _, base = tenant
+
+    class Providers:
+        async def endpoint(self, _config):
+            return "https://api.openai.com/v1"
+
+        async def validate(self, _config):
+            pass
+
+    app.state.providers = Providers()
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+
+    logged = []
+    monkeypatch.setattr("repositories.llm_settings.LlmSettingsRepository.upsert", fail)
+    monkeypatch.setattr("services.llm_settings.logger.exception", logged.append)
+    response = client.put(
+        base + "/llm-settings", json=dict(provider="openai", apiKey="synthetic", model="m")
+    )
+    assert response.status_code == 500
+    assert response.json() == {
+        "message": "Internal server error",
+        "error": "Internal Server Error",
+        "statusCode": 500,
+    }
+    assert "endpoint_unavailable" not in response.text
+    assert logged == ["Failed to persist LLM settings"]
+
+
 @pytest.mark.parametrize(
     "status,code,message",
     [
@@ -210,19 +240,49 @@ def test_provider_mapped_errors(tenant, status, code, message):
 async def test_provider_bounds_discovery_anthropic_and_network_errors():
     settings = Settings(NODE_ENV="test")
     config = dict(provider="anthropic", apiKey="synthetic", model="model")
+    bodies = []
 
     def anthropic(request):
         assert request.headers["x-api-key"] == "synthetic"
         assert request.headers["anthropic-version"] == "2023-06-01"
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "claude"}]})
+        bodies.append(json.loads(request.content))
         return httpx.Response(200, json={"content": [{"text": "{}"}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(anthropic)) as client:
         provider = ProviderClientService(settings, client)
         assert await provider.discover(config) == ["claude"]
         await provider.validate(config)
-        assert await provider.completion(config, "synthetic prompt") == "{}"
+        assert (
+            await provider.completion(
+                config,
+                [
+                    dict(role="system", content="synthetic system", cache_breakpoint=True),
+                    dict(role="user", content="synthetic prompt", cache_breakpoint=True),
+                ],
+            )
+            == "{}"
+        )
+        assert bodies[-1]["system"] == "synthetic system"
+        assert bodies[-1]["messages"] == [dict(role="user", content="synthetic prompt")]
+    config = dict(provider="openai", apiKey="synthetic", model="model")
+
+    def openai(request):
+        assert request.headers["authorization"] == "Bearer synthetic"
+        assert request.url == "https://api.openai.com/v1/chat/completions"
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openai)) as client:
+        assert (
+            await ProviderClientService(settings, client).completion(
+                config,
+                [dict(role="user", content="synthetic prompt", cache_breakpoint=True)],
+            )
+            == "{}"
+        )
+        assert bodies[-1]["messages"] == [dict(role="user", content="synthetic prompt")]
     for response, reason in [
         (httpx.Response(302), "provider_unsafe"),
         (httpx.Response(200, content=b"x" * 1_000_001), "provider_response_too_large"),
@@ -248,8 +308,19 @@ async def test_provider_bounds_discovery_anthropic_and_network_errors():
 
 
 @pytest.mark.asyncio
+async def test_completion_bad_request_is_not_model_incompatible():
+    settings = Settings(NODE_ENV="test")
+    config = dict(provider="anthropic", apiKey="synthetic", model="model")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(400))
+    ) as client:
+        with pytest.raises(ValueError, match="^provider_bad_request$"):
+            await ProviderClientService(settings, client).completion(config, "synthetic prompt")
+
+
+@pytest.mark.asyncio
 async def test_custom_endpoint_rejects_private_addresses_and_redirects(monkeypatch):
-    settings = Settings(NODE_ENV="production", local_mvp=False)
+    settings = Settings(NODE_ENV="production")
     async with httpx.AsyncClient() as client:
         provider = ProviderClientService(settings, client)
         for url in [

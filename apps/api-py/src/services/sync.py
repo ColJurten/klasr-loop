@@ -94,21 +94,15 @@ class SyncService:
             nextPageToken=page["nextPageToken"],
         )
 
-    async def launch(self, organization_id, user_id, external_id="all"):
+    async def launch(self, organization_id, user_id, external_id):
         reference = self.folders.root(organization_id)
         if not reference:
             raise HTTPException(400, "Reference root is required before launch")
         metadata = await self.drive.list_metadata(organization_id, user_id)
         selected = next(
-            (
-                item
-                for item in metadata
-                if item["id"] == ("local_input_folder" if external_id == "all" else external_id)
-            ),
+            (item for item in metadata if item["id"] == external_id),
             None,
         )
-        if external_id == "all" and not selected:
-            selected = next((item for item in metadata if item["mimeType"] != FOLDER_MIME), None)
         if not selected:
             raise HTTPException(404, "Drive input item not found")
         if selected["id"] == reference["externalId"]:

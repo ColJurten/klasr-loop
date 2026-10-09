@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select, func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from core.security import TokenEncryptionService, decode
@@ -21,7 +23,7 @@ from services.drive import (
     GoogleDriveExecutor,
     GoogleTokenService,
 )
-from services.analysis import AnalysisService
+from services.analysis import AnalysisService, apply_rules
 from services.llm_settings import ProviderClientService
 from worker import work_once, run_worker
 
@@ -242,7 +244,7 @@ def pending(session, org, name="input.txt", external="synthetic-input", mime="te
 
 
 @pytest.mark.asyncio
-async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant):
+async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant, caplog, monkeypatch):
     _, app, engine, identity, _ = tenant
     org = identity["organizationId"]
     sink = MetadataSink()
@@ -270,9 +272,14 @@ async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant):
         service = AnalysisService(session, app.state.settings, drive, providers, sink)
         payload = dict(organizationId=org, userId=identity["userId"], documentId=doc.id)
         jobs = JobsService(session)
-        jobs.enqueue(payload)
+        job = jobs.enqueue(payload)
         session.commit()
-        assert await work_once(session, service.analyze)
+        monkeypatch.setattr(logging.getLogger("worker"), "disabled", False)
+        with caplog.at_level("INFO", logger="worker"):
+            assert await work_once(session, service.analyze)
+        assert (
+            f"analysis[{job.id}] first_pass quality=ok text_chars=47 md_chars=47" in caplog.messages
+        )
         assert not await work_once(session, service.analyze)
         row = session.scalar(select(ClassificationProposal))
         assert row.source == "RULE" and row.confidence == 0.95 and row.filename_confidence == 0.9
@@ -362,6 +369,44 @@ async def test_configured_provider_bypasses_offline_shortcut(tenant, monkeypatch
         assert providers.completion.await_count > 0
         assert row.llm_calls_used > 0
         assert row.model_used == "openai/configured-model"
+
+
+@pytest.mark.asyncio
+async def test_destinationless_proposal_prioritizes_manual_review_reason(monkeypatch):
+    from dsa.schemas import DecisionResult, ExtractionResult, SuggestionResult
+
+    monkeypatch.delenv("KLASR_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("KLASR_LLM_MODEL", raising=False)
+    result = SuggestionResult(
+        filename=DecisionResult(
+            value="REF-ZEPHYR-742.pdf",
+            confidence=0.9,
+            signals=[],
+            warnings=["filename_warning"],
+        ),
+        destination=DecisionResult(
+            value=None,
+            confidence=0,
+            signals=[],
+            warnings=["no_destination_match"],
+        ),
+        extraction_quality="ok",
+    )
+    monkeypatch.setattr("services.analysis.local_suggestion", lambda *_: result)
+    monkeypatch.setattr("services.analysis.LlmSettingsService.resolve", lambda *_: None)
+    service = AnalysisService(None, None, None, None, None)
+
+    proposal = await service.suggest(
+        "org",
+        types.SimpleNamespace(name="review.pdf"),
+        ExtractionResult(text="contract research content", quality="ok"),
+        ["stg_tree/invoices", "stg_tree/meetings", "stg_tree/quotes"],
+    )
+
+    assert proposal["destination_path"] == ""
+    assert proposal["destination_confidence"] == 0
+    assert proposal["review_required"] is True
+    assert proposal["review_reason"] == "no_destination_match"
 
 
 @pytest.mark.asyncio
@@ -493,8 +538,8 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
 
     started = []
 
-    async def fake_worker(settings, worker_engine, event, local):
-        started.append((settings.inline_worker, worker_engine, local))
+    async def fake_worker(settings, worker_engine, event, analyses=None):
+        started.append((settings.inline_worker, worker_engine, analyses))
         await event.wait()
 
     monkeypatch.setattr("worker.run_worker", fake_worker)
@@ -503,28 +548,67 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
     inline_app.state.engine = engine
     with TestClient(inline_app) as client:
         assert client.get("/health").status_code == 200
-    assert len(started) == 1 and started[0][0] is True
+    assert started == [(True, engine, None)]
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_transient_job_store_error(tenant, monkeypatch):
+    _, app, engine, _, _ = tenant
+    sink, stop = MetadataSink(), asyncio.Event()
+    attempts, delays = [], []
+
+    async def flaky_work_once(_session, _handler):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OperationalError("claim", {}, RuntimeError("transient"))
+        stop.set()
+        return False
+
+    async def immediate_wait_for(_awaitable, timeout):
+        delays.append(timeout)
+        _awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr("worker.work_once", flaky_work_once)
+    monkeypatch.setattr("worker.asyncio.wait_for", immediate_wait_for)
+
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+
+    assert len(attempts) == 2
+    assert delays == [1]
 
 
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     import sys
-    from dsa.tools import extract_bytes
+    from dsa.tools import _build_converter, extract_bytes
+
+    # Never serve a real converter or leak this stub into later tests.
+    _build_converter.cache_clear()
 
     seen = []
 
     class Converter:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
         def convert(self, stream):
             assert stream.name == "document.png"
             assert stream.stream.read() == b"private image bytes"
             seen.append(stream)
             return types.SimpleNamespace(
-                document=types.SimpleNamespace(export_to_text=lambda: "synthetic extracted text")
+                document=types.SimpleNamespace(
+                    export_to_text=lambda: "Synthetic extracted text",
+                    export_to_markdown=lambda: "# Synthetic extracted text",
+                )
             )
 
     module = types.ModuleType("docling.document_converter")
     module.DocumentConverter = Converter
+    module.PdfFormatOption = types.SimpleNamespace
+    module.ImageFormatOption = types.SimpleNamespace
     monkeypatch.setitem(sys.modules, "docling.document_converter", module)
     result = extract_bytes(b"private image bytes", ".png")
+    _build_converter.cache_clear()
     assert result.quality == "sparse" and len(seen) == 1
 
 
@@ -559,6 +643,45 @@ async def test_mongo_whitelist_ttl_and_tenant_queries():
 
 from dsa.schemas import ExtractionResult, SuggestionResult
 from services.analysis import local_suggestion
+
+
+def test_plain_text_drives_rules_and_local_while_llm_keeps_markdown(monkeypatch):
+    extraction = ExtractionResult(
+        text="R&D invoice INV-42 dated 2026-09-13",
+        markdown="R&amp;D invoice INV-42 dated 2026-09-13",
+        quality="ok",
+    )
+    document = types.SimpleNamespace(name="source.pdf", mime_type="application/pdf")
+    rules = [
+        {
+            "priority": 1,
+            "conditions": [{"field": "CONTENT", "operator": "CONTAINS", "value": "R&D"}],
+            "destinationPath": "/R&D",
+            "suggestedNameTemplate": "matched.pdf",
+        }
+    ]
+    assert apply_rules(document, extraction.text, ["/R&D"], rules)["proposed_name"] == "matched.pdf"
+    local = local_suggestion(extraction, ["/Invoices"])
+    assert local == local_suggestion(
+        extraction.model_copy(update={"markdown": "ignored"}), ["/Invoices"]
+    )
+
+    captured = []
+    output = types.SimpleNamespace(
+        pydantic={"value": "matched.pdf", "confidence": 0.9, "signals": []},
+        to_dict=lambda: {},
+    )
+    crew = types.SimpleNamespace(kickoff=lambda inputs: captured.append(inputs) or output)
+    fake_crews = types.ModuleType("dsa.crews")
+    fake_crews.DocumentSortingAssistantCrew = lambda: types.SimpleNamespace(
+        naming_crew=lambda: crew
+    )
+    monkeypatch.setitem(__import__("sys").modules, "dsa.crews", fake_crews)
+    monkeypatch.setenv("KLASR_LLM_PROVIDER", "anthropic")
+    import dsa
+
+    dsa._decision("filename", extraction, ["/R&D"])
+    assert captured[0]["content"].startswith("R&amp;D")
 
 
 def test_local_suggestion_no_zero_evidence_fallback():

@@ -9,7 +9,7 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { getServerSession } from 'next-auth';
-import { getDashboardData, confirmProposal, listDriveItems, startSync } from '@/lib/api';
+import { getDashboardData, confirmProposal, listDriveItems } from '@/lib/api';
 
 const session = {
   user: {
@@ -57,20 +57,13 @@ describe('web BFF API client', () => {
     );
   });
 
-  it('does not accept an organizationId argument for sync or confirmation', async () => {
+  it('does not accept an organizationId argument for confirmation', async () => {
     process.env.INTERNAL_API_SECRET = 'test-secret';
     process.env.API_URL = 'http://api.local/api/v1';
 
-    await startSync();
     await confirmProposal('prop_1', '/Corrige');
 
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      1,
-      'http://api.local/api/v1/organizations/org_session/sync',
-      expect.any(Object),
-    );
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      2,
+    expect(global.fetch).toHaveBeenCalledWith(
       'http://api.local/api/v1/organizations/org_session/proposals/prop_1/confirm',
       expect.any(Object),
     );

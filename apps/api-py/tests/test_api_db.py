@@ -1,9 +1,14 @@
 from pathlib import Path
 import re
+import uuid
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Enum, create_engine, inspect
+from sqlalchemy import Enum, create_engine, inspect, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 
+from core.settings import Settings
 from db.models import Base, LlmSetting
 from main import create_app
 
@@ -41,6 +46,120 @@ def test_initial_revision_adopts_existing_tables(tmp_path, monkeypatch):
     config.set_main_option("script_location", str(Path(__file__).parents[1] / "alembic"))
     command.upgrade(config, "head")
     assert set(inspect(engine).get_table_names()) == set(Base.metadata.tables) | {"alembic_version"}
+
+
+def test_postgres_adoption_adds_llm_updated_at_default_and_save(monkeypatch):
+    source = Settings().database_url
+    if not source.startswith("postgresql"):
+        pytest.skip("PostgreSQL is not configured")
+    database = "klasr_test_" + uuid.uuid4().hex
+    url = make_url(source)
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{database}"'))
+    except OperationalError:
+        admin.dispose()
+        pytest.skip("PostgreSQL is unavailable")
+
+    engine = None
+    try:
+        scratch_url = url.set(database=database).render_as_string(hide_password=False)
+        monkeypatch.setenv("KLASR_DATABASE_URL", scratch_url)
+        from alembic import command
+        from alembic.config import Config
+
+        config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+        config.set_main_option("script_location", str(Path(__file__).parents[1] / "alembic"))
+        command.upgrade(config, "20260913_0002")
+        engine = create_engine(scratch_url)
+        with engine.begin() as connection:
+            connection.execute(
+                text('ALTER TABLE "LlmSetting" ALTER COLUMN "updatedAt" DROP DEFAULT')
+            )
+        assert (
+            next(
+                column
+                for column in inspect(engine).get_columns("LlmSetting")
+                if column["name"] == "updatedAt"
+            )["default"]
+            is None
+        )
+
+        command.upgrade(config, "head")
+        updated_at = next(
+            column
+            for column in inspect(engine).get_columns("LlmSetting")
+            if column["name"] == "updatedAt"
+        )
+        assert updated_at["nullable"] is False and updated_at["default"] == "now()"
+
+        settings = Settings(
+            KLASR_DATABASE_URL=scratch_url,
+            INTERNAL_API_SECRET="test-internal",
+            TOKEN_ENCRYPTION_KEY="ab" * 32,
+            NODE_ENV="test",
+        )
+        app = create_app(settings)
+        app.state.engine = engine
+
+        class Providers:
+            async def endpoint(self, _config):
+                return "https://api.openai.com/v1"
+
+            async def validate(self, _config):
+                pass
+
+        app.state.providers = Providers()
+        with TestClient(app, headers={"x-internal-secret": "test-internal"}) as client:
+            identity = client.post(
+                "/auth/register",
+                json=dict(
+                    email="owner@example.com",
+                    password="correct horse battery",
+                    displayName="Owner",
+                ),
+            ).json()
+            client.headers["x-user-id"] = identity["userId"]
+            response = client.put(
+                f'/organizations/{identity["organizationId"]}/llm-settings',
+                json=dict(provider="openai", apiKey="synthetic", model="model"),
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["configured"] is True
+        engine = None  # TestClient lifespan disposed it.
+
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE "{database}" WITH (FORCE)'))
+            connection.execute(text(f'CREATE DATABASE "{database}"'))
+        command.upgrade(config, "head")
+        engine = create_engine(scratch_url)
+        assert (
+            next(
+                column
+                for column in inspect(engine).get_columns("LlmSetting")
+                if column["name"] == "updatedAt"
+            )["default"]
+            == "now()"
+        )
+        engine.dispose()
+        engine = None
+        command.downgrade(config, "20260913_0002")
+        engine = create_engine(scratch_url)
+        assert (
+            next(
+                column
+                for column in inspect(engine).get_columns("LlmSetting")
+                if column["name"] == "updatedAt"
+            )["default"]
+            is None
+        )
+    finally:
+        if engine:
+            engine.dispose()
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE "{database}" WITH (FORCE)'))
+        admin.dispose()
 
 
 def test_prisma_schema_contract():

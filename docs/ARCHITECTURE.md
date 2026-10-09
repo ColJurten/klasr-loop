@@ -70,10 +70,9 @@ du fichier sont consommés en stream par l'OCR puis jetés. La mutation Drive
 (`PATCH files`) n'est appelée que depuis `ClassificationService.confirm()`, après
 validation explicite. Microsoft reste authentification-only dans ce MVP.
 
-Le mode `KLASR_LOCAL_MVP=true` est un simulateur d'arêtes externes
-Google/OCR uniquement : Next.js, NestJS HTTP, PostgreSQL, MongoDB, Prisma,
-repositories, services et pg-boss restent réels. Il refuse de démarrer en
-production, comme `KLASR_INLINE_WORKER=true`.
+Le produit n'expose aucun simulateur Drive : toute navigation, lecture et
+mutation passe par Google OAuth et l'API Google Drive. Les tests interceptent le
+transport HTTP du client réel, sans jeton ni document client.
 
 Le pipeline OCR/document-understanding garde les octets en mémoire bornée
 pendant l'analyse, privilégie la couche texte PDF native, OCR seulement les pages
@@ -165,7 +164,7 @@ Docling et, plus largement, les outils LLM. Maintenir un pont entre les deux co�
 plus qu'il n'apporte : modèles, validation et tests dupliqués, frontière de
 sérialisation fragile et deux chaînes de dépendances pour une seule équipe.
 
-**Décision de stack unique.** FastAPI/Python 3.14+ remplace entièrement NestJS. Le pipeline
+**Décision de stack unique.** FastAPI/Python 3.13+ remplace entièrement NestJS. Le pipeline
 CrewAI + Docling devient le module `apps/api-py/src/dsa/` du même backend Python : ni
 sidecar ni appel HTTP interne. `apps/web` reste en Next.js, sans changement de stack
 ni de design system. `scripts/agent` reste en Node.js et hors périmètre. NestJS ne

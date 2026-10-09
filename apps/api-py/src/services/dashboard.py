@@ -15,16 +15,15 @@ class DashboardService:
 
     async def get(self, organization_id, user_id):
         connection = self.connections.find(organization_id, user_id)
+        # Read queue first: metrics must never predate the queue snapshot used by the UI.
+        queue = self.jobs.queue_state(organization_id)
+        metrics = self.metrics.totals(organization_id)
         return serialize(
             dict(
                 mode=(
-                    "local"
-                    if self.settings.local_mvp
-                    else (
-                        "service-account-staging"
-                        if self.settings.acceptance_google_service_account
-                        else "production"
-                    )
+                    "service-account-staging"
+                    if self.settings.acceptance_google_service_account
+                    else "production"
                 ),
                 connection=(
                     dict(
@@ -35,16 +34,12 @@ class DashboardService:
                     if connection
                     else None
                 ),
-                metrics=self.metrics.totals(organization_id),
-                queue=self.jobs.queue_state(organization_id),
+                metrics=metrics,
+                queue=queue,
                 analysisFailures=self.jobs.failed_analysis_count(organization_id),
                 referenceRoot=self.folders.root(organization_id),
                 folders=self.folders.inherited(organization_id),
-                inputItems=(
-                    await self.sync.input_items(organization_id, user_id)
-                    if self.settings.local_mvp
-                    else []
-                ),
+                inputItems=[],
                 proposals=self.proposals.list(organization_id),
                 history=self.proposals.list(organization_id, history=True),
             )

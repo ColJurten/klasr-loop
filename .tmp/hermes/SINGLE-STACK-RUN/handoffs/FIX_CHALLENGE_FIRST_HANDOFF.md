@@ -1,0 +1,6 @@
+# Challenge-first Google sign-in handoff
+
+- The initial user-login password transition now polls every 500 ms for up to 10 seconds. A visible password field continues through the existing fill/submit path; a `/challenge/selection`, `/challenge/ipp`, or `/challenge/pwd` URL immediately dispatches `challengePageStrategy`.
+- The initial `#passwordNext` submit uses the same 10-second, 500-ms challenge-aware poll. The password action wins when visible; challenge URLs dispatch the existing selection → verification-code → IPP → relay strategy. If neither appears, the existing primary-action fallback, debug dump, and original-error behavior remain in force. Its legacy `#passwordNext` fallback wait remains 6 seconds, below the requested 8-second ceiling.
+- `challengePageStrategy` is safe before any password entry: selection chooses code/call/password based only on visible options, and direct IPP pages now enter the existing IPP collector and code relay. The `passwordReentered` guard remains scoped only to `/challenge/pwd`; the re-verification password submission call itself is unchanged.
+- Regression coverage stubs a selection-first page and records challenge dispatch with zero password-button clicks. No live Google run was performed.

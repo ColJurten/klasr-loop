@@ -38,7 +38,7 @@ afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.useRealTimers(); 
 describe('DriveWorkflow production browser', () => {
   it('does not read persisted browser state during render', () => {
     window.sessionStorage.setItem(selectionKey, JSON.stringify({ selected: 'nested_pdf', path: [{ id: 'folder_real', name: 'stg_tree' }] }));
-    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0 }, target: 1, startedAt: Date.now() }));
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: 1, startedAt: Date.now() }));
     const getItem = vi.spyOn(Object.getPrototypeOf(window.sessionStorage), 'getItem');
     renderToString(<DriveWorkflow data={{ ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } }} />);
     expect(getItem).not.toHaveBeenCalled();
@@ -57,6 +57,23 @@ describe('DriveWorkflow production browser', () => {
     fireEvent.click(screen.getByRole('button', { name: /choisir ce dossier/i }));
     await waitFor(() => expect(clientApi.selectReferenceRoot).toHaveBeenCalledWith('folder_real'));
     expect(router.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('selects a reference folder when its radio input is clicked directly', async () => {
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems.slice(0, 2), nextPageToken: null });
+    clientApi.selectReferenceRoot.mockResolvedValue({});
+    render(<DriveWorkflow data={baseDashboard} llmConfigured />);
+
+    const row = (await screen.findByText('stg_tree')).closest('li')!;
+    const radio = row.querySelector<HTMLInputElement>('input[type="radio"][name="drive-folder"]')!;
+    radio.click();
+
+    expect(radio.checked).toBe(true);
+    const choose = screen.getByRole('button', { name: 'Choisir ce dossier' });
+    expect(choose).toHaveProperty('disabled', false);
+    choose.click();
+    await waitFor(() => expect(clientApi.selectReferenceRoot).toHaveBeenCalledTimes(1));
+    expect(clientApi.selectReferenceRoot).toHaveBeenCalledWith('folder_real');
   });
 
   it('shows a root PDF, marks XLSX unsupported, and launches the selected PDF', async () => {
@@ -87,7 +104,7 @@ describe('DriveWorkflow production browser', () => {
       destinationFolderExternalId: 'alpha', confidence: 0.2, source: 'LLM',
       document: { id: 'doc-1', name: 'document-test.pdf', mimeType: 'application/pdf', sizeBytes: 10 },
     } as const;
-    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, outcomes: 1 }, proposals: [firstProposal] }} />);
+    view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, active: 1 }, metrics: { ...data.metrics, outcomes: 1 }, proposals: [firstProposal] }} />);
     expect(screen.getByRole('status')).toBeDefined();
     view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, outcomes: 2 }, proposals: [firstProposal, { ...firstProposal, id: 'proposal-2' }] }} />);
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
@@ -106,6 +123,23 @@ describe('DriveWorkflow production browser', () => {
     view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, outcomes: 2 }, proposals: [] }} />);
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
     expect(screen.getByRole('button', { name: /lancer l'organisation/i })).not.toHaveProperty('disabled', true);
+  });
+
+  it('keeps polling after auto outcomes complete while a manual item remains queued', async () => {
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 1 });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    const view = render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
+    fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
+    await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalled());
+
+    view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, ready: 1 }, metrics: { ...data.metrics, outcomes: 1 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+
+    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, outcomes: 1 } }} />);
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   });
 
   it('keeps the production browser launch enabled after a refresh remount when async proposals complete', async () => {
@@ -159,7 +193,7 @@ describe('DriveWorkflow production browser', () => {
     fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
     await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalledWith('nested_pdf'));
     view.unmount();
-    const remounted = render(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, outcomes: 1 }, proposals: [firstProposal] }} />);
+    const remounted = render(<DriveWorkflow data={{ ...data, queue: { ...data.queue, active: 1 }, metrics: { ...data.metrics, outcomes: 1 }, proposals: [firstProposal] }} />);
     await screen.findByText('nested-document.pdf');
     expect(screen.getByRole('status')).toBeDefined();
     expect(screen.getByRole('button', { name: /lancer l'organisation/i })).toHaveProperty('disabled', true);
@@ -182,53 +216,90 @@ describe('DriveWorkflow production browser', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(/analyse a échoué/i);
   });
 
-  it('bounds polling by wall clock even while refreshed dashboard data changes', async () => {
+  it('waits for reflected enqueue metrics before interrupting a drained launch', async () => {
     clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
     clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
     const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
     const view = render(<DriveWorkflow data={data} />);
     await screen.findByText('document-test.pdf');
-    vi.useFakeTimers();
-    try {
-      fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
-      fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
-      await act(async () => { await Promise.resolve(); });
-      expect(screen.getByRole('status')).toBeDefined();
-      act(() => vi.advanceTimersByTime(20_000));
-      view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 1 } }} />);
-      view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 1, documentsIn: 1 } }} />);
-      act(() => vi.advanceTimersByTime(10_001));
-      expect(screen.getByRole('alert').textContent).toMatch(/analyse a échoué/i);
-      view.unmount();
-      vi.useRealTimers();
-      render(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, analyzing: 0 } }} />);
-      await screen.findByText('document-test.pdf');
-      expect(screen.queryByRole('status')).toBeNull();
-      expect(screen.getByRole('button', { name: /lancer l'organisation/i })).not.toHaveProperty('disabled', true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('uses only the saved remaining timeout after a busy remount', async () => {
-    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
-    clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
-    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
-    const view = render(<DriveWorkflow data={data} />);
-    await screen.findByText('document-test.pdf');
-    vi.useFakeTimers();
     fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
     fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
-    await act(async () => { await Promise.resolve(); });
-    act(() => vi.advanceTimersByTime(20_000));
-    view.unmount();
-    render(<DriveWorkflow data={data} />);
-    await act(async () => { await Promise.resolve(); });
-    expect(screen.getByRole('status')).toBeDefined();
-    act(() => vi.advanceTimersByTime(9_999));
+    await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalled());
+    view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, queued: 0, active: 0 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, documentsIn: 1 } }} />);
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/analyse interrompue/i));
     expect(screen.queryByRole('alert')).toBeNull();
-    act(() => vi.advanceTimersByTime(2));
-    expect(screen.getByRole('alert').textContent).toMatch(/analyse a échoué/i);
+    expect(window.sessionStorage.getItem(launchKey)).toBeNull();
+    expect(screen.getByRole('button', { name: /lancer l'organisation/i })).not.toHaveProperty('disabled', true);
+  });
+
+  it('keeps polling while a newly enqueued job is ready', async () => {
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    clientApi.launchDriveItem.mockResolvedValue({ enqueued: 1, manual: 0 });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    const view = render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    fireEvent.click(screen.getAllByLabelText(/sélectionner/i).find((choice) => (choice as HTMLInputElement).value === 'pdf_real')!);
+    fireEvent.click(screen.getByRole('button', { name: /lancer l'organisation/i }));
+    await waitFor(() => expect(clientApi.launchDriveItem).toHaveBeenCalled());
+    view.rerender(<DriveWorkflow data={{ ...data, queue: { ...data.queue, ready: 1 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+  });
+
+  it('clears a restored target-less launch when the queue and metrics are unchanged', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'running', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: null, startedAt: Date.now() }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(window.sessionStorage.getItem(launchKey)).toBeNull();
+  });
+
+  it('keeps a restored target-less launch running while work is in flight', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'running', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: null, startedAt: Date.now() }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' }, queue: { ...baseDashboard.queue, active: 1 } };
+    const view = render(<DriveWorkflow data={data} />);
+    await screen.findByText('document-test.pdf');
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    expect(window.sessionStorage.getItem(launchKey)).not.toBeNull();
+    view.rerender(<DriveWorkflow data={{ ...data, metrics: { ...data.metrics, documentsIn: 1 } }} />);
+    expect(screen.getByRole('status').textContent).toMatch(/analyse en cours/i);
+    view.rerender(<DriveWorkflow data={{ ...data, queue: baseDashboard.queue, metrics: { ...data.metrics, documentsIn: 1, outcomes: 1 } }} />);
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  });
+
+  it('increases polling intervals up to the backoff ceiling', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: 1, startedAt: Date.now() }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    vi.useFakeTimers();
+    render(<DriveWorkflow data={{ ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' }, queue: { ...baseDashboard.queue, active: 1 } }} />);
+    await act(async () => { await Promise.resolve(); });
+    for (const [index, interval] of [1_000, 2_000, 4_000, 8_000, 15_000, 15_000].entries()) {
+      act(() => vi.advanceTimersByTime(interval - 1));
+      expect(router.refresh).toHaveBeenCalledTimes(index);
+      act(() => vi.advanceTimersByTime(1));
+      await act(async () => { await Promise.resolve(); });
+    }
+    expect(router.refresh).toHaveBeenCalledTimes(6);
+  });
+
+  it('stops polling at the absolute backoff cap', async () => {
+    window.sessionStorage.setItem(launchKey, JSON.stringify({ state: 'done', baseline: { outcomes: 0, failures: 0, documentsIn: 0 }, target: 1, startedAt: Date.now() - 15 * 60 * 1_000 }));
+    clientApi.listDriveItems.mockResolvedValue({ items: rootItems, nextPageToken: null });
+    const data = { ...baseDashboard, referenceRoot: { externalId: 'folder_real', name: 'stg_tree' } };
+    vi.useFakeTimers();
+    render(<DriveWorkflow data={{ ...data, queue: { ...data.queue, active: 1 } }} />);
+    await act(async () => { await Promise.resolve(); });
+    act(() => vi.advanceTimersByTime(1_000));
+    await act(async () => { await Promise.resolve(); });
+    await vi.waitFor(() => expect(screen.getByText('document-test.pdf')).toBeDefined());
+    expect(screen.getByRole('status').textContent).toMatch(/analyse interrompue/i);
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(window.sessionStorage.getItem(launchKey)).toBeNull();
   });
 
@@ -261,10 +332,5 @@ describe('DriveWorkflow production browser', () => {
     await waitFor(() => expect(window.sessionStorage.getItem(launchKey)).toBeNull());
     await waitFor(() => expect(window.sessionStorage.getItem(selectionKey)).toBeNull());
     expect(screen.getAllByLabelText(/sélectionner/i).some((choice) => (choice as HTMLInputElement).checked)).toBe(false);
-  });
-  it('keeps the deterministic one-click option only in local mode', () => {
-    render(<DriveWorkflow data={{ ...baseDashboard, mode: 'local', connection: null }} />);
-    expect(screen.getByRole('button', { name: /cabinet de démonstration/i })).toBeDefined();
-    expect(clientApi.listDriveItems).not.toHaveBeenCalled();
   });
 });

@@ -11,7 +11,6 @@ from starlette.exceptions import HTTPException
 from core.settings import Settings
 from core.security import internal_service_guard
 from db.session import make_engine
-from services.drive import LocalDriveExecutor
 from routers import (
     auth,
     organizations,
@@ -19,7 +18,6 @@ from routers import (
     documents,
     drive,
     proposals,
-    sync,
     rules,
     llm_settings,
 )
@@ -37,9 +35,7 @@ def create_app(settings=None) -> FastAPI:
 
             if not hasattr(app.state, "engine"):
                 app.state.engine = make_engine(settings.database_url)
-            task = asyncio.create_task(
-                run_worker(settings, app.state.engine, stop, app.state.local_drive)
-            )
+            task = asyncio.create_task(run_worker(settings, app.state.engine, stop))
         try:
             yield
         finally:
@@ -53,7 +49,6 @@ def create_app(settings=None) -> FastAPI:
         title="Klasr API", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.settings = settings
-    app.state.local_drive = LocalDriveExecutor()
 
     def error(request, status, message):
         # Preserve the phase-1 health/unknown-path contract; domain errors match Nest.
@@ -111,7 +106,6 @@ def create_app(settings=None) -> FastAPI:
         documents,
         drive,
         proposals,
-        sync,
         rules,
         llm_settings,
     ):

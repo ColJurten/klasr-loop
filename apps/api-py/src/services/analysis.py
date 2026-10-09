@@ -23,14 +23,25 @@ def extract_memory(content, mime_type, name):
     if mime_type.startswith("text/") or mime_type == "application/json":
         text = content.decode("utf-8", errors="replace").strip()
         if not text:
-            return ExtractionResult(text="", quality="empty")
+            return ExtractionResult(text="", quality="empty", first_pass_quality="empty")
         quality, warnings = _assess_extraction_quality(text)
-        return ExtractionResult(text=text, quality=quality, warnings=warnings)
+        return ExtractionResult(
+            text=text,
+            markdown=text,
+            quality=quality,
+            warnings=warnings,
+            first_pass_quality=quality,
+            first_pass_text_chars=len(text),
+            first_pass_md_chars=len(text),
+        )
     suffix = {
         "application/pdf": ".pdf",
         "image/png": ".png",
         "image/jpeg": ".jpg",
         "image/tiff": ".tiff",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     }.get(mime_type)
     if not suffix:
         return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
@@ -225,13 +236,13 @@ def local_suggestion(extraction, directories):
         filename=DecisionResult(
             value=filename_value,
             confidence=filename_confidence,
-            signals=["provider:local"],
+            signals=[{"label": "provider", "value": "local"}],
             warnings=filename_warnings,
         ),
         destination=DecisionResult(
             value=dest_value,
             confidence=dest_confidence,
-            signals=["provider:local"],
+            signals=[{"label": "provider", "value": "local"}],
             warnings=dest_warnings,
         ),
         extraction_quality=extraction.quality,
@@ -262,6 +273,12 @@ class AnalysisService:
                 extract_memory, content, document.mime_type, document.name
             )
             del content
+        first_pass = (
+            extraction.first_pass_quality,
+            extraction.first_pass_text_chars,
+            extraction.first_pass_md_chars,
+            extraction.ocr_pass,
+        )
         folders = self.folders.inherited(org)
         paths = [folder["path"] for folder in folders]
         proposal = apply_rules(document, extraction.text, paths, self.rules.list(org))
@@ -295,6 +312,7 @@ class AnalysisService:
                 ruleMatches=int(proposal["source"] == "RULE"),
                 llmCalls=proposal["llm_calls_used"],
             )
+        return first_pass
 
     async def suggest(self, org, document, extraction, paths):
         extension = Path(document.name).suffix.lower()
@@ -357,6 +375,11 @@ class AnalysisService:
         filename_confidence = min(filename.confidence, cap)
         destination_confidence = min(destination.confidence, cap)
         warnings = filename.warnings + destination.warnings
+        if "no_destination_match" in warnings:
+            warnings = [
+                "no_destination_match",
+                *(w for w in warnings if w != "no_destination_match"),
+            ]
         return dict(
             proposed_name=name,
             destination_path=destination.value or "",

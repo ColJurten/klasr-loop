@@ -32,7 +32,7 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
         return DecisionResult(
             value=None,
             confidence=0,
-            signals=[f"extraction:{analysis.quality}"],
+            signals=[{"label": "extraction", "value": analysis.quality}],
             warnings=analysis.warnings,
         )
     if local := _local_suggestion(analysis, directories):
@@ -41,7 +41,9 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
 
     assistant = DocumentSortingAssistantCrew()
     crew = assistant.naming_crew() if kind == "filename" else assistant.destination_crew()
-    output = crew.kickoff(inputs={"content": analysis.text, "directories": directories})
+    output = crew.kickoff(
+        inputs={"content": analysis.markdown or analysis.text, "directories": directories}
+    )
     return DecisionResult.model_validate(output.pydantic or output.to_dict())
 
 
@@ -58,7 +60,7 @@ def _both_decisions(
     output = (
         DocumentSortingAssistantCrew()
         .combined_crew()
-        .kickoff(inputs={"content": analysis.text, "directories": directories})
+        .kickoff(inputs={"content": analysis.markdown or analysis.text, "directories": directories})
     )
     filename, destination = output.tasks_output[-2:]
     return (
@@ -68,8 +70,17 @@ def _both_decisions(
 
 
 def _validated_destination(result: DecisionResult, directories: list[str]) -> DecisionResult:
-    if result.value is None:
-        return result
+    if result.value is None or "no_destination_match" in result.warnings:
+        return result.model_copy(
+            update={
+                "value": None,
+                "confidence": 0,
+                "warnings": [
+                    "no_destination_match",
+                    *(warning for warning in result.warnings if warning != "no_destination_match"),
+                ],
+            }
+        )
     allowed = {path.rstrip("/") or "/" for path in directories}
     value = result.value.rstrip("/")
     if value not in allowed:

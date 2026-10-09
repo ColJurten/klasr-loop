@@ -14,7 +14,6 @@ describe('service-account acceptance browser authentication', () => {
       ...originalEnv,
       NODE_ENV: 'test',
       KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true',
-      KLASR_LOCAL_MVP: 'false',
     };
     const { authOptions } = await import('../lib/auth');
     const configuredIds = authOptions.providers.map((provider) =>
@@ -29,7 +28,8 @@ describe('service-account acceptance browser authentication', () => {
       ...originalEnv,
       NODE_ENV: 'test',
       KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: 'true',
-      KLASR_LOCAL_MVP: 'false',
+      API_URL: 'http://api.test/api/v1',
+      NEXT_PUBLIC_API_URL: 'http://browser.test/api/v1',
     };
     const request = vi.fn().mockResolvedValue({
       ok: true,
@@ -47,6 +47,7 @@ describe('service-account acceptance browser authentication', () => {
       isNewUser: false,
     });
 
+    expect(request.mock.calls[0][0]).toBe('http://api.test/api/v1/auth/onboarding');
     expect(JSON.parse(request.mock.calls[0][1].body)).toMatchObject({
       provider: 'google',
       emailVerified: true,
@@ -54,17 +55,6 @@ describe('service-account acceptance browser authentication', () => {
       refreshToken: 'service-account-acceptance',
       scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/drive'],
     });
-  });
-
-  it('keeps the internal local credentials adapter verified without trusting external providers', async () => {
-    process.env = { ...originalEnv, NODE_ENV: 'test', KLASR_LOCAL_MVP: 'true' };
-    const request = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ userId: 'user', organizationId: 'org', membershipId: 'membership', role: 'ADMIN' }) });
-    vi.stubGlobal('fetch', request);
-    const { authOptions } = await import('../lib/auth');
-
-    await authOptions.callbacks!.jwt!({ token: {}, user: { id: 'local', email: 'local@klasr.test' }, account: { provider: 'local-mvp', type: 'credentials', providerAccountId: 'local' }, profile: undefined, trigger: 'signIn', isNewUser: false });
-
-    expect(JSON.parse(request.mock.calls[0][1].body)).toMatchObject({ provider: 'local-mvp', emailVerified: true });
   });
 
   it.each([

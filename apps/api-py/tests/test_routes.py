@@ -160,16 +160,14 @@ def test_organizations_serialization_and_atomic_owner(api):
         assert session.scalar(select(Membership)).role == "ADMIN"
 
 
-def test_local_drive_all_routes_sync_and_document_queries(tenant):
+def test_google_drive_all_routes_sync_and_document_queries(tenant):
     client, _, engine, identity, base = tenant
-    assert client.post(base + "/sync").status_code == 400
-    assert client.post(base + "/drive/launch", json={"itemExternalId": "all"}).status_code == 400
     choices = client.get(base + "/drive/reference-folders").json()
     assert len(choices) == 8 and set(choices[0]) == {"externalId", "name", "parentExternalId"}
     root_page = client.get(base + "/drive/items").json()
     assert len(root_page["items"]) == 2 and all(row["eligible"] for row in root_page["items"])
     assert root_page["nextPageToken"] is None
-    files = client.get(base + "/drive/items?parentId=local_input_folder").json()["items"]
+    files = client.get(base + "/drive/items?parentId=inbox").json()["items"]
     assert all(
         not row["eligible"] and row["reason"] == "reference-required"
         for row in files
@@ -180,12 +178,12 @@ def test_local_drive_all_routes_sync_and_document_queries(tenant):
         == 404
     )
     response = client.post(
-        base + "/drive/reference-root", json={"folderExternalId": "local_root_cabinet"}
+        base + "/drive/reference-root", json={"folderExternalId": "reference-root"}
     )
     assert response.status_code == 201
     assert len(response.json()["folders"]) == 5
     assert response.json()["folders"][0] == dict(
-        externalId="local_folder_compta",
+        externalId="accounting",
         name="Comptabilité",
         path="/Comptabilité",
         parentExternalId=None,
@@ -193,20 +191,17 @@ def test_local_drive_all_routes_sync_and_document_queries(tenant):
     inputs = client.get(base + "/drive/input-items").json()
     assert len(inputs) == 11 and all("reason" not in row for row in inputs)
     root_page = client.get(base + "/drive/items?parentId=root&pageToken=0").json()
-    root = next(row for row in root_page["items"] if row["externalId"] == "local_root_cabinet")
+    root = next(row for row in root_page["items"] if row["externalId"] == "reference-root")
     assert root["reason"] == "reference-root" and root["eligible"] is False
     assert client.get(base + "/drive/items?pageToken=").status_code == 400
     assert client.get(base + "/drive/items?unknown=1").status_code == 400
     assert (
-        client.post(
-            base + "/drive/launch", json={"itemExternalId": "local_root_cabinet"}
-        ).status_code
+        client.post(base + "/drive/launch", json={"itemExternalId": "reference-root"}).status_code
         == 400
     )
     assert client.post(base + "/drive/launch", json={"itemExternalId": "absent"}).status_code == 404
-    response = client.post(base + "/drive/launch", json={"itemExternalId": "local_input_folder"})
+    response = client.post(base + "/drive/launch", json={"itemExternalId": "inbox"})
     assert response.status_code == 201 and response.json() == {"enqueued": 4, "manual": 0}
-    assert client.post(base + "/sync").json() == {"enqueued": 4, "manual": 0}
     with Session(engine) as session:
         jobs = session.scalars(select(Job)).all()
         assert len(jobs) == 4
@@ -230,8 +225,8 @@ def test_local_drive_all_routes_sync_and_document_queries(tenant):
 
 def test_dashboard_aggregate_and_tenant_isolation(tenant):
     client, app, engine, identity, base = tenant
-    client.post(base + "/drive/reference-root", json={"folderExternalId": "local_root_cabinet"})
-    client.post(base + "/sync")
+    client.post(base + "/drive/reference-root", json={"folderExternalId": "reference-root"})
+    client.post(base + "/drive/launch", json={"itemExternalId": "inbox"})
     second = register(client, "second@example.com")
     other = "/organizations/" + second["organizationId"]
     assert client.get(other + "/documents").json() == []
@@ -250,7 +245,7 @@ def test_dashboard_aggregate_and_tenant_isolation(tenant):
         "proposals",
         "history",
     }
-    assert dashboard["mode"] == "local" and dashboard["queue"]["ready"] == 4
+    assert dashboard["mode"] == "production" and dashboard["queue"]["ready"] == 4
     assert dashboard["metrics"] == dict(
         pending=0,
         analyzing=4,
@@ -273,7 +268,6 @@ def test_dashboard_aggregate_and_tenant_isolation(tenant):
         session.commit()
     assert client.get(base + "/dashboard").json()["analysisFailures"] == 0
     assert client.get(other + "/dashboard").json()["analysisFailures"] == 1
-    app.state.settings.local_mvp = False
     assert client.get(base + "/dashboard").json()["inputItems"] == []
     assert client.get(base + "/dashboard").json()["mode"] == "production"
     app.state.settings.acceptance_google_service_account = True
@@ -324,7 +318,7 @@ def test_proposal_confirm_ignore_claims_and_audit(tenant):
         client.post(path + "/confirm", json={"destinationFolderExternalId": "foreign"}).status_code
         == 400
     )
-    assert not app.state.local_drive.moved
+    assert not any(request.method == "PATCH" for request in app.state.google_requests)
     response = client.post(path + "/confirm", json={"finalName": "corrected.pdf"})
     assert response.status_code == 201 and response.json() == {
         "executed": True,
@@ -340,9 +334,12 @@ def test_proposal_confirm_ignore_claims_and_audit(tenant):
         assert history.actor_id == identity["userId"] and history.action == "MOVE_RENAME"
         assert history.to_path == "/Invoices1" and history.from_name == "scan.pdf"
     ignored_id, ignored_doc, _ = add_proposal(engine, identity["organizationId"], "2")
-    count = len(app.state.local_drive.moved)
+    count = len([request for request in app.state.google_requests if request.method == "PATCH"])
     assert client.post(base + "/proposals/" + ignored_id + "/ignore").json() == {"ignored": True}
-    assert len(app.state.local_drive.moved) == count
+    assert (
+        len([request for request in app.state.google_requests if request.method == "PATCH"])
+        == count
+    )
     with Session(engine) as session:
         assert session.get(Document, ignored_doc).status == "IGNORED"
         row = session.scalar(select(ActionHistory).where(ActionHistory.document_id == ignored_doc))
@@ -406,9 +403,7 @@ def test_rules_validation_priority_and_scoping(tenant):
     assert client.post(other + "/rules", json=dto).status_code == 201
 
 
-@pytest.mark.parametrize(
-    "flag", ["local_mvp", "inline_worker", "acceptance_google_service_account"]
-)
+@pytest.mark.parametrize("flag", ["inline_worker", "acceptance_google_service_account"])
 def test_production_mode_forbids_development_switches(flag):
     from main import create_app
     from core.settings import Settings

@@ -56,9 +56,6 @@ export default function LandingPage() {
           <Link href="/login?callbackUrl=/dashboard" className="hover:text-ink">
             Se connecter
           </Link>
-          <Link href="/demo" className="hover:text-ink">
-            Démo locale
-          </Link>
           <Link
             href="/login?callbackUrl=/dashboard"
             className="rounded-lg bg-ink px-4 py-2 font-medium text-paper hover:bg-ink/85"
@@ -83,12 +80,6 @@ export default function LandingPage() {
               className="rounded-lg bg-ink px-6 py-3 text-sm font-medium text-paper hover:bg-ink/85"
             >
               Essayer gratuitement
-            </Link>
-            <Link
-              href="/demo"
-              className="rounded-lg border border-lavender-deep px-6 py-3 text-sm font-medium hover:bg-lavender/20"
-            >
-              Ouvrir la démo locale
             </Link>
             <a
               href="#fonctionnement"
