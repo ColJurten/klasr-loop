@@ -289,3 +289,43 @@ LLM, cascade du modèle le moins coûteux, compteur `llmCallsUsed`, entité Usag
   100 docs/mois). Ajouter un composant sans besoin mesuré contredit l'éco-conception.
 - *« Où est l'accès documentaire ? »* — Dans le `payload` JSONB de la table
   PostgreSQL `analyses`, avec une expiration gérée par le worker existant.
+
+## ADR — CARD-4 : aperçu documentaire en lecture seule (2026-10-08)
+
+**Décision.** En production avec OAuth individuel, le tiroir intègre le viewer
+Google Drive dans une iframe : les octets vont directement de Google au navigateur,
+jamais par Klasr. Cette iframe tierce ne peut pas détecter ses propres erreurs de
+chargement ; le lien « Ouvrir dans Google Drive » est le recours.
+En staging avec compte de service, la route FastAPI sert une `StreamingResponse`
+via un `stream()` dédié : client httpx propre, blocs de 64 Kio, plafond de 20 Mio
+(413), échecs amont conservés en 4xx ou traduits en 502. Elle impose
+`Content-Disposition: inline`, `Cache-Control: no-store` et
+`X-Content-Type-Options: nosniff`. Le BFF Next.js relaie sans bufferiser et
+revalide la même liste de types autorisés : PDF, PNG, JPEG, GIF et WebP ; tout
+autre type inline est refusé (415). La route retourne 404 sans le réglage staging
+compte de service ou si le document n’appartient pas à l’organisation ; l’identifiant
+Drive externe provient du `Document` chargé, jamais d’un identifiant Drive fourni
+par le navigateur. En production, cette route retourne toujours 404.
+Les PDF staging utilisent un `object` dont les enfants affichent le repli d’erreur
+si le navigateur ne peut pas charger le document ; les images utilisent `img`.
+Les formats Office xlsx/docx utilisent la miniature Drive : le jeton d’accès
+accompagne la requête des octets uniquement sur les hôtes `*.googleusercontent.com`.
+La réponse conserve le type image réel de l’amont (PNG seulement si absent).
+En local, seuls l’icône et le nom du document sont affichés.
+
+**Invariants 1 et 3.** Ni le flux documentaire ni la miniature ne stockent de
+contenu sur disque, en base ou dans les logs. Le Drive connecté demeure la source ;
+le transit Drive → API → BFF → navigateur est temporaire, sans écriture métier.
+Le flux est transmis par blocs bornés, sans téléchargement complet préalable.
+
+**Invariants 4 et 6.** Les états de chargement et d’erreur respectent ink/paper,
+lavande et pêche, Inter/JetBrains Mono, sans ombre ni dégradé. Le lien
+« Ouvrir dans Google Drive » est toujours présent hors mode local, y compris
+en cas d’erreur. L’aperçu ne renomme ni ne déplace aucun fichier ; la validation
+explicite reste obligatoire.
+
+**Preuves REAC.** C1 : environnement et commandes reproductibles ; C2 : interface
+et états accessibles ; C3 : adaptateur Drive et identifiant externe du document ;
+C6 : séparation viewer / transit ; C9 : tests du tiroir, du repli `object`, du flux
+sans persistance et des miniatures ; C10 : frontière BFF authentifiée, isolement
+tenant, liste MIME, nosniff et jeton limité aux hôtes googleusercontent.

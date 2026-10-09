@@ -11,11 +11,11 @@ export class ApiUpstreamError extends Error {
   }
 }
 
-function apiUrl(): string {
+export function apiUrl(): string {
   return process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 }
 
-async function sessionTenant(): Promise<{ organizationId: string; userId: string }> {
+export async function sessionTenant(): Promise<{ organizationId: string; userId: string }> {
   const session = await getServerSession(authOptions);
   const organizationId = session?.user?.organizationId;
   const userId = session?.user?.userId;
@@ -64,7 +64,7 @@ async function llmRequest(path: string, method = 'GET', body?: LlmSettingsInput)
   return response.json();
 }
 
-function internalHeaders(userId?: string): HeadersInit {
+export function internalHeaders(userId?: string): HeadersInit {
   const secret = process.env.INTERNAL_API_SECRET;
   if (!secret) throw new Error('Missing INTERNAL_API_SECRET');
   return { 'x-internal-secret': secret, ...(userId ? { 'x-user-id': userId } : {}) };

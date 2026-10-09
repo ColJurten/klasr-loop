@@ -17,11 +17,13 @@ type IgnoreProposalHandler = (proposalId: string) => Promise<unknown>;
 
 export function ProposalQueue({
   initialProposals,
+  mode = 'local',
   folders = [],
   onConfirmProposal = confirmProposal,
   onIgnoreProposal = ignoreProposal,
 }: {
   initialProposals: ProposalView[];
+  mode?: 'local' | 'production' | 'service-account-staging';
   folders: FolderChoiceView[];
   onConfirmProposal?: ConfirmProposalHandler;
   onIgnoreProposal?: IgnoreProposalHandler;
@@ -145,6 +147,7 @@ export function ProposalQueue({
       <div className="flex flex-col gap-2">
         {visibleProposals.map((proposal) => (
           <ProposalCard
+            mode={mode}
             key={proposal.id}
             proposal={proposal}
             folders={folders}

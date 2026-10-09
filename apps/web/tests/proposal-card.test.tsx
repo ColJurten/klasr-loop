@@ -12,6 +12,7 @@ const proposal: ProposalView = {
   source: 'LLM',
   document: {
     id: 'doc_1',
+    externalId: 'drive_file_1',
     name: 'scan_001.pdf',
     mimeType: 'application/pdf',
     sizeBytes: 1200,
@@ -240,5 +241,51 @@ describe('ProposalCard — single-click confirmation flow', () => {
 
     const overlay = screen.getByTestId('correction-overlay');
     expect(overlay.innerHTML).not.toContain('motion-reduce:transition-none');
+  });
+});
+
+describe('Document preview through Corriger', () => {
+  it.each([
+    ['production', 'application/pdf', 'iframe', 'https://drive.google.com/file/d/drive_file_1/preview'],
+    ['service-account-staging', 'application/pdf', 'object', '/api/drive/preview/doc_1'],
+    ['service-account-staging', 'image/png', 'img', '/api/drive/preview/doc_1'],
+    ['service-account-staging', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'img', '/api/drive/preview/doc_1?variant=thumbnail'],
+  ] as const)('previews %s %s with loading and error fallback', (mode, mimeType, tag, src) => {
+    render(<ProposalCard proposal={{ ...proposal, document: { ...proposal.document, mimeType } }} mode={mode} status="idle" onConfirm={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Corriger' }));
+    const dialog = screen.getByRole('dialog');
+    const preview = dialog.querySelector(tag)!;
+    expect(preview?.getAttribute(tag === 'object' ? 'data' : 'src')).toBe(src);
+    if (tag === 'object') {
+      expect(preview.getAttribute('type')).toBe('application/pdf');
+      expect(preview.getAttribute('aria-label')).toBe('Aperçu du document');
+      const fallback = within(preview as HTMLElement).getByRole('alert');
+      expect(fallback.textContent).toBe('Aperçu indisponible.');
+      expect(fallback.querySelector('svg')?.classList.contains('text-peach-deep')).toBe(true);
+    }
+    expect(within(dialog).queryByText(/Aucun contenu du document/)).toBeNull();
+    expect(within(dialog).getByText('Aperçu en lecture seule — Klasr ne conserve aucun contenu.')).toBeDefined();
+    expect(within(dialog).getByRole('link', { name: /Ouvrir dans Google Drive/ }).getAttribute('href')).toBe('https://drive.google.com/file/d/drive_file_1/view');
+    expect(within(dialog).getByText("Chargement de l'aperçu…")).toBeDefined();
+    fireEvent.load(preview);
+    expect(within(dialog).queryByText("Chargement de l'aperçu…")).toBeNull();
+    if (tag === 'img') {
+      fireEvent.error(preview);
+      expect(within(dialog).getByText('Aperçu indisponible.')).toBeDefined();
+      expect(within(dialog).getByRole('alert').querySelector('svg')?.classList.contains('text-peach-deep')).toBe(true);
+    } else if (tag === 'object') {
+      expect(within(preview as HTMLElement).getByRole('alert').textContent).toBe('Aperçu indisponible.');
+    } else {
+      expect(dialog.querySelector('iframe')).toBe(preview);
+    }
+  });
+
+  it('keeps local documents as an icon without network preview', () => {
+    render(<ProposalCard proposal={proposal} status="idle" onConfirm={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Corriger' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.querySelector('iframe, img')).toBeNull();
+    expect(within(dialog).getAllByText('scan_001.pdf').length).toBeGreaterThan(0);
+    expect(within(dialog).queryByRole('link', { name: /Ouvrir dans Google Drive/ })).toBeNull();
   });
 });

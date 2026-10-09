@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowRight, Check, CornerDownRight, FileText, Folder, FolderPlus, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Loader2, ArrowRight, Check, CornerDownRight, FileText, Folder, FolderPlus, RotateCcw, X } from 'lucide-react';
 import { Button } from './ui/button';
 import type { FolderChoiceView, ProposalView } from '@/lib/types';
 
@@ -10,6 +10,7 @@ export type ProposalStatus = 'idle' | 'confirming' | 'done' | 'error';
 
 interface ProposalCardProps {
   proposal: ProposalView;
+  mode?: 'local' | 'production' | 'service-account-staging';
   folders: FolderChoiceView[];
   status: ProposalStatus;
   /** Called exactly once per confirmation; parent executes the API call. */
@@ -38,7 +39,7 @@ function sourceLabel(source: ProposalView['source']): string {
  * « Valider » EXÉCUTE le déplacement/renommage. « Corriger » est le chemin
  * secondaire. Aucune ombre, bordures fines, chemins en JetBrains Mono.
  */
-export function ProposalCard({ proposal, folders = [], status, onConfirm, onIgnore }: ProposalCardProps) {
+export function ProposalCard({ proposal, mode = 'local', folders = [], status, onConfirm, onIgnore }: ProposalCardProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [finalName, setFinalName] = useState(proposal.proposedName);
   const [destinationFolderExternalId, setDestinationFolderExternalId] = useState(
@@ -265,11 +266,7 @@ export function ProposalCard({ proposal, folders = [], status, onConfirm, onIgno
                 <p className="mt-1 font-mono text-sm">{proposal.document.name}</p>
               </header>
               <div className="flex flex-1 flex-col justify-center p-7">
-                <div className="rounded-lg border border-line bg-white p-7 text-center">
-                  <FileText className="mx-auto h-10 w-10 text-lavender-deep" strokeWidth={1.5} />
-                  <p className="mt-4 break-all font-mono text-sm">{proposal.document.name}</p>
-                  <p className="mt-2 text-xs text-ink/70">Aucun contenu du document n’est conservé ni affiché.</p>
-                </div>
+                <DocumentPreview document={proposal.document} mode={mode} />
                 <div className="mt-6 rounded-lg border border-peach-deep/30 bg-peach/35 p-4">
                   <p className="font-mono text-[11px] uppercase tracking-wider text-ink/60">Motif de l’analyse</p>
                   <p className="mt-2 text-sm">{proposal.reviewReason ?? 'La proposition peut être ajustée avant sa validation explicite.'}</p>
@@ -376,4 +373,49 @@ function hasControlCharacter(value: string): boolean {
     const code = char.charCodeAt(0);
     return code < 32 || code === 127;
   });
+}
+
+
+function DocumentPreview({ document, mode }: { document: ProposalView['document']; mode: NonNullable<ProposalCardProps['mode']> }) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const fileId = encodeURIComponent(document.id);
+  const externalId = encodeURIComponent(document.externalId);
+  const url = mode === 'production'
+    ? `https://drive.google.com/file/d/${externalId}/preview`
+    : `/api/drive/preview/${fileId}`;
+  const events = { onLoad: () => setState('loaded'), onError: () => setState('error'), onErrorCapture: () => setState('error') };
+  return (
+    <div className="rounded-lg border border-line bg-white p-4 text-center">
+      {mode === 'local' ? (
+        <>
+          <FileText className="mx-auto h-10 w-10 text-lavender-deep" strokeWidth={1.5} />
+          <p className="mt-4 break-all font-mono text-sm">{document.name}</p>
+        </>
+      ) : (
+        <>
+          {state === 'loading' && <p role="status" className="mb-3 flex items-center justify-center gap-2 text-xs text-ink/60"><Loader2 className="h-4 w-4 animate-spin text-lavender-deep" strokeWidth={1.5} />Chargement de l&apos;aperçu…</p>}
+          {state === 'error' ? (
+            <p role="alert" className="flex items-center justify-center gap-2 text-sm text-ink"><AlertTriangle className="h-5 w-5 text-peach-deep" strokeWidth={1.5} />Aperçu indisponible.</p>
+          ) : (
+            <div className="h-[45vh] min-h-[240px] overflow-hidden rounded-lg border border-line">
+              {mode === 'service-account-staging' && document.mimeType === 'application/pdf' ? (
+                <object data={url} type="application/pdf" aria-label="Aperçu du document" className="h-full w-full" {...events}>
+                  <p role="alert" className="flex items-center justify-center gap-2 text-sm text-ink"><AlertTriangle className="h-5 w-5 text-peach-deep" strokeWidth={1.5} />Aperçu indisponible.</p>
+                </object>
+              ) : mode === 'production' ? (
+                // The third-party iframe cannot detect load errors; recover via Ouvrir dans Google Drive.
+                <iframe title="Aperçu du document" src={url} className="h-full w-full" loading="lazy" {...events} />
+              ) : (
+                // Drive thumbnails are signed, transient previews rather than local assets.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={document.mimeType.startsWith('image/') ? url : `${url}?variant=thumbnail`} alt="Aperçu du document" className="h-full w-full object-contain" {...events} />
+              )}
+            </div>
+          )}
+        </>
+      )}
+      <p className="mt-3 text-xs text-ink/70">Aperçu en lecture seule — Klasr ne conserve aucun contenu.</p>
+      {mode !== 'local' && <a href={`https://drive.google.com/file/d/${externalId}/view`} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-sm text-ink/70 underline underline-offset-4">Ouvrir dans Google Drive<ExternalLink className="h-4 w-4" strokeWidth={1.5} /></a>}
+    </div>
+  );
 }

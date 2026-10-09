@@ -138,7 +138,7 @@ export default async function DashboardPage() {
 
       {!storageMissing && <section aria-labelledby="review-title">
         <h2 id="review-title" className="mb-3 text-sm font-medium">4. Suggestions à revoir</h2>
-        <ProposalQueue initialProposals={data?.proposals ?? []} folders={data?.folders ?? []} />
+        <ProposalQueue mode={data?.mode ?? 'local'} initialProposals={data?.proposals ?? []} folders={data?.folders ?? []} />
       </section>}
 
       {data && data.history.length > 0 && (

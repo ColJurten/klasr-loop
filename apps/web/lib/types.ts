@@ -14,6 +14,7 @@ export interface ProposalView {
   isNewFolder?: boolean;
   document: {
     id: string;
+    externalId: string;
     name: string;
     mimeType: string;
     sizeBytes: number;

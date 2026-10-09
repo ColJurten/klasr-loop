@@ -2,7 +2,8 @@ import json
 import time
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import quote
+from collections.abc import AsyncIterator
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import HTTPException
@@ -29,6 +30,10 @@ class DriveExecutor(Protocol):
     async def download(
         self, organization_id: str, user_id: str, document_external_id: str
     ) -> bytes: ...
+
+    def stream(
+        self, organization_id: str, user_id: str, document_external_id: str
+    ) -> AsyncIterator[bytes]: ...
 
 
 class GoogleTokenService:
@@ -180,6 +185,32 @@ class GoogleDriveExecutor:
             params["pageToken"] = page_token
         return await self.page(await self.headers(organization_id, user_id), params)
 
+    async def file_metadata(self, organization_id, user_id, file_id) -> dict:
+        response = await self.client.get(
+            f'{self.base}/{quote(file_id, safe="")}',
+            params={"fields": "name,mimeType,thumbnailLink,size", "supportsAllDrives": "true"},
+            headers=await self.headers(organization_id, user_id),
+        )
+        if not response.is_success:
+            raise HTTPException(502, "Google Drive metadata failed")
+        return response.json()
+
+    async def thumbnail(self, organization_id, user_id, file_id) -> tuple[bytes, str]:
+        metadata = await self.file_metadata(organization_id, user_id, file_id)
+        url = metadata.get("thumbnailLink")
+        if not url:
+            raise HTTPException(404, "Thumbnail not available")
+        host = urlparse(url).hostname or ""
+        headers = (
+            await self.headers(organization_id, user_id)
+            if host.endswith(".googleusercontent.com")
+            else {}
+        )
+        response = await self.client.get(url, headers=headers)
+        if not response.is_success:
+            raise HTTPException(502, "Google Drive thumbnail failed")
+        return response.content, response.headers.get("content-type", "image/png")
+
     async def download(self, organization_id, user_id, document_external_id):
         headers = await self.headers(organization_id, user_id)
         async with self.client.stream(
@@ -196,6 +227,37 @@ class GoogleDriveExecutor:
                     raise RuntimeError("Document exceeds analysis size limit")
                 content.extend(chunk)
             return bytes(content)
+
+    async def stream(self, organization_id, user_id, document_external_id):
+        # The request context client closes before StreamingResponse sends its body.
+        try:
+            async with httpx.AsyncClient() as client:
+                tokens = GoogleTokenService(self.tokens.connections.session, self.settings, client)
+                headers = {
+                    "Authorization": "Bearer "
+                    + await tokens.get_access_token(organization_id, user_id)
+                }
+                async with client.stream(
+                    "GET",
+                    f'{self.base}/{quote(document_external_id, safe="")}',
+                    params={"alt": "media"},
+                    headers=headers,
+                ) as response:
+                    if not response.is_success:
+                        raise HTTPException(
+                            response.status_code if 400 <= response.status_code < 500 else 502,
+                            "Google Drive download failed",
+                        )
+                    if int(response.headers.get("content-length", 0)) > MAX_BYTES:
+                        raise HTTPException(413, "Document exceeds preview size limit")
+                    size = 0
+                    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                        size += len(chunk)
+                        if size > MAX_BYTES:
+                            raise HTTPException(413, "Document exceeds preview size limit")
+                        yield chunk
+        except httpx.HTTPError:
+            raise HTTPException(502, "Google Drive download failed") from None
 
     async def move_and_rename(self, command):
         org = command["organizationId"]
