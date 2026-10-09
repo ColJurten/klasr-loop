@@ -142,7 +142,8 @@ if (process.argv.includes('--decision-selection-check')) {
   ]);
   assert(selected.confirm.id === 'valid' && selected.ignore.id === 'manual', 'Decision fixture selection is not provider-agnostic');
   assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason: 'low_confidence' }), 'Configured-LLM manual review must be accepted');
-  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '', reviewReason: 'extraction_failed' }, { reviewRequired: true, destinationPath: '', reviewReason: ' ' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
+  for (const reviewReason of [null, undefined, ' ']) assert(genuineManualReview({ reviewRequired: true, destinationPath: '', reviewReason }), 'Classification-only manual review must accept an absent or blank review reason');
+  for (const proposal of [{ reviewRequired: false, destinationPath: '', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '/invoices', reviewReason: 'low_confidence' }, { reviewRequired: true, destinationPath: '', reviewReason: 'extraction_failed' }]) assert(!genuineManualReview(proposal), 'Degenerate manual review must be rejected');
   process.stdout.write('live runner fixture restoration and decision selection check PASS\n');
   process.exit(0);
 }
@@ -621,7 +622,7 @@ try {
   item5Proof.overlayVisible = true;
   const correctionProof = await db('proposal', organizationId, correctionFixture.id);
   assert(genuineManualReview(correctionProof), 'Correction fixture did not produce a genuine destination-less manual review');
-  await expect(correctionDialog).toContainText(correctionProof.reviewReason);
+  await expect(correctionDialog).toContainText(correctionProof.rationale ?? 'Aucun contenu lisible détecté dans le document');
   item5Proof.overlayReasonVisible = true;
   await page.screenshot({ path: path.join(screenshotDir, 'live-google-sa-item-5-overlay-1280.png'), fullPage: true });
   const correctedName = `Document_Corrige${path.extname(correctionFixture.name)}`;
@@ -877,7 +878,7 @@ function loopback(value) { const url = new URL(value); if (!['127.0.0.1', 'local
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function assertThrows(action, message) { try { action(); } catch { return; } throw new Error(message); }
 async function assertRejects(action, message) { try { await action(); } catch (error) { assert(error?.message === message, message); return; } throw new Error(message); }
-function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath && typeof proposal.reviewReason === 'string' && proposal.reviewReason.trim().length > 0 && proposal.reviewReason !== 'extraction_failed'; }
+function genuineManualReview(proposal) { return proposal?.reviewRequired === true && !proposal.destinationPath && proposal.reviewReason !== 'extraction_failed'; }
 function exact(items, name, mimeType) { const matches = items.filter((item) => item.name === name && item.mimeType === mimeType); assert(matches.length === 1, `Expected exactly one provider item named ${name}`); return matches[0]; }
 
 async function serviceAccountToken() {
@@ -1201,8 +1202,8 @@ function syntheticInvoicePdf(reference) {
   return Buffer.from(pdf);
 }
 function reviewRequiredPdf() {
-  const text = ['Contract REF-ZEPHYR-742 dated 2026-08-15', 'from Zephyr Research.', 'Archived research memorandum.'];
-  const stream = `BT /F1 18 Tf 72 720 Td ${text.map((line, index) => `${index ? '0 -30 Td ' : ''}(${line}) Tj`).join(' ')} ET`;
+  // A blank page exercises the classification-only no-content fallback.
+  const stream = 'BT ET';
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>', `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
   let pdf = '%PDF-1.4\n'; const offsets = [0];
   objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });

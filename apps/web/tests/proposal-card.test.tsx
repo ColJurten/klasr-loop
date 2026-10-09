@@ -79,6 +79,7 @@ describe('ProposalCard — single-click confirmation flow', () => {
 
     expect(screen.getByRole('button', { name: /Corriger avant validation/ })).toHaveProperty('disabled', true);
     expect(onConfirm).not.toHaveBeenCalled();
+    expect(screen.getByText('à vérifier')).toBeDefined();
   });
 
   it('ignores double clicks (no double execution)', async () => {

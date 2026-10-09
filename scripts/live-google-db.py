@@ -211,6 +211,7 @@ def main():
                     {
                         "destinationPath": proposal.destination_path,
                         "modelUsed": proposal.model_used,
+                        "rationale": proposal.rationale,
                         "reviewRequired": proposal.review_required,
                         "reviewReason": proposal.review_reason,
                     }

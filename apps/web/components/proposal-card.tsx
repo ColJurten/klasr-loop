@@ -51,6 +51,7 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
   const percent = Math.round(proposal.confidence * 100);
   const isBusy = status === 'confirming';
   const isDone = status === 'done';
+  const needsReview = proposal.reviewRequired === true && !proposal.destinationPath && !proposal.destinationFolderExternalId;
   const canValidateAsIs = Boolean(proposal.destinationFolderExternalId || proposal.destinationPath);
 
   const filenameError = validateFilename(finalName);
@@ -172,6 +173,12 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
             <ConfidenceBadge confidence={proposal.confidence} />
             <span className="text-xs text-ink/60">{sourceLabel(proposal.source)}</span>
           </span>
+          {needsReview && (
+            <span className="inline-flex items-center gap-1 rounded-lg bg-peach px-2 py-1 text-xs text-ink">
+              <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.5} />
+              à vérifier
+            </span>
+          )}
           {isDone ? (
             <span className="inline-flex items-center gap-1 rounded-lg bg-sage px-3 py-1.5 text-sm font-medium text-ink">
               <Check className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -225,6 +232,15 @@ export function ProposalCard({ proposal, mode = 'local', folders = [], status, o
           <p>Le classement a échoué. Le document reste à sa place.</p>
           <p className="mt-1 text-xs text-ink/60">
             Réessayez après correction ou conservez la proposition dans la file.
+          </p>
+        </div>
+      )}
+
+      {needsReview && (
+        <div className="mt-3 rounded-lg border border-peach-deep/30 bg-peach/35 px-3 py-2 text-sm text-ink">
+          <p>{proposal.rationale ?? 'Vérifiez le nom et choisissez une destination avant validation.'}</p>
+          <p className="mt-1 text-xs text-ink/60">
+            Cette proposition est exclue de Tout valider, mais peut être validée seule après vérification.
           </p>
         </div>
       )}
