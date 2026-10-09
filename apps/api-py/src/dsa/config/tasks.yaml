@@ -14,6 +14,6 @@ suggest_directory_task:
   description: |-
     Choisir un chemin exact dans cette liste sans jamais en inventer :
     {directories}
-    Ne choisir un chemin que si le contenu l’étaye directement ; sinon value: null, confidence: 0.
+    Ne choisir un chemin que si le contenu l'étaye directement ; sinon value: null, confidence: 0.
   expected_output: "Value, confidence, rationale (1-2 phrases neutres). Un chemin exact de la liste, ou un état d'échec explicite."
   agent: suggest_directory_agent

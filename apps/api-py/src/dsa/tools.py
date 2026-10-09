@@ -73,11 +73,10 @@ def _assess_quality(content: str) -> tuple[str, list[str]]:
 
 
 @lru_cache(maxsize=2)
-def _build_converter(do_ocr: bool = False):
+def _cached_converter(do_ocr, constructor):
     """Create a DocumentConverter with tuned PDF pipeline options."""
     # ponytail: two cached converters hold two model sets; revisit the module-level
     # cache if model memory becomes a constraint.
-    from docling.document_converter import DocumentConverter
 
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -102,11 +101,24 @@ def _build_converter(do_ocr: bool = False):
     from docling.document_converter import ImageFormatOption
 
     format_options[InputFormat.IMAGE] = ImageFormatOption(pipeline_options=options())
-    return DocumentConverter(format_options=format_options)
+    return constructor(format_options=format_options)
+
+
+def _build_converter(do_ocr: bool = False):
+    from docling.document_converter import DocumentConverter
+
+    return _cached_converter(do_ocr, DocumentConverter)
+
+
+_build_converter.cache_clear = _cached_converter.cache_clear
 
 
 def _export(document) -> tuple[str, str]:
-    return document.export_to_text().strip(), document.export_to_markdown().strip()
+    text = document.export_to_text().strip()
+    markdown = (
+        document.export_to_markdown().strip() if hasattr(document, "export_to_markdown") else text
+    )
+    return text, markdown
 
 
 def _document_context(document_json: dict) -> str:
@@ -139,23 +151,29 @@ def extract_document(file_path: str) -> ExtractionResult:
     memory = isinstance(file_path, io.BytesIO)
     path = file_path if memory else Path(file_path)
     if not memory and path.suffix.lower() not in SUPPORTED_SUFFIXES:
-        return ExtractionResult(text="", quality="failed", warnings=["unsupported_format"])
+        return ExtractionResult(text="", quality="failed")
     name = getattr(path, "name", "document.pdf") if memory else path.name
     suffix = Path(name).suffix.lower()
     image = suffix in {".png", ".jpg", ".jpeg", ".tiff", ".gif", ".bmp"}
+    first_pass_failed = False
     try:
         if memory:
             from docling.datamodel.base_models import DocumentStream
 
             data = path.getvalue()
             path = DocumentStream(name=name, stream=io.BytesIO(data))
-        document = _build_converter(do_ocr=image).convert(path).document
+        document = _build_converter(image).convert(path).document
         text, markdown_content = _export(document)
-    except Exception:
-        return ExtractionResult(text="", quality="failed", warnings=["extraction_failed"])
+    except Exception as exc:
+        logger.warning("%s", type(exc).__name__)
+        if suffix != ".pdf":
+            return ExtractionResult(text="", quality="failed")
+        first_pass_failed = True
+        document = None
+        text, markdown_content = "", ""
     if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
         markdown_content = ""
-    quality, warnings = _assess_quality(text)
+    quality, _ = _assess_quality(text)
     first_pass = ExtractionResult(
         text=text,
         markdown=markdown_content,
@@ -165,10 +183,15 @@ def extract_document(file_path: str) -> ExtractionResult:
             else markdown_content
         ),
         quality=quality,
-        warnings=warnings,
         first_pass_quality=quality,
         first_pass_text_chars=len(text),
         first_pass_md_chars=len(markdown_content),
+    )
+    logger.info(
+        "first_pass quality=%s text_chars=%d md_chars=%d",
+        quality,
+        len(text),
+        len(markdown_content),
     )
     if image or quality == "ok" or suffix != ".pdf":
         return first_pass
@@ -176,14 +199,16 @@ def extract_document(file_path: str) -> ExtractionResult:
     try:
         if memory:
             path = DocumentStream(name=name, stream=io.BytesIO(data))
-        document = _build_converter(do_ocr=True).convert(path).document
+        document = _build_converter(True).convert(path).document
         text, markdown_content = _export(document)
     except Exception as exc:
         logger.warning("%s", type(exc).__name__)
-        return first_pass.model_copy(update={"ocr_pass": True})
+        return first_pass.model_copy(
+            update={"ocr_pass": True, "quality": "failed" if first_pass_failed else quality}
+        )
     if not re.sub(r"<!--.*?-->", "", markdown_content, flags=re.DOTALL).strip():
         markdown_content = ""
-    quality, warnings = _assess_quality(text)
+    quality, _ = _assess_quality(text)
     second_pass = ExtractionResult(
         text=text,
         markdown=markdown_content,
@@ -193,7 +218,6 @@ def extract_document(file_path: str) -> ExtractionResult:
             else markdown_content
         ),
         quality=quality,
-        warnings=warnings,
         first_pass_quality=first_pass.quality,
         first_pass_text_chars=len(first_pass.text),
         first_pass_md_chars=len(first_pass.markdown),

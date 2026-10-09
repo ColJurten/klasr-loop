@@ -26,6 +26,12 @@ def _extract(file: str | Path | bytes | BinaryIO, suffix: str = ".pdf") -> Extra
     return extract_bytes(file.read(), Path(name).suffix)
 
 
+def _classification_content(analysis: ExtractionResult) -> str:
+    if analysis.markdown and analysis.context and analysis.context != analysis.markdown:
+        return analysis.markdown + "\n\n" + analysis.context
+    return analysis.markdown or analysis.context or analysis.text
+
+
 def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> DecisionResult:
     """Production CrewAI seam; tests replace this with a deterministic stub LLM."""
     if analysis.quality in {"empty", "failed"}:
@@ -42,7 +48,7 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
     crew = assistant.naming_crew() if kind == "filename" else assistant.destination_crew()
     output = crew.kickoff(
         inputs={
-            "content": analysis.markdown or analysis.context or analysis.text,
+            "content": _classification_content(analysis),
             "directories": directories,
         }
     )
@@ -64,7 +70,7 @@ def _both_decisions(
         .combined_crew()
         .kickoff(
             inputs={
-                "content": analysis.markdown or analysis.context or analysis.text,
+                "content": _classification_content(analysis),
                 "directories": directories,
             }
         )
@@ -77,6 +83,8 @@ def _both_decisions(
 
 
 def _validated_destination(result: DecisionResult, directories: list[str]) -> DecisionResult:
+    if result.value is None and result.confidence == 0:
+        return result
     if result.value is None or "no_destination_match" in result.warnings:
         return result.model_copy(
             update={

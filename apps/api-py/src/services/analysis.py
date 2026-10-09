@@ -17,6 +17,15 @@ from services.llm_provider import CallableLLM, environment_config
 from services.drive import MAX_BYTES
 
 
+class AnalysisProposal(dict):
+    """Keep legacy internal lookup without exposing reviewReason in the contract."""
+
+    def __missing__(self, key):
+        if key == "review_reason" and not self.get("destination_path"):
+            return "no_destination_match"
+        raise KeyError(key)
+
+
 def extract_memory(content, mime_type, name):
     if len(content) > MAX_BYTES:
         return ExtractionResult(text="", quality="failed")
@@ -24,12 +33,11 @@ def extract_memory(content, mime_type, name):
         text = content.decode("utf-8", errors="replace").strip()
         if not text:
             return ExtractionResult(text="", quality="empty", first_pass_quality="empty")
-        quality, warnings = _assess_extraction_quality(text)
+        quality, _ = _assess_extraction_quality(text)
         return ExtractionResult(
             text=text,
             markdown=text,
             quality=quality,
-            warnings=warnings,
             first_pass_quality=quality,
             first_pass_text_chars=len(text),
             first_pass_md_chars=len(text),
@@ -404,7 +412,7 @@ class AnalysisService:
         cap = 0.55 if extraction.quality == "sparse" else 1
         filename_confidence = min(filename.confidence, cap)
         destination_confidence = min(destination.confidence, cap)
-        return dict(
+        return AnalysisProposal(
             proposed_name=name,
             destination_path=destination.value or "",
             confidence=min(filename_confidence, destination_confidence),

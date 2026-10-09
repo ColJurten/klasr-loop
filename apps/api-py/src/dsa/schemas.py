@@ -30,14 +30,66 @@ class Signal(BaseModel):
 
 class ExtractionResult(BaseModel):
     text: str = Field(repr=False)
-    markdown: str = Field(default="", repr=False)
     context: str = Field(default="", repr=False)
     quality: Literal["ok", "sparse", "empty", "failed"]
-    warnings: list[str] = Field(default_factory=list, exclude=True)
-    first_pass_quality: Literal["ok", "sparse", "empty"] | None = Field(default=None, exclude=True)
-    first_pass_text_chars: int = Field(default=0, exclude=True)
-    first_pass_md_chars: int = Field(default=0, exclude=True)
-    ocr_pass: bool = Field(default=False, exclude=True)
+    _markdown: str = PrivateAttr(default="")
+    _warnings: list[str] = PrivateAttr(default_factory=list)
+    _first_pass_quality: str | None = PrivateAttr(default=None)
+    _first_pass_text_chars: int = PrivateAttr(default=0)
+    _first_pass_md_chars: int = PrivateAttr(default=0)
+    _ocr_pass: bool = PrivateAttr(default=False)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        for name in (
+            "markdown",
+            "warnings",
+            "first_pass_quality",
+            "first_pass_text_chars",
+            "first_pass_md_chars",
+            "ocr_pass",
+        ):
+            if name in data:
+                setattr(self, "_" + name, data[name])
+
+    @property
+    def markdown(self):
+        return self._markdown
+
+    @property
+    def first_pass_quality(self):
+        return self._first_pass_quality
+
+    @property
+    def first_pass_text_chars(self):
+        return self._first_pass_text_chars
+
+    @property
+    def first_pass_md_chars(self):
+        return self._first_pass_md_chars
+
+    @property
+    def ocr_pass(self):
+        return self._ocr_pass
+
+    def model_copy(self, *, update=None, deep=False):
+        data = dict(update or {})
+        private = {
+            name: data.pop(name)
+            for name in (
+                "markdown",
+                "warnings",
+                "first_pass_quality",
+                "first_pass_text_chars",
+                "first_pass_md_chars",
+                "ocr_pass",
+            )
+            if name in data
+        }
+        copied = super().model_copy(update=data, deep=deep)
+        for name, value in private.items():
+            setattr(copied, "_" + name, value)
+        return copied
 
 
 class DecisionResult(BaseModel):
@@ -93,6 +145,14 @@ class DecisionResult(BaseModel):
     @property
     def warnings(self):
         return self._warnings
+
+    def model_copy(self, *, update=None, deep=False):
+        data = dict(update or {})
+        private = {name: data.pop(name) for name in ("signals", "warnings") if name in data}
+        copied = super().model_copy(update=data, deep=deep)
+        for name, value in private.items():
+            setattr(copied, "_" + name, value)
+        return copied
 
 
 class LegacyDecision(BaseModel):

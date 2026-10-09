@@ -432,10 +432,17 @@ def test_crew_renders_inputs_validates_output_and_disables_egress(monkeypatch):
     fake = FakeLLM(
         model="fake",
         responses=[
-            '{"value":"analysis","confidence":1,"rationale":"Classement proposé."}',
-            '{"value":"invoice.pdf","confidence":0.9,"rationale":"Classement proposé."}',
-            '{"value":"analysis","confidence":1,"rationale":"Classement proposé."}',
-            '{"value":"/Clients/Acme","confidence":0.9,"rationale":"Classement proposé."}',
+            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
+            json.dumps(
+                {
+                    "value": "invoice.pdf",
+                    "confidence": 0.9,
+                    "signals": ["Invoice number 12345"],
+                    "warnings": [],
+                }
+            ),
+            '{"value":"analysis","confidence":1,"signals":["kind:invoice"],"warnings":[]}',
+            '{"value":"/Clients/Acme","confidence":0.9,"signals":["kind:invoice"],"warnings":[]}',
         ],
     )
     monkeypatch.setattr(crews, "llm_for", lambda _name: fake)
@@ -780,3 +787,47 @@ def test_scanned_pdf_is_extracted_with_ocr():
 
     assert result.quality in {"ok", "sparse"}
     assert result.text
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_private_extraction_metadata_stays_off_wire_after_copy(deep):
+    metadata = dict(
+        markdown="# Invoice",
+        warnings=["short_content"],
+        first_pass_quality="sparse",
+        first_pass_text_chars=7,
+        first_pass_md_chars=9,
+        ocr_pass=True,
+    )
+    result = ExtractionResult(text="Invoice", context="{}", quality="ok", **metadata)
+    copied = result.model_copy(update={**metadata, "markdown": "updated"}, deep=deep)
+    for model in (result, copied):
+        assert model.model_dump() == {"text": "Invoice", "context": "{}", "quality": "ok"}
+        assert json.loads(model.model_dump_json()) == model.model_dump()
+        assert set(model.model_json_schema()["properties"]) == {"text", "context", "quality"}
+        assert model.first_pass_quality == "sparse"
+        assert model.first_pass_text_chars == 7 and model.first_pass_md_chars == 9
+        assert model.ocr_pass and model._warnings == ["short_content"]
+    assert result.markdown == "# Invoice" and copied.markdown == "updated"
+    if deep:
+        untouched = result.model_copy(deep=True)
+        untouched._warnings.append("copy only")
+        assert result._warnings == ["short_content"]
+
+
+def test_private_decision_metadata_stays_off_wire_after_copy():
+    result = DecisionResult(value="invoice.pdf", confidence=0.9, rationale="Invoice")
+    copied = result.model_copy(update={"warnings": ["legacy"], "signals": []})
+    assert copied.warnings == ["legacy"] and copied.signals == []
+    assert json.loads(copied.model_dump_json()) == {
+        "value": "invoice.pdf",
+        "confidence": 0.9,
+        "rationale": "Invoice",
+    }
+
+
+def test_classification_keeps_markdown_and_sanitized_picture_context():
+    extraction = ExtractionResult(
+        text="Invoice", markdown="# Invoice", context='{"pictures": []}', quality="ok"
+    )
+    assert dsa._classification_content(extraction) == '# Invoice\n\n{"pictures": []}'
