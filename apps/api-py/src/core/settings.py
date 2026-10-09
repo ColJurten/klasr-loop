@@ -23,9 +23,8 @@ class Settings(BaseSettings):
                 return "postgresql+psycopg://" + v[len("postgres://") :]
         return v
 
-    mongo_url: str = "mongodb://localhost:27017"
-    mongo_database: str = "klasr"
     analyses_ttl_days: int = 30
+    analyses_purge_interval_seconds: int = 60
     inline_worker: bool = False
     worker: bool = False
     acceptance_google_service_account: bool = False

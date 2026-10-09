@@ -293,7 +293,6 @@ const webPort = Number(process.env.KLASR_LIVE_WEB_PORT ?? 4201);
 const apiBase = loopback(process.env.KLASR_LIVE_API_URL ?? `http://127.0.0.1:${apiPort}/api/v1`);
 const webBase = loopback(process.env.KLASR_LIVE_WEB_URL ?? `http://127.0.0.1:${webPort}`);
 const databaseUrl = process.env.KLASR_DATABASE_URL ?? process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:5432/klasr';
-const mongoUrl = process.env.KLASR_MONGO_URL ?? process.env.MONGO_URL ?? 'mongodb://127.0.0.1:27017';
 const internalSecret = process.env.KLASR_LIVE_INTERNAL_SECRET ?? 'google-sa-live-internal';
 const nextAuthSecret = process.env.KLASR_LIVE_NEXTAUTH_SECRET ?? 'google-sa-live-nextauth';
 const tokenKey = process.env.TOKEN_ENCRYPTION_KEY ?? 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
@@ -1469,7 +1468,7 @@ async function ensureApps() {
   await assertAppsAbsent([`${apiBase}/health`, `${webBase}/login`]);
   const python = path.join(root, 'apps/api-py/.venv/bin/python');
   const { KLASR_LLM_PROVIDER, KLASR_LLM_MODEL, KLASR_LLM_API_KEY, KLASR_STAGING_ACCOUNT_PASSWORD, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ...runtimeEnv } = process.env;
-  const common = { ...runtimeEnv, ...(GOOGLE_CLIENT_ID && { GOOGLE_CLIENT_ID }), ...(GOOGLE_CLIENT_SECRET && { GOOGLE_CLIENT_SECRET }), NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, KLASR_MONGO_URL: mongoUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
+  const common = { ...runtimeEnv, ...(GOOGLE_CLIENT_ID && { GOOGLE_CLIENT_ID }), ...(GOOGLE_CLIENT_SECRET && { GOOGLE_CLIENT_SECRET }), NODE_ENV: 'test', KLASR_DATABASE_URL: databaseUrl, INTERNAL_API_SECRET: internalSecret, TOKEN_ENCRYPTION_KEY: tokenKey, KLASR_INLINE_WORKER: 'false', KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT: String(authenticationMode === 'sa'), KLASR_GOOGLE_SERVICE_ACCOUNT_FILE: credentialPath, KLASR_GOOGLE_DRIVE_ROOT_ID: sharedRootId, KLASR_DRIVE_MUTATION_LOG: ignoreMutationLogPath };
   const migration = spawnSync(path.join(root, 'apps/api-py/.venv/bin/alembic'), ['upgrade', 'head'], { cwd: path.join(root, 'apps/api-py'), env: common, stdio: 'ignore' });
   assert(migration.status === 0, 'Alembic migration failed');
   children.push({ child: spawn(python, [path.join(root, 'scripts/live-google-api.py'), String(apiPort)], { cwd: root, detached: true, stdio: 'inherit', env: common }), url: `${apiBase}/health` });

@@ -2,15 +2,12 @@ import { defineConfig, devices } from '@playwright/test';
 import { resolvePlaywrightRuntime } from './playwright-runtime';
 
 const databaseUrl = 'postgresql://postgres:postgres@127.0.0.1:5432/klasr';
-const mongoUrl = 'mongodb://127.0.0.1:27017';
 process.env.DATABASE_URL ??= databaseUrl;
-process.env.MONGO_URL ??= mongoUrl;
 const apiUrl = 'http://127.0.0.1:4301/api/v1';
 const runtime = resolvePlaywrightRuntime(process.env);
 const { webUrl } = runtime;
 const sharedEnv = [
   `DATABASE_URL=${databaseUrl}`,
-  `MONGO_URL=${mongoUrl}`,
   'INTERNAL_API_SECRET=playwright-local-secret',
   'TOKEN_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
   'KLASR_ACCEPTANCE_GOOGLE_SERVICE_ACCOUNT=false',
@@ -31,7 +28,7 @@ export default defineConfig({
     },
     {
       command:
-        `docker compose up -d --wait && node ../../scripts/retry-command.mjs 30000 250 sh -c 'cd ../../apps/api-py && .venv/bin/alembic upgrade head' && env KLASR_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/klasr KLASR_MONGO_URL=${mongoUrl} KLASR_INLINE_WORKER=true ${sharedEnv} sh -c 'cd ../../apps/api-py && .venv/bin/uvicorn main:app --host 127.0.0.1 --port 4301 --app-dir src'`,
+        `docker compose up -d --wait && node ../../scripts/retry-command.mjs 30000 250 sh -c 'cd ../../apps/api-py && .venv/bin/alembic upgrade head' && env KLASR_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/klasr KLASR_INLINE_WORKER=true ${sharedEnv} sh -c 'cd ../../apps/api-py && .venv/bin/uvicorn main:app --host 127.0.0.1 --port 4301 --app-dir src'`,
       env: runtime.apiEnv,
       url: `${apiUrl}/health`,
       reuseExistingServer: false,

@@ -2,14 +2,14 @@ import asyncio
 import json
 import logging
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import create_engine, select, func
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -229,9 +229,25 @@ class MetadataSink:
     async def initialize(self):
         self.initialized = True
 
-    async def record(self, value):
-        assert set(value) <= {"organizationId", "documentId", "modelUsed", "quality", "createdAt"}
-        self.records.append(value)
+    async def record(self, *, organization_id, document_id, status, payload):
+        assert set(payload) <= {
+            "proposed_name",
+            "destination",
+            "confidence",
+            "rationale",
+            "model_info",
+        }
+        self.records.append(
+            dict(
+                organization_id=organization_id,
+                document_id=document_id,
+                status=status,
+                payload=payload,
+            )
+        )
+
+    async def purge_expired(self):
+        return 0
 
 
 def pending(session, org, name="input.txt", external="synthetic-input", mime="text/plain"):
@@ -289,7 +305,23 @@ async def test_analysis_rules_worker_metadata_metrics_and_dedup(tenant, caplog, 
         metric = session.scalar(select(UsageMetric))
         assert metric.rule_matches == 1 and metric.ocr_runs == 1 and metric.llm_calls == 0
         assert sink.records == [
-            dict(organizationId=org, documentId=doc.id, modelUsed="rule", quality="ok")
+            dict(
+                organization_id=org,
+                document_id=doc.id,
+                status="completed",
+                payload={
+                    "proposed_name": "invoice.txt",
+                    "destination": "/Invoices",
+                    "confidence": 0.95,
+                    "rationale": row.review_reason,
+                    "model_info": {
+                        "model_used": "rule",
+                        "quality": "ok",
+                        "source": "RULE",
+                        "llm_calls_used": 0,
+                    },
+                },
+            )
         ]
         await service.analyze(payload)
         assert session.scalar(select(func.count()).select_from(ClassificationProposal)) == 1
@@ -533,6 +565,16 @@ async def test_worker_loop_and_inline_lifespan_wiring(tenant, monkeypatch):
     stop.set()
     await run_worker(app.state.settings, engine, stop, analyses=sink)
     assert sink.initialized
+    stop.clear()
+    sink.purge_expired = AsyncMock(return_value=0)
+
+    async def stop_tick(session, handler):
+        stop.set()
+        return True
+
+    monkeypatch.setattr("worker.work_once", stop_tick)
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+    sink.purge_expired.assert_awaited_once()
     from main import create_app
     from fastapi.testclient import TestClient
 
@@ -578,6 +620,50 @@ async def test_worker_retries_transient_job_store_error(tenant, monkeypatch):
     assert delays == [1]
 
 
+@pytest.mark.asyncio
+async def test_worker_purge_is_gated_between_ticks(tenant, monkeypatch):
+    _, app, engine, _, _ = tenant
+    app.state.settings.analyses_purge_interval_seconds = 3600
+    sink, stop = MetadataSink(), asyncio.Event()
+    sink.purge_expired = AsyncMock(return_value=0)
+    ticks = 0
+
+    async def stop_second_tick(session, handler):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 2:
+            stop.set()
+        return True
+
+    monkeypatch.setattr("worker.work_once", stop_second_tick)
+    monkeypatch.setattr("worker.monotonic", lambda: 100.0)
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+    assert ticks == 2
+    sink.purge_expired.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_continues_after_purge_failure(tenant, monkeypatch):
+    _, app, engine, _, _ = tenant
+    sink, stop = MetadataSink(), asyncio.Event()
+    sink.purge_expired = AsyncMock(side_effect=RuntimeError("private purge details"))
+    log_error = Mock()
+    monkeypatch.setattr("worker.logger.error", log_error)
+    ticks = 0
+
+    async def stop_first_tick(session, handler):
+        nonlocal ticks
+        ticks += 1
+        stop.set()
+        return True
+
+    monkeypatch.setattr("worker.work_once", stop_first_tick)
+    await run_worker(app.state.settings, engine, stop, analyses=sink)
+    assert ticks == 1
+    sink.purge_expired.assert_awaited_once()
+    log_error.assert_called_once_with("analysis purge failed: %s", "RuntimeError")
+
+
 def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
     import sys
     from dsa.tools import _build_converter, extract_bytes
@@ -613,29 +699,248 @@ def test_docling_bytes_never_use_disk_and_preserve_image_suffix(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mongo_whitelist_ttl_and_tenant_queries():
-    from mongo.analyses import AnalysesRepository
+async def test_postgres_analysis_repository_whitelist_ttl_and_tenant_queries():
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
 
-    repository = AnalysesRepository("mongodb://localhost", ttl_days=7)
-    collection = types.SimpleNamespace(
-        create_index=AsyncMock(),
-        insert_one=AsyncMock(),
-        delete_many=AsyncMock(return_value=types.SimpleNamespace(deleted_count=2)),
-    )
-    repository.collection = collection
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine, ttl_days=7)
     await repository.initialize()
-    assert collection.create_index.call_args_list[0].kwargs == {"expireAfterSeconds": 7 * 86400}
-    await repository.record(
-        dict(organizationId="org", documentId="doc", modelUsed="rule", quality="ok")
-    )
-    record = collection.insert_one.call_args.args[0]
-    assert isinstance(record["createdAt"], datetime)
-    for forbidden in ("text", "content", "bytes", "signals", "apiKey", "llmRaw"):
-        with pytest.raises(ValueError, match="non-metadata"):
-            await repository.record({"organizationId": "org", forbidden: "private"})
-    assert await repository.purge_organization("org") == 2
-    assert collection.delete_many.call_args.args[0] == {"organizationId": "org"}
-    repository.close()
+    payload = {"proposed_name": "invoice.txt", "model_info": {"quality": "ok"}}
+    try:
+        for forbidden in ("text", "content", "bytes", "signals", "ocrText", "apiKey", "llmRaw"):
+            with pytest.raises(ValueError, match="non-result"):
+                await repository.record(
+                    organization_id="org",
+                    document_id="doc",
+                    status="completed",
+                    payload={forbidden: "private"},
+                )
+        await repository.record(
+            organization_id="org", document_id="doc", status="completed", payload=payload
+        )
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with Session(engine) as session:
+            row = session.scalar(select(Analysis))
+            row.created_at = now - timedelta(days=1)
+            analysis_id = row.id
+            assert now + timedelta(days=6) < row.expires_at < now + timedelta(days=8)
+            session.commit()
+        await repository.record(
+            organization_id="org", document_id="doc", status="newer", payload=payload
+        )
+        await repository.record(
+            organization_id="other", document_id="doc", status="foreign", payload=payload
+        )
+        rows = await repository.find_by_document("org", "doc")
+        assert [row["status"] for row in rows] == ["newer", "completed"]
+        assert rows[0]["payload"] == payload
+        assert set(rows[0]) == {"status", "payload", "created_at", "expires_at"}
+        assert await repository.find_by_document("foreign", "doc") == []
+        assert await repository.find_by_document("org", "other-doc") == []
+        assert await repository.update_status("org", analysis_id, "updated")
+        assert not await repository.update_status("org", "missing", "updated")
+        assert (await repository.find_by_document("org", "doc"))[1]["status"] == "updated"
+        assert await repository.purge_organization("org") == 2
+        assert await repository.find_by_document("org", "doc") == []
+        assert len(await repository.find_by_document("other", "doc")) == 1
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"model_info": {"ocr_text": "x"}},
+        {"model_info": {"llm_calls_used": "3"}},
+        {"model_info": {"llm_calls_used": True}},
+        {"model_info": "not-a-dict"},
+        {"rationale": {"ocr_text": "DOC CONTENT"}},
+        {"destination": {"bytes": "QUJD"}},
+        {"proposed_name": ["ocr", "text"]},
+        {"confidence": "LONG OCR TEXT"},
+        {"confidence": True},
+        *[{key: None} for key in ("proposed_name", "destination", "confidence", "model_info")],
+    ],
+)
+async def test_analysis_repository_rejects_non_result_values(payload):
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    try:
+        with pytest.raises(ValueError, match="non-result"):
+            await repository.record(
+                organization_id="org", document_id="doc", status="completed", payload=payload
+            )
+        with Session(engine) as session:
+            assert session.scalar(select(func.count()).select_from(Analysis)) == 0
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confidence,rationale", [(0.92, "Matched rule"), (1, None)])
+async def test_analysis_repository_accepts_result_types(confidence, rationale):
+    from db.models import Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    payload = {
+        "proposed_name": "invoice.txt",
+        "destination": "/Invoices",
+        "confidence": confidence,
+        "rationale": rationale,
+        "model_info": {
+            "model_used": "rule",
+            "quality": "ok",
+            "source": "RULE",
+            "llm_calls_used": 0,
+        },
+    }
+    try:
+        await repository.record(
+            organization_id="org", document_id="doc", status="completed", payload=payload
+        )
+        rows = await repository.find_by_document("org", "doc")
+        assert len(rows) == 1
+        assert rows[0]["payload"] == payload
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_analysis_repository_update_status_rejects_cross_tenant():
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    try:
+        await repository.record(
+            organization_id="alice", document_id="doc", status="completed", payload={}
+        )
+        with Session(engine) as session:
+            analysis_id = session.scalar(select(Analysis)).id
+        assert await repository.update_status("alice", analysis_id, "x") is True
+        assert await repository.update_status("bob", analysis_id, "x") is False
+        with Session(engine) as session:
+            row = session.get(Analysis, analysis_id)
+            assert row.organization_id == "alice"
+            assert row.status == "x"
+        assert await repository.find_by_document("bob", "doc") == []
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_analysis_purge_expired_deletes_expired_keeps_fresh():
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine)
+    now = datetime.now(timezone.utc)
+    try:
+        with Session(engine) as session:
+            for status, days in (("expired", -1), ("fresh", 1)):
+                session.add(
+                    Analysis(
+                        organization_id="org",
+                        document_id="doc",
+                        status=status,
+                        payload={},
+                        expires_at=now + timedelta(days=days),
+                    )
+                )
+            session.commit()
+        assert await repository.purge_expired() == 1
+        rows = await repository.find_by_document("org", "doc")
+        assert len(rows) == 1 and rows[0]["status"] == "fresh"
+        assert await repository.purge_expired() == 0
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_analyses_crud_via_repository_jsonb_payload_and_purge_chain():
+    """End-to-end AnalysesRepository CRUD with a JSONB payload: record -> list/read
+    (find_by_document, newest first, payload round-trips) -> update_status -> purge_expired
+    keeps fresh / deletes expired. Closes the card-1 acceptance (a) full chain: the
+    existing whitelist test exercises create/read/update but purges by organization
+    (purge_organization), and the existing purge test creates rows via the ORM Session
+    rather than via record() and skips update_status."""
+    from db.models import Analysis, Base
+    from repositories.analyses import AnalysesRepository
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    repository = AnalysesRepository(engine, ttl_days=7)
+    payload = {
+        "proposed_name": "2026-10-08-facture.txt",
+        "destination": "/Comptabilite/Factures",
+        "confidence": 0.92,
+        "rationale": None,
+        "model_info": {
+            "model_used": "rule",
+            "quality": "ok",
+            "source": "RULE",
+            "llm_calls_used": 0,
+        },
+    }
+    try:
+        # (create) record with a nested JSONB payload
+        await repository.record(
+            organization_id="org-acc",
+            document_id="doc-1",
+            status="completed",
+            payload=payload,
+        )
+        # (list/read) find_by_document returns the row, JSONB survives the round trip
+        rows = await repository.find_by_document("org-acc", "doc-1")
+        assert len(rows) == 1, rows
+        assert rows[0]["status"] == "completed", rows[0]
+        assert rows[0]["payload"] == payload, rows[0]["payload"]
+        assert set(rows[0]) == {"status", "payload", "created_at", "expires_at"}
+        # tenant isolation: a foreign org or a different document see nothing
+        assert await repository.find_by_document("org-acc", "other-doc") == []
+        assert await repository.find_by_document("foreign", "doc-1") == []
+        # (update) update_status round-trips and reports a missing row as False
+        with Session(engine) as session:
+            analysis_id = session.scalar(select(Analysis)).id
+        assert await repository.update_status("org-acc", analysis_id, "updated")
+        assert not await repository.update_status("org-acc", "missing-id", "x")
+        rows = await repository.find_by_document("org-acc", "doc-1")
+        assert rows[0]["status"] == "updated", rows[0]
+        # (purge_expired) an expired row is deleted while the fresh updated row is kept
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            session.add(
+                Analysis(
+                    organization_id="org-acc",
+                    document_id="doc-1",
+                    status="expired",
+                    payload={},
+                    expires_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+        assert await repository.purge_expired() == 1
+        statuses = sorted(
+            r["status"] for r in await repository.find_by_document("org-acc", "doc-1")
+        )
+        assert statuses == ["updated"], statuses  # expired deleted, fresh kept
+        assert await repository.purge_expired() == 0  # idempotent second sweep
+    finally:
+        engine.dispose()
 
 
 # --- Phase 4: local_suggestion nested-tree and sibling ambiguity tests ---

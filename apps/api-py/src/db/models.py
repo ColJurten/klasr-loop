@@ -371,3 +371,18 @@ Index(
     postgresql_where=Job.status.in_([JobStatus.QUEUED, JobStatus.READY, JobStatus.ACTIVE]),
     sqlite_where=Job.status.in_([JobStatus.QUEUED, JobStatus.READY, JobStatus.ACTIVE]),
 )
+
+
+class Analysis(Base):
+    __tablename__ = "analyses"
+    __table_args__ = (
+        Index("analyses_expires_at_idx", "expires_at"),
+        Index("analyses_organization_id_document_id_idx", "organization_id", "document_id"),
+    )
+    id: Mapped[str] = pk()
+    organization_id: Mapped[str] = mapped_column(Text)
+    document_id: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JsonObject)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime)

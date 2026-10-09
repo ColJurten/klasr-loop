@@ -31,7 +31,7 @@ def test_models_match_migration_on_fresh_sqlite(tmp_path, monkeypatch):
     command.upgrade(config, "head")
     tables = set(inspect(create_engine(f"sqlite:///{database}")).get_table_names())
     assert tables == set(Base.metadata.tables) | {"alembic_version"}
-    assert len(tables - {"jobs", "alembic_version"}) == 14
+    assert len(tables - {"jobs", "analyses", "alembic_version"}) == 14
 
 
 def test_initial_revision_adopts_existing_tables(tmp_path, monkeypatch):
@@ -173,7 +173,7 @@ def test_prisma_schema_contract():
         column.type.name: column.type.enums
         for table in Base.metadata.tables.values()
         for column in table.columns
-        if isinstance(column.type, Enum) and table.name != "jobs"
+        if isinstance(column.type, Enum) and table.name not in {"jobs", "analyses"}
     }
     assert actual_enums == expected_enums
     model_blocks = re.findall(r"model (\w+) \{(.*?)\n\}", prisma, re.DOTALL)
@@ -189,7 +189,7 @@ def test_prisma_schema_contract():
     assert {
         name: set(table.columns.keys())
         for name, table in Base.metadata.tables.items()
-        if name != "jobs"
+        if name not in {"jobs", "analyses"}
     } == expected_columns
     expected_indexes = {
         f"{name}_{'_'.join(field.strip() for field in fields.split(','))}_idx"
@@ -200,7 +200,7 @@ def test_prisma_schema_contract():
         index.name
         for table in Base.metadata.tables.values()
         for index in table.indexes
-        if not index.unique and table.name != "jobs"
+        if not index.unique and table.name not in {"jobs", "analyses"}
     } == expected_indexes
     expected_foreign_keys = set()
     for model, body in model_blocks:
@@ -221,7 +221,7 @@ def test_prisma_schema_contract():
     actual_foreign_keys = {
         (table.name, column.name, key.column.table.name, key.column.name, key.ondelete)
         for table in Base.metadata.tables.values()
-        if table.name != "jobs"
+        if table.name not in {"jobs", "analyses"}
         for column in table.columns
         for key in column.foreign_keys
     }

@@ -15,7 +15,6 @@ x-api-image: &api-image
 
 x-api-environment: &api-environment
   KLASR_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/klasr
-  KLASR_MONGO_URL: mongodb://mongo:27017
   NODE_ENV: development
   INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-replace-with-a-local-shared-secret}
   TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
@@ -25,9 +24,6 @@ x-api-environment: &api-environment
 x-database-dependencies: &database-dependencies
   postgres:
     condition: service_healthy
-  mongo:
-    condition: service_healthy
-
 services:
   api:
     <<: *api-image
@@ -54,8 +50,6 @@ services:
     restart: unless-stopped
     depends_on:
       postgres:
-        condition: service_healthy
-      mongo:
         condition: service_healthy
       api:
         condition: service_healthy
@@ -104,16 +98,5 @@ services:
       timeout: 5s
       retries: 12
 
-  mongo:
-    image: mongo:7
-    ports: ['127.0.0.1:27017:27017']
-    volumes: [mongodata:/data/db]
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
 volumes:
   pgdata:
-  mongodata:

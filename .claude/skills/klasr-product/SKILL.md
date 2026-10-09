@@ -17,14 +17,14 @@ single-click confirmation. It executes — it does not merely suggest.
 
 ## Core flow (never break it)
 1. User connects Drive (OAuth) and Klasr syncs the FOLDER STRUCTURE ONLY (hybrid model — files stay in the Drive).
-2. New document → bytes streamed from the Drive API (no storage at rest) → pre-filter (rules/metadata) → if needed, OCR (Tesseract) → LLM classification through the abstraction layer. Raw analysis payloads go to the Mongo `analyses` collection, TTL-purged.
+2. New document → bytes streamed from the Drive API (no storage at rest) → pre-filter (rules/metadata) → if needed, OCR (Tesseract) → LLM classification through the abstraction layer. Analysis results go to the PostgreSQL `analyses` table as JSONB payloads without document content, expiry-purged by the worker.
 3. Proposal shown (filename + destination) → user confirms in ONE click → Klasr executes move/rename via Drive API → history entry.
 4. User-defined rules apply sequentially by priority, before the LLM (pre-filter).
 
 ## Eco-design commitments (must survive every refactor)
 - LLM cascade: cheapest capable model first.
 - Pre-filtering to skip unnecessary LLM calls.
-- TTL-based purge of analysis payloads (Mongo); no file ever stored at rest.
+- Expiry-based purge of analysis payloads (PostgreSQL); no file ever stored at rest.
 - LLM abstraction allowing a local-model fallback.
 
 ## Jury / REAC constraints

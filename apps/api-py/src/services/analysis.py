@@ -292,14 +292,22 @@ class AnalysisService:
             ),
             None,
         )
-        # Mongo holds whitelist metadata only; no model-produced signals or text.
         await self.analyses.record(
-            dict(
-                organizationId=org,
-                documentId=doc_id,
-                modelUsed=proposal.get("model_used") or "rule",
-                quality=extraction.quality,
-            )
+            organization_id=org,
+            document_id=doc_id,
+            status="completed",
+            payload={
+                "proposed_name": proposal["proposed_name"],
+                "destination": proposal["destination_path"],
+                "confidence": proposal["confidence"],
+                "rationale": proposal.get("review_reason"),
+                "model_info": {
+                    "model_used": proposal.get("model_used") or "rule",
+                    "quality": extraction.quality,
+                    "source": proposal["source"],
+                    "llm_calls_used": proposal["llm_calls_used"],
+                },
+            },
         )
         del extraction
         with self.session.begin_nested():

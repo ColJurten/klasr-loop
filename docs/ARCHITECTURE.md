@@ -32,14 +32,14 @@ Les octets restent en mémoire entre le téléchargement Drive et l'extraction. 
                     │   │ sync → règles → dsa/ → proposition     │ │
                     │   │ dsa/ : CrewAI + Docling, appel direct  │ │
                     │   └────────────────────────────────────────┘ │
-                    └───────┬──────────────────┬───────────────────┘
-                            │ SQLAlchemy 2      │ driver Python MongoDB
-                    ┌───────▼───────┐  ┌───────▼───────────────────┐
-                    │  PostgreSQL   │  │  MongoDB (1 collection)   │
-                    │  schéma métier│  │  `analyses` : métadonnées │
-                    │  + `jobs`     │  │  OCR/LLM expurgées,       │
-                    │  (Alembic)    │  │  index TTL (purge RGPD)   │
-                    └───────────────┘  └───────────────────────────┘
+                    └───────┬──────────────────────────────────────┘
+                            │ SQLAlchemy 2
+                    ┌───────▼───────────────────────────────┐
+                    │ PostgreSQL seul                      │
+                    │ schéma métier + `jobs` + `analyses`   │
+                    │ payload JSONB, expiration via worker │
+                    │ migrations Alembic                   │
+                    └───────────────────────────────────────┘
 
    Externes : Google Drive (OAuth) · API LLM configurée (HTTPS)
    Hors périmètre : scripts/agent reste en Node.js.
@@ -47,7 +47,7 @@ Les octets restent en mémoire entre le téléchargement Drive et l'extraction. 
 ```
 
 Stack cible : **Next.js 14 côté web · FastAPI/Python côté API et traitement documentaire ·
-PostgreSQL (SQLAlchemy 2/Alembic) · MongoDB (accès NoSQL ciblé) · Docker · GitHub Actions**.
+PostgreSQL (SQLAlchemy 2/Alembic) · Docker · GitHub Actions**.
 Redis, MinIO, broker dédié, sidecar documentaire et saut HTTP interne sont absents.
 
 > **État de migration.** Ce diagramme décrit la cible décidée. Jusqu'à la bascule de
@@ -100,6 +100,7 @@ composants métier NestJS testés en Jest — il compte désormais POUR les comp
 C3/C6 au lieu d'exister à côté.
 
 ### ADR-002 — PostgreSQL source de vérité + MongoDB volontairement minimal
+**Statut : Remplacée par ADR-008 — PostgreSQL seul (2026-10-08).**
 **Contexte.** « Pourquoi plusieurs bases ? » — question légitime.
 **Décision.** PostgreSQL porte tout le modèle métier (14 modèles, Prisma). MongoDB est
 réduit à UNE collection `analyses` (métadonnées d'analyse OCR/LLM redactées, schéma
@@ -114,6 +115,17 @@ variable selon le fournisseur, sans texte documentaire) avec index TTL.
 - Surface minimale : un repository, une collection, zéro relation.
 **Alternative rejetée.** JSONB dans PostgreSQL : techniquement suffisant, mais la
 démonstration de la compétence NoSQL devient discutable devant un jury.
+
+### ADR-008 — PostgreSQL seul
+**Décision (2026-10-08).** PostgreSQL est désormais l'unique datastore. Le stockage
+`analyses` est une table PostgreSQL qui porte le résultat d'analyse dans une colonne
+`payload` JSONB, sans contenu documentaire, texte OCR, octets ou images.
+Le TTL MongoDB est reproduit par un `DELETE FROM analyses WHERE expires_at < now()`
+planifié dans la boucle du worker existant, sans nouvelle file ni technologie.
+**Justification.** Une stack plus simple et moins de services à exécuter, sécuriser
+et maintenir servent l'éco-conception. L'accès documentaire / sans schéma, auparavant
+démontré par MongoDB pour REAC C8, est maintenant illustré par le `payload` JSONB de
+la table `analyses` ; il n'y a plus de datastore NoSQL.
 
 ### ADR-003 — Suppression de MinIO
 **Contexte.** MinIO servait de « transit temporaire » des fichiers.
@@ -236,7 +248,7 @@ au jury survivent à la migration.
 | C5 — besoins et maquettage | wireframes, `PROMPT_DESIGN_KLASR.md`, personas | mêmes wireframes, prompt de design et personas |
 | C6 — architecture | modules NestJS et Jest | modules FastAPI, ADR et pytest |
 | C7 — base relationnelle | `apps/api/prisma/schema.prisma`, migrations Prisma | `apps/api-py/src/db/models.py`, modèles SQLAlchemy 2, révisions Alembic |
-| C8 — accès SQL/NoSQL | repositories Prisma, `apps/api/src/analyses` MongoDB | repositories SQLAlchemy, `apps/api-py/src/mongo/analyses.py` MongoDB TTL |
+| C8 — accès SQL/NoSQL | repositories Prisma, analyses documentaires historiques | repositories SQLAlchemy, accès documentaire via `analyses.payload` JSONB PostgreSQL (sans datastore NoSQL) |
 | C9 — tests | spécifications Jest API, Vitest web | pytest API, Vitest web et tests de parité |
 | C10 — déploiement | Dockerfile NestJS, Compose, CI | Dockerfile FastAPI, mêmes Compose et CI adaptés |
 | C11 — DevOps | workflows, santé API, états pg-boss | workflows, santé API, états `jobs` et compteurs d'échec |
@@ -257,24 +269,23 @@ arrière par commit.
 | C5 | Analyser les besoins et maquetter une application | Wireframes Claude Design/Figma, `PROMPT_DESIGN_KLASR.md`, personas, dossier de conception |
 | C6 | Définir l'architecture logicielle | Ce document (ADR), couches FastAPI/service/repository, diagrammes |
 | C7 | Concevoir et mettre en place une base de données relationnelle | `apps/api-py/src/db/models.py` (14 modèles), migrations Alembic, MCD dans le dossier |
-| C8 | Développer des composants d'accès aux données SQL et NoSQL | Repositories SQLAlchemy + `apps/api-py/src/mongo/analyses.py` (MongoDB, TTL) |
+| C8 | Développer des composants d'accès aux données SQL et NoSQL | Repositories SQLAlchemy + `apps/api-py/src/repositories/analyses.py` : accès documentaire via `analyses.payload` JSONB PostgreSQL (sans datastore NoSQL) |
 | C9 | Préparer et exécuter les plans de tests | pytest (API), Vitest/Testing Library (web), plan de tests documenté, suites d'isolation multi-tenant |
 | C10 | Préparer et documenter le déploiement | Dockerfiles, `docs/BOOTSTRAP.md`, `docs/BRANCHING.md` (releases SemVer), images ghcr |
 | C11 | Contribuer à la mise en production dans une démarche DevOps | `.github/workflows/*` (CI lint/test/build, release taguée), gate SonarQube, monitoring en backlog |
 
 Transverses évaluées : **sécurité** (OAuth, JWT, scoping organisationnel structurel,
 défense anti-injection de prompt sur le texte OCR), **RGPD** (métadonnées seules en
-base, TTL Mongo, pas de contenu dans les logs), **éco-conception** (pré-filtre avant
+base, expiration des analyses PostgreSQL, pas de contenu dans les logs), **éco-conception** (pré-filtre avant
 LLM, cascade du modèle le moins coûteux, compteur `llmCallsUsed`, entité UsageMetric).
 
 ## 4. Ce que le jury peut attaquer — réponses préparées
 
 - *« Un monolithe, ce n'est pas une architecture en couches répartie ? »* — Si :
-  frontend, API, worker et deux datastores sont des processus distincts communiquant
+  frontend, API, worker et PostgreSQL sont des processus distincts communiquant
   par contrats (REST, jobs, repositories). La répartition est fonctionnelle, pas
   organisationnelle.
 - *« Pourquoi pas de cache ? »* — Aucune mesure ne le justifie (UF : 1 doc < 10 s,
   100 docs/mois). Ajouter un composant sans besoin mesuré contredit l'éco-conception.
-- *« MongoDB pour une collection, c'est artificiel ? »* — C'est un choix de
-  certification assumé, posé sur le cas d'usage où un document store est réellement
-  le bon outil du projet.
+- *« Où est l'accès documentaire ? »* — Dans le `payload` JSONB de la table
+  PostgreSQL `analyses`, avec une expiration gérée par le worker existant.
