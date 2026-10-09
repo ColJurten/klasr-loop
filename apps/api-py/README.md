@@ -3,9 +3,9 @@
 Backend FastAPI temporairement situé dans `apps/api-py` afin de conserver le backend
 NestJS de `apps/api` exécutable jusqu'à la bascule de phase 3.
 
-Prérequis : Python 3.14, un client OAuth Google Cloud et les services PostgreSQL
-et MongoDB. Copier `.env.example`, renseigner les placeholders Google,
-`DATABASE_URL`, `MONGO_URL`, `INTERNAL_API_SECRET`, `TOKEN_ENCRYPTION_KEY` et les
+Prérequis : Python 3.14, un client OAuth Google Cloud et le service PostgreSQL.
+Copier `.env.example`, renseigner les placeholders Google,
+`DATABASE_URL`, `INTERNAL_API_SECRET`, `TOKEN_ENCRYPTION_KEY` et les
 variables LLM, puis autoriser `http://localhost:3000/api/auth/callback/google`.
 
 ```sh

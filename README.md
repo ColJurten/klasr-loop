@@ -73,7 +73,7 @@ Valeurs a remplacer pour un developpement local complet :
 - `TOKEN_ENCRYPTION_KEY` : 32 octets aleatoires encodes base64 ou 64 caracteres hex.
 - `NEXTAUTH_SECRET` : valeur locale jetable.
 - `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` : client OAuth Google Cloud requis.
-- `DATABASE_URL` et `MONGO_URL` : PostgreSQL et MongoDB locaux.
+- `DATABASE_URL` : PostgreSQL local.
 - Variables LLM : choisir le fournisseur, le modèle et la clé dans les réglages,
   ou définir les variables `KLASR_LLM_*` décrites dans `.env.example`.
 
