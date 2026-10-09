@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import re
 from functools import lru_cache
@@ -87,7 +88,12 @@ def _build_converter(do_ocr: bool = False):
             do_ocr=do_ocr,
             document_timeout=_DOCLING_TIMEOUT,
             force_backend_text=False,
+            generate_picture_images=do_ocr,
+            do_picture_description=do_ocr,
+            do_picture_classification=do_ocr,
         )
+        pipeline_options.ocr_options.lang = ["fra", "eng"]
+        pipeline_options.ocr_options.force_full_page_ocr = do_ocr
         return pipeline_options
 
     format_options = {
@@ -101,6 +107,32 @@ def _build_converter(do_ocr: bool = False):
 
 def _export(document) -> tuple[str, str]:
     return document.export_to_text().strip(), document.export_to_markdown().strip()
+
+
+def _document_context(document_json: dict) -> str:
+    """Keep content and runtime metadata fields, never embedded image payloads."""
+
+    def clean(value):
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items() if key not in {"image", "uri"}}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        if isinstance(value, str) and value.startswith("data:"):
+            return ""
+        return value
+
+    content = {
+        key: clean(document_json.get(key, []))
+        for key in ("texts", "tables", "key_value_items", "pictures")
+    }
+    for picture in content["pictures"]:
+        classification = (picture.get("meta") or {}).get("classification") or {}
+        predictions = classification.get("predictions", [])
+        if predictions:
+            classification["predictions"] = [
+                max(predictions, key=lambda prediction: prediction.get("confidence", 0))
+            ]
+    return json.dumps(content, ensure_ascii=False)
 
 
 def extract_document(file_path: str) -> ExtractionResult:
@@ -127,6 +159,7 @@ def extract_document(file_path: str) -> ExtractionResult:
     first_pass = ExtractionResult(
         text=text,
         markdown=markdown_content,
+        context=_document_context(document.export_to_dict()) if hasattr(document, "export_to_dict") else markdown_content,
         quality=quality,
         warnings=warnings,
         first_pass_quality=quality,
@@ -150,6 +183,7 @@ def extract_document(file_path: str) -> ExtractionResult:
     second_pass = ExtractionResult(
         text=text,
         markdown=markdown_content,
+        context=_document_context(document.export_to_dict()) if hasattr(document, "export_to_dict") else markdown_content,
         quality=quality,
         warnings=warnings,
         first_pass_quality=first_pass.quality,
@@ -157,12 +191,7 @@ def extract_document(file_path: str) -> ExtractionResult:
         first_pass_md_chars=len(first_pass.markdown),
         ocr_pass=True,
     )
-    quality_rank = {"failed": 0, "empty": 1, "sparse": 2, "ok": 3}
-    if quality_rank[second_pass.quality] < quality_rank[first_pass.quality] or (
-        second_pass.quality == first_pass.quality
-        and len(second_pass.text.strip()) < len(first_pass.text.strip())
-    ):
-        logger.warning("OCR fallback was lower quality; using text-layer extraction")
+    if len(second_pass.text) < len(first_pass.text):
         return first_pass.model_copy(update={"ocr_pass": True})
     return second_pass
 

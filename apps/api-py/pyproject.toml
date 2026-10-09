@@ -17,6 +17,7 @@ dependencies = [
   "crewai==1.15.21",
   "crewai-tools==1.15.21",
   "docling==2.126.0",
+  "docling-core==2.101.0",
   "httpx==0.28.1",
   "bcrypt==5.0.0",
   "cryptography==50.0.1",
@@ -47,6 +48,7 @@ dsa = ["config/*.yaml"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["docling: real in-memory OCR and picture enrichment (cached models required)"]
 
 [tool.black]
 line-length = 100

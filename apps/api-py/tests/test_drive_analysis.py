@@ -548,14 +548,34 @@ async def test_failed_extraction_creates_explicit_review_proposal(tenant):
     _, app, engine, identity, _ = tenant
     with Session(engine, expire_on_commit=False) as session:
         doc = pending(session, identity["organizationId"])
+        RulesRepository(session).create(
+            identity["organizationId"],
+            RuleDTO(
+                priority=1,
+                destinationPath="/Invoices",
+                suggestedNameTemplate="metadata_rule.txt",
+                conditions=[dict(field="FILENAME", operator="CONTAINS", value="input")],
+            ),
+        )
+        session.add(
+            Folder(
+                organization_id=identity["organizationId"],
+                external_id="invoices",
+                path="/Invoices",
+                name="Invoices",
+            )
+        )
         drive = types.SimpleNamespace(
             download=AsyncMock(side_effect=RuntimeError("download failed"))
         )
         service = AnalysisService(session, app.state.settings, drive, None, MetadataSink())
         await service.analyze(dict(organizationId=identity["organizationId"], documentId=doc.id))
         proposal = session.scalar(select(ClassificationProposal))
-        assert proposal.review_required and proposal.review_reason == "extraction_failed"
-        assert proposal.proposed_name == "classement_manuel.txt" and proposal.llm_calls_used == 0
+        assert (
+            proposal.review_required
+            and proposal.review_reason == "Aucun contenu lisible détecté dans le document"
+        )
+        assert proposal.proposed_name == "input.txt" and proposal.llm_calls_used == 0
 
 
 @pytest.mark.asyncio

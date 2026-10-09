@@ -42,7 +42,7 @@ def _decision(kind: str, analysis: ExtractionResult, directories: list[str]) -> 
     assistant = DocumentSortingAssistantCrew()
     crew = assistant.naming_crew() if kind == "filename" else assistant.destination_crew()
     output = crew.kickoff(
-        inputs={"content": analysis.markdown or analysis.text, "directories": directories}
+        inputs={"content": analysis.context or analysis.text, "directories": directories}
     )
     return DecisionResult.model_validate(output.pydantic or output.to_dict())
 
@@ -60,7 +60,7 @@ def _both_decisions(
     output = (
         DocumentSortingAssistantCrew()
         .combined_crew()
-        .kickoff(inputs={"content": analysis.markdown or analysis.text, "directories": directories})
+        .kickoff(inputs={"content": analysis.context or analysis.text, "directories": directories})
     )
     filename, destination = output.tasks_output[-2:]
     return (

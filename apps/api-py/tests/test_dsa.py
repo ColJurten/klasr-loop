@@ -14,6 +14,9 @@ from dsa.tools import SUPPORTED_SUFFIXES, extract_bytes, extract_document
 
 
 class StubDocument:
+    def export_to_dict(self):
+        return {"texts": [{"text": self.export_to_text()}]}
+
     def export_to_text(self):
         return "Supplier: Acme; invoice: INV-42; date: 2026-09-13"
 
